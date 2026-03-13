@@ -1,7 +1,7 @@
 {
   "version": 4,
   "name": "Edge Detection",
-  "mode": "hybrid",
+  "mode": "path",
   "previewIterations": 960000,
   "animatePath": false,
   "timelineFrame": 0,

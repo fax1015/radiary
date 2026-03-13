@@ -179,6 +179,7 @@ private:
     bool playbackPanelActive_ = false;
     bool startupWindowPlacementLoaded_ = false;
     bool startupWindowMaximized_ = false;
+    bool bootstrapUiFramePending_ = true;
     RECT startupWindowRect_ {CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT};
 
     std::chrono::steady_clock::time_point lastFrame_ {};
@@ -212,6 +213,7 @@ private:
     std::uint64_t consumedRenderGeneration_ = 0;
     std::uint32_t displayedPreviewIterations_ = 0;
     PreviewBackend displayedPreviewBackend_ = PreviewBackend::CpuHybrid;
+    std::chrono::steady_clock::time_point lastGpuPreviewDispatchAt_ {};
     int selectedTimelineKeyframe_ = -1;
     bool timelineDraggingPlayhead_ = false;
     bool timelineDraggingKeyframe_ = false;
@@ -222,6 +224,9 @@ private:
     LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 
     bool CreateDeviceD3D();
+    bool EnsureGpuFlameRendererInitialized();
+    bool EnsureGpuPathRendererInitialized(GpuPathRenderer& renderer, const wchar_t* label);
+    bool EnsureGpuDofRendererInitialized();
     void EnumerateAdapters();
     bool ApplyPendingGraphicsDeviceChange();
     void CleanupDeviceD3D();

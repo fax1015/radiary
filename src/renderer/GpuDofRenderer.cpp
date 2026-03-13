@@ -338,9 +338,9 @@ DXGI_FORMAT GpuDofRenderer::ChooseOutputFormat() const {
 }
 
 ID3DBlob* GpuDofRenderer::CompileShader(const char* source, const char* entryPoint, const char* target, std::string& error) {
-    UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+    UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
 #if defined(_DEBUG)
-    flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+    flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
     ID3DBlob* shaderBlob = nullptr;
     ID3DBlob* errorBlob = nullptr;

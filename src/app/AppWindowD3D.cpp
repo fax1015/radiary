@@ -229,12 +229,57 @@ bool AppWindow::CreateDeviceD3D() {
     if (factory) { factory->Release(); }
 
     CreateRenderTarget();
-    gpuFlameRenderer_.Initialize(device_.Get(), deviceContext_.Get());
-    if (!gpuDofRenderer_.Initialize(device_.Get(), deviceContext_.Get()) && !gpuDofRenderer_.LastError().empty()) {
-        statusText_ = L"GPU DOF unavailable: " + Utf8ToWide(gpuDofRenderer_.LastError());
+    return true;
+}
+
+bool AppWindow::EnsureGpuFlameRendererInitialized() {
+    if (gpuFlameRenderer_.IsReady()) {
+        return true;
     }
-    gpuGridRenderer_.Initialize(device_.Get(), deviceContext_.Get());
-    gpuPathRenderer_.Initialize(device_.Get(), deviceContext_.Get());
+    if (device_ == nullptr || deviceContext_ == nullptr) {
+        statusText_ = L"GPU flame unavailable: D3D11 device/context is not ready.";
+        return false;
+    }
+    if (!gpuFlameRenderer_.Initialize(device_.Get(), deviceContext_.Get())) {
+        if (!gpuFlameRenderer_.LastError().empty()) {
+            statusText_ = L"GPU flame unavailable: " + Utf8ToWide(gpuFlameRenderer_.LastError());
+        }
+        return false;
+    }
+    return true;
+}
+
+bool AppWindow::EnsureGpuPathRendererInitialized(GpuPathRenderer& renderer, const wchar_t* label) {
+    if (renderer.IsReady()) {
+        return true;
+    }
+    if (device_ == nullptr || deviceContext_ == nullptr) {
+        statusText_ = std::wstring(label) + L" unavailable: D3D11 device/context is not ready.";
+        return false;
+    }
+    if (!renderer.Initialize(device_.Get(), deviceContext_.Get())) {
+        if (!renderer.LastError().empty()) {
+            statusText_ = std::wstring(label) + L" unavailable: " + Utf8ToWide(renderer.LastError());
+        }
+        return false;
+    }
+    return true;
+}
+
+bool AppWindow::EnsureGpuDofRendererInitialized() {
+    if (gpuDofRenderer_.IsReady()) {
+        return true;
+    }
+    if (device_ == nullptr || deviceContext_ == nullptr) {
+        statusText_ = L"GPU DOF unavailable: D3D11 device/context is not ready.";
+        return false;
+    }
+    if (!gpuDofRenderer_.Initialize(device_.Get(), deviceContext_.Get())) {
+        if (!gpuDofRenderer_.LastError().empty()) {
+            statusText_ = L"GPU DOF unavailable: " + Utf8ToWide(gpuDofRenderer_.LastError());
+        }
+        return false;
+    }
     return true;
 }
 

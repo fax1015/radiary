@@ -10,6 +10,9 @@ namespace radiary {
 
 namespace {
 
+constexpr double kFlameDepthNear = 0.15;
+constexpr double kFlameDepthRangePadding = 24.0;
+
 struct Triangle2D {
     std::array<SoftwareRenderer::ProjectedPoint, 3> points {};
     Color fill {};
@@ -372,7 +375,8 @@ void RasterizeDepthTriangle(
     const int height,
     const SoftwareRenderer::ProjectedPoint& a,
     const SoftwareRenderer::ProjectedPoint& b,
-    const SoftwareRenderer::ProjectedPoint& c) {
+    const SoftwareRenderer::ProjectedPoint& c,
+    const CameraState& camera) {
     const double minX = std::min({a.x, b.x, c.x});
     const double maxX = std::max({a.x, b.x, c.x});
     const double minY = std::min({a.y, b.y, c.y});
@@ -401,7 +405,7 @@ void RasterizeDepthTriangle(
             const double alpha = ((b.x - px) * (c.y - py) - (b.y - py) * (c.x - px)) / area;
             const double beta = ((c.x - px) * (a.y - py) - (c.y - py) * (a.x - px)) / area;
             const double gamma = 1.0 - alpha - beta;
-            const float depth = static_cast<float>(alpha * a.depth + beta * b.depth + gamma * c.depth);
+            const float depth = static_cast<float>(SoftwareRenderer::NormalizeProjectedDepth(alpha * a.depth + beta * b.depth + gamma * c.depth, camera));
             WriteDepthSample(depthBuffer, width, height, x, y, depth);
         }
     }
@@ -428,7 +432,8 @@ void RasterizeDepthLine(
     std::vector<float>& depthBuffer,
     const int width,
     const int height,
-    const SoftwareRenderer::PathLine& line) {
+    const SoftwareRenderer::PathLine& line,
+    const CameraState& camera) {
     const double radius = std::max(1.0, line.thickness * 0.5);
     const double minX = std::min(line.start.x, line.end.x) - radius;
     const double maxX = std::max(line.start.x, line.end.x) + radius;
@@ -438,7 +443,7 @@ void RasterizeDepthLine(
     const int x1 = std::min(width - 1, static_cast<int>(std::ceil(maxX)));
     const int y0 = std::max(0, static_cast<int>(std::floor(minY)));
     const int y1 = std::min(height - 1, static_cast<int>(std::ceil(maxY)));
-    const float depth = static_cast<float>(std::clamp(line.depth, 0.0, 1.0));
+    const float depth = static_cast<float>(SoftwareRenderer::NormalizeProjectedDepth(line.depth, camera));
 
     for (int y = y0; y <= y1; ++y) {
         for (int x = x0; x <= x1; ++x) {
@@ -459,13 +464,14 @@ void RasterizeDepthPoint(
     std::vector<float>& depthBuffer,
     const int width,
     const int height,
-    const SoftwareRenderer::PathPointSprite& point) {
+    const SoftwareRenderer::PathPointSprite& point,
+    const CameraState& camera) {
     const double radius = std::max(1.0, point.size * 0.5);
     const int x0 = std::max(0, static_cast<int>(std::floor(point.point.x - radius)));
     const int x1 = std::min(width - 1, static_cast<int>(std::ceil(point.point.x + radius)));
     const int y0 = std::max(0, static_cast<int>(std::floor(point.point.y - radius)));
     const int y1 = std::min(height - 1, static_cast<int>(std::ceil(point.point.y + radius)));
-    const float depth = static_cast<float>(std::clamp(point.depth, 0.0, 1.0));
+    const float depth = static_cast<float>(SoftwareRenderer::NormalizeProjectedDepth(point.depth, camera));
 
     for (int y = y0; y <= y1; ++y) {
         for (int x = x0; x <= x1; ++x) {
@@ -1353,13 +1359,13 @@ void SoftwareRenderer::BuildDepthMap(const Scene& scene, const int width, const 
     std::vector<PathPointSprite> points;
     BuildPathPrimitives(scene, width, height, fillTriangles, lines, points);
     for (const PathTriangle& triangle : fillTriangles) {
-        RasterizeDepthTriangle(depthBuffer, width, height, triangle.points[0], triangle.points[1], triangle.points[2]);
+        RasterizeDepthTriangle(depthBuffer, width, height, triangle.points[0], triangle.points[1], triangle.points[2], scene.camera);
     }
     for (const PathLine& line : lines) {
-        RasterizeDepthLine(depthBuffer, width, height, line);
+        RasterizeDepthLine(depthBuffer, width, height, line, scene.camera);
     }
     for (const PathPointSprite& point : points) {
-        RasterizeDepthPoint(depthBuffer, width, height, point);
+        RasterizeDepthPoint(depthBuffer, width, height, point, scene.camera);
     }
 }
 
@@ -1472,6 +1478,11 @@ SoftwareRenderer::ProjectedPoint SoftwareRenderer::Project(
     };
 }
 
+double SoftwareRenderer::NormalizeProjectedDepth(const double depth, const CameraState& camera) {
+    const double farDepth = std::max(kFlameDepthNear + 1.0, camera.distance + kFlameDepthRangePadding);
+    return std::clamp((depth - kFlameDepthNear) / std::max(1.0e-6, farDepth - kFlameDepthNear), 0.0, 1.0);
+}
+
 Color SoftwareRenderer::ToneMap(const FlamePixel& pixel) {
     if (pixel.density <= 0.0f) {
         return {10, 10, 13, 255};
@@ -1501,10 +1512,10 @@ Color SoftwareRenderer::SurfaceColor(const double factor) {
     return Lerp(mid, end, Clamp((factor - 0.5) * 2.0, 0.0, 1.0));
 }
 
-void SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const int height, std::vector<std::uint32_t>& pixels, const RenderOptions& options) {
+bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const int height, std::vector<std::uint32_t>& pixels, const RenderOptions& options) {
     Clear(pixels, width, height, options.transparentBackground ? Color{0, 0, 0, 0} : scene.backgroundColor);
     if (width <= 0 || height <= 0) {
-        return;
+        return true;
     }
 
     if (options.renderGrid && scene.gridVisible) {
@@ -1513,7 +1524,9 @@ void SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
 
     if (options.renderFlame && scene.mode != SceneMode::Path) {
         std::vector<FlamePixel> flamePixels;
-        flameEngine_.Render(scene, width, height, flamePixels);
+        if (!flameEngine_.Render(scene, width, height, flamePixels, options.shouldAbort)) {
+            return false;
+        }
         const std::size_t totalPixels = static_cast<std::size_t>(width * height);
         for (std::size_t i = 0; i < totalPixels; ++i) {
             const FlamePixel& pixel = flamePixels[i];
@@ -1542,7 +1555,7 @@ void SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
             BuildDepthMap(scene, width, height, depthBuffer);
             ApplyDepthOfField(scene, pixels, width, height, depthBuffer);
         }
-        return;
+        return true;
     }
 
     std::vector<PathTriangle> fillTriangles;
@@ -1575,6 +1588,8 @@ void SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
         BuildDepthMap(scene, width, height, depthBuffer);
         ApplyDepthOfField(scene, pixels, width, height, depthBuffer);
     }
+
+    return true;
 }
 
 }  // namespace radiary

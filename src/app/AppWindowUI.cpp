@@ -384,9 +384,9 @@ void AppWindow::DrawSettingsPanel() {
         }
         if (gpuFlamePreviewEnabled_) {
             std::string gpuBackendSummary = "Flame ";
-            gpuBackendSummary += gpuFlameRenderer_.IsReady() ? "D3D11 compute" : "unavailable";
+            gpuBackendSummary += gpuFlameRenderer_.IsReady() ? "D3D11 compute" : "lazy";
             gpuBackendSummary += " | Path ";
-            gpuBackendSummary += gpuPathRenderer_.IsReady() ? "D3D11 raster" : "unavailable";
+            gpuBackendSummary += gpuPathRenderer_.IsReady() ? "D3D11 raster" : "lazy";
             ImGui::TextDisabled("Viewport backend: %s", gpuBackendSummary.c_str());
             if (!gpuFlameRenderer_.LastError().empty()) {
                 ImGui::TextWrapped("Flame GPU status: %s", gpuFlameRenderer_.LastError().c_str());
@@ -1921,43 +1921,73 @@ void AppWindow::DrawTimelinePanel() {
     const std::uint32_t maxInteractiveIterations = 2000000;
     const std::uint32_t minIterations = 20000;
     const std::uint32_t maxIterations = 50000000;
-    ImGui::SetNextItemWidth(240.0f);
-    if (SliderScalarWithInput("Navigation Iterations", ImGuiDataType_U32, &interactivePreviewIterations_, &minInteractiveIterations, &maxInteractiveIterations, "%u")
-        || ResetValueOnDoubleClick(interactivePreviewIterations_, static_cast<std::uint32_t>(60000))) {
-        MarkViewportDirty();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Used while navigating the viewport.");
-    if (gpuFlamePreviewEnabled_) {
-    }
-    ImGui::SetNextItemWidth(240.0f);
-    const Scene beforePreview = scene_;
-    const bool previewChanged = SliderScalarWithInput("Render Iterations", ImGuiDataType_U32, &scene_.previewIterations, &minIterations, &maxIterations, "%u")
-        || ResetValueOnDoubleClick(scene_.previewIterations, defaultScene.previewIterations);
-    if (previewChanged) {
-        viewportDirty_ = true;
-    }
-    CaptureWidgetUndo(beforePreview, previewChanged);
-    float backgroundColor[3] = {
-        scene_.backgroundColor.r / 255.0f,
-        scene_.backgroundColor.g / 255.0f,
-        scene_.backgroundColor.b / 255.0f
+    const auto setPreviewColumnItemWidth = [&]() {
+        ImGui::SetNextItemWidth(-FLT_MIN);
     };
-    const Scene beforeBackground = scene_;
-    const bool backgroundChanged = ImGui::ColorEdit3("Viewport Background", backgroundColor, ImGuiColorEditFlags_DisplayRGB)
-        || ResetColorOnDoubleClick(backgroundColor, defaultScene.backgroundColor);
-    if (backgroundChanged) {
-        scene_.backgroundColor = ToColor(backgroundColor);
-        viewportDirty_ = true;
+    const auto drawPreviewFieldLabel = [&](const char* label) {
+        ImGui::TextDisabled("%s", label);
+    };
+    const auto beginPreviewGrid = [&](const char* id) {
+        return ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
+    };
+
+    ImGui::SeparatorText("Iterations");
+    if (beginPreviewGrid("##preview_iterations_grid")) {
+        ImGui::TableNextColumn();
+        drawPreviewFieldLabel("Navigation Iterations");
+        setPreviewColumnItemWidth();
+        if (SliderScalarWithInput("##preview_navigation_iterations", ImGuiDataType_U32, &interactivePreviewIterations_, &minInteractiveIterations, &maxInteractiveIterations, "%u")
+            || ResetValueOnDoubleClick(interactivePreviewIterations_, static_cast<std::uint32_t>(60000))) {
+            MarkViewportDirty();
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Used while navigating the viewport.");
+        ImGui::PopTextWrapPos();
+
+        ImGui::TableNextColumn();
+        drawPreviewFieldLabel("Render Iterations");
+        setPreviewColumnItemWidth();
+        const Scene beforePreview = scene_;
+        const bool previewChanged = SliderScalarWithInput("##preview_render_iterations", ImGuiDataType_U32, &scene_.previewIterations, &minIterations, &maxIterations, "%u")
+            || ResetValueOnDoubleClick(scene_.previewIterations, defaultScene.previewIterations);
+        if (previewChanged) {
+            viewportDirty_ = true;
+        }
+        CaptureWidgetUndo(beforePreview, previewChanged);
+
+        ImGui::EndTable();
     }
-    CaptureWidgetUndo(beforeBackground, backgroundChanged);
-    const Scene beforeDofEnabled = scene_;
-    bool dofEnabledChanged = ImGui::Checkbox("Depth of Field", &scene_.depthOfField.enabled);
-    dofEnabledChanged = ResetValueOnDoubleClick(scene_.depthOfField.enabled, defaultScene.depthOfField.enabled) || dofEnabledChanged;
-    if (dofEnabledChanged) {
-        viewportDirty_ = true;
+
+    ImGui::SeparatorText("Viewport");
+    if (beginPreviewGrid("##preview_viewport_grid")) {
+        ImGui::TableNextColumn();
+        drawPreviewFieldLabel("Viewport Background");
+        setPreviewColumnItemWidth();
+        float backgroundColor[3] = {
+            scene_.backgroundColor.r / 255.0f,
+            scene_.backgroundColor.g / 255.0f,
+            scene_.backgroundColor.b / 255.0f
+        };
+        const Scene beforeBackground = scene_;
+        const bool backgroundChanged = ImGui::ColorEdit3("##preview_background", backgroundColor, ImGuiColorEditFlags_DisplayRGB)
+            || ResetColorOnDoubleClick(backgroundColor, defaultScene.backgroundColor);
+        if (backgroundChanged) {
+            scene_.backgroundColor = ToColor(backgroundColor);
+            viewportDirty_ = true;
+        }
+        CaptureWidgetUndo(beforeBackground, backgroundChanged);
+
+        const Scene beforeDofEnabled = scene_;
+        bool dofEnabledChanged = ImGui::Checkbox("Depth of Field", &scene_.depthOfField.enabled);
+        dofEnabledChanged = ResetValueOnDoubleClick(scene_.depthOfField.enabled, defaultScene.depthOfField.enabled) || dofEnabledChanged;
+        if (dofEnabledChanged) {
+            viewportDirty_ = true;
+        }
+        CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
+
+        ImGui::EndTable();
     }
-    CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
+
     if (scene_.depthOfField.enabled) {
         const double focusDepthMin = 0.0;
         const double focusDepthMax = 1.0;
@@ -1966,29 +1996,44 @@ void AppWindow::DrawTimelinePanel() {
         const double blurStrengthMin = 0.0;
         const double blurStrengthMax = 1.0;
 
-        Scene beforeDof = scene_;
-        bool dofChanged = SliderScalarWithInput("DOF Focus Depth", ImGuiDataType_Double, &scene_.depthOfField.focusDepth, &focusDepthMin, &focusDepthMax, "%.2f")
-            || ResetValueOnDoubleClick(scene_.depthOfField.focusDepth, defaultScene.depthOfField.focusDepth);
-        if (dofChanged) {
-            viewportDirty_ = true;
-        }
-        CaptureWidgetUndo(beforeDof, dofChanged);
+        ImGui::SeparatorText("Depth of Field");
+        if (beginPreviewGrid("##preview_dof_grid")) {
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("DOF Focus Depth");
+            setPreviewColumnItemWidth();
+            Scene beforeDof = scene_;
+            bool dofChanged = SliderScalarWithInput("##preview_dof_focus_depth", ImGuiDataType_Double, &scene_.depthOfField.focusDepth, &focusDepthMin, &focusDepthMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.depthOfField.focusDepth, defaultScene.depthOfField.focusDepth);
+            if (dofChanged) {
+                viewportDirty_ = true;
+            }
+            CaptureWidgetUndo(beforeDof, dofChanged);
 
-        beforeDof = scene_;
-        dofChanged = SliderScalarWithInput("DOF Focus Range", ImGuiDataType_Double, &scene_.depthOfField.focusRange, &focusRangeMin, &focusRangeMax, "%.2f")
-            || ResetValueOnDoubleClick(scene_.depthOfField.focusRange, defaultScene.depthOfField.focusRange);
-        if (dofChanged) {
-            viewportDirty_ = true;
-        }
-        CaptureWidgetUndo(beforeDof, dofChanged);
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("DOF Focus Range");
+            setPreviewColumnItemWidth();
+            beforeDof = scene_;
+            dofChanged = SliderScalarWithInput("##preview_dof_focus_range", ImGuiDataType_Double, &scene_.depthOfField.focusRange, &focusRangeMin, &focusRangeMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.depthOfField.focusRange, defaultScene.depthOfField.focusRange);
+            if (dofChanged) {
+                viewportDirty_ = true;
+            }
+            CaptureWidgetUndo(beforeDof, dofChanged);
 
-        beforeDof = scene_;
-        dofChanged = SliderScalarWithInput("DOF Blur Strength", ImGuiDataType_Double, &scene_.depthOfField.blurStrength, &blurStrengthMin, &blurStrengthMax, "%.2f")
-            || ResetValueOnDoubleClick(scene_.depthOfField.blurStrength, defaultScene.depthOfField.blurStrength);
-        if (dofChanged) {
-            viewportDirty_ = true;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("DOF Blur Strength");
+            setPreviewColumnItemWidth();
+            beforeDof = scene_;
+            dofChanged = SliderScalarWithInput("##preview_dof_blur_strength", ImGuiDataType_Double, &scene_.depthOfField.blurStrength, &blurStrengthMin, &blurStrengthMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.depthOfField.blurStrength, defaultScene.depthOfField.blurStrength);
+            if (dofChanged) {
+                viewportDirty_ = true;
+            }
+            CaptureWidgetUndo(beforeDof, dofChanged);
+
+            ImGui::EndTable();
         }
-        CaptureWidgetUndo(beforeDof, dofChanged);
     }
     const int previewWidth = std::max(1, uploadedViewportWidth_);
     const int previewHeight = std::max(1, uploadedViewportHeight_);
@@ -2197,8 +2242,9 @@ void AppWindow::DrawViewportPanel() {
     const int width = std::max(1, static_cast<int>(available.x));
     const int height = std::max(1, static_cast<int>(available.y));
     const bool gpuPreviewRequested = gpuFlamePreviewEnabled_;
+    const bool allowViewportRender = !bootstrapUiFramePending_;
 
-    if ((gpuPreviewRequested || !viewportSrv_ || uploadedViewportWidth_ != width || uploadedViewportHeight_ != height)) {
+    if (allowViewportRender && (gpuPreviewRequested || !viewportSrv_ || uploadedViewportWidth_ != width || uploadedViewportHeight_ != height)) {
         RenderViewportIfNeeded(width, height);
     }
 
@@ -2212,6 +2258,20 @@ void AppWindow::DrawViewportPanel() {
     const ImVec2 imageMin = ImGui::GetCursorScreenPos();
     const ImVec2 imageMax(imageMin.x + available.x, imageMin.y + available.y);
     bool hovered = false;
+
+    const auto drawViewportPlaceholder = [&]() {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const ImU32 fillColor = ImGui::GetColorU32(ImVec4(0.05f, 0.05f, 0.07f, 1.0f));
+        const ImU32 borderColor = ImGui::GetColorU32(ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
+        drawList->AddRectFilled(imageMin, imageMax, fillColor, 6.0f);
+        drawList->AddRect(imageMin, imageMax, borderColor, 6.0f, 0, 1.0f);
+        const char* label = bootstrapUiFramePending_ ? "Loading UI..." : "Loading preview...";
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        const ImVec2 textPos(
+            imageMin.x + std::max(0.0f, (available.x - textSize.x) * 0.5f),
+            imageMin.y + std::max(0.0f, (available.y - textSize.y) * 0.5f));
+        drawList->AddText(textPos, ImGui::GetColorU32(ImVec4(0.78f, 0.79f, 0.82f, 1.0f)), label);
+    };
 
     if (preferGpuPreview) {
         if (scene_.mode == SceneMode::Flame
@@ -2248,10 +2308,14 @@ void AppWindow::DrawViewportPanel() {
         } else if (viewportSrv_) {
             ImGui::Image(reinterpret_cast<ImTextureID>(viewportSrv_.Get()), available);
             hovered = ImGui::IsItemHovered();
+        } else {
+            drawViewportPlaceholder();
         }
     } else if (viewportSrv_) {
         ImGui::Image(reinterpret_cast<ImTextureID>(viewportSrv_.Get()), available);
         hovered = ImGui::IsItemHovered();
+    } else {
+        drawViewportPlaceholder();
     }
 
     if (available.x > 1.0f && available.y > 1.0f) {
@@ -2271,9 +2335,22 @@ void AppWindow::DrawViewportPanel() {
         drawList->AddRect(cameraRect.Min, cameraRect.Max, outlineColor, 0.0f, 0, 1.0f);
     }
 
-    HandleViewportInteraction(hovered);
+    if (gpuFlamePreviewEnabled_ && available.x > 1.0f && available.y > 1.0f) {
+        const std::uint32_t targetIterations = scene_.previewIterations;
+        const std::uint32_t accumulated = displayedPreviewIterations_;
+        if (targetIterations > 0 && accumulated < targetIterations) {
+            const float progress = static_cast<float>(accumulated) / static_cast<float>(targetIterations);
+            constexpr float barHeight = 2.0f;
+            const ImVec2 barMin(imageMin.x, imageMax.y - barHeight);
+            const ImVec2 barMax(imageMin.x + available.x * progress, imageMax.y);
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            drawList->AddRectFilled(barMin, barMax, ImGui::GetColorU32(ImVec4(0.45f, 0.58f, 0.92f, 0.55f)));
+        }
+    }
 
-    if (viewportDirty_) {
+    HandleViewportInteraction(allowViewportRender && hovered);
+
+    if (allowViewportRender && viewportDirty_) {
         RenderViewportIfNeeded(width, height);
     }
 

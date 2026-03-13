@@ -364,17 +364,60 @@ bool GpuPathRenderer::Render(
     const float blendFactor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     deviceContext_->OMSetBlendState(blendState_, blendFactor, 0xFFFFFFFFu);
 
-    if (!gridVertices.empty() && !DrawVertices(gridVertices.data(), gridVertices.size(), depthDisabledState_)) {
-        return false;
-    }
-    if (!fillVertices.empty() && !DrawVertices(fillVertices.data(), fillVertices.size(), depthWriteState_)) {
-        return false;
-    }
-    if (!overlayVertices.empty() && !DrawVertices(overlayVertices.data(), overlayVertices.size(), fillVertices.empty() ? depthWriteState_ : depthReadState_)) {
-        return false;
-    }
-    if (!pointVertices.empty() && !DrawVertices(pointVertices.data(), pointVertices.size(), fillVertices.empty() ? depthWriteState_ : depthReadState_)) {
-        return false;
+    const std::size_t totalVertexCount = gridVertices.size() + fillVertices.size() + overlayVertices.size() + pointVertices.size();
+    if (totalVertexCount > 0) {
+        if (!EnsureVertexBuffer(totalVertexCount)) {
+            return false;
+        }
+        D3D11_MAPPED_SUBRESOURCE mapped {};
+        HRESULT mapResult = deviceContext_->Map(vertexBuffer_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        if (FAILED(mapResult)) {
+            SetError("Map(PathVertexBuffer)", mapResult);
+            return false;
+        }
+        auto* dst = static_cast<Vertex*>(mapped.pData);
+        std::size_t offset = 0;
+        if (!gridVertices.empty()) {
+            std::memcpy(dst + offset, gridVertices.data(), gridVertices.size() * sizeof(Vertex));
+            offset += gridVertices.size();
+        }
+        if (!fillVertices.empty()) {
+            std::memcpy(dst + offset, fillVertices.data(), fillVertices.size() * sizeof(Vertex));
+            offset += fillVertices.size();
+        }
+        if (!overlayVertices.empty()) {
+            std::memcpy(dst + offset, overlayVertices.data(), overlayVertices.size() * sizeof(Vertex));
+            offset += overlayVertices.size();
+        }
+        if (!pointVertices.empty()) {
+            std::memcpy(dst + offset, pointVertices.data(), pointVertices.size() * sizeof(Vertex));
+        }
+        deviceContext_->Unmap(vertexBuffer_, 0);
+
+        const UINT stride = sizeof(Vertex);
+        const UINT zero = 0;
+        deviceContext_->IASetVertexBuffers(0, 1, &vertexBuffer_, &stride, &zero);
+
+        UINT drawOffset = 0;
+        if (!gridVertices.empty()) {
+            deviceContext_->OMSetDepthStencilState(depthDisabledState_, 0);
+            deviceContext_->Draw(static_cast<UINT>(gridVertices.size()), drawOffset);
+            drawOffset += static_cast<UINT>(gridVertices.size());
+        }
+        if (!fillVertices.empty()) {
+            deviceContext_->OMSetDepthStencilState(depthWriteState_, 0);
+            deviceContext_->Draw(static_cast<UINT>(fillVertices.size()), drawOffset);
+            drawOffset += static_cast<UINT>(fillVertices.size());
+        }
+        if (!overlayVertices.empty()) {
+            deviceContext_->OMSetDepthStencilState(fillVertices.empty() ? depthWriteState_ : depthReadState_, 0);
+            deviceContext_->Draw(static_cast<UINT>(overlayVertices.size()), drawOffset);
+            drawOffset += static_cast<UINT>(overlayVertices.size());
+        }
+        if (!pointVertices.empty()) {
+            deviceContext_->OMSetDepthStencilState(fillVertices.empty() ? depthWriteState_ : depthReadState_, 0);
+            deviceContext_->Draw(static_cast<UINT>(pointVertices.size()), drawOffset);
+        }
     }
 
     ID3D11RenderTargetView* nullRtv = nullptr;
@@ -646,6 +689,7 @@ void GpuPathRenderer::SetError(const char* stage, const HRESULT result) {
 ID3DBlob* GpuPathRenderer::CompileShader(const char* source, const char* entryPoint, const char* target, std::string& error) {
     ID3DBlob* shaderBlob = nullptr;
     ID3DBlob* errorBlob = nullptr;
+    const UINT compileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
     const HRESULT result = D3DCompile(
         source,
         std::strlen(source),
@@ -654,7 +698,7 @@ ID3DBlob* GpuPathRenderer::CompileShader(const char* source, const char* entryPo
         nullptr,
         entryPoint,
         target,
-        0,
+        compileFlags,
         0,
         &shaderBlob,
         &errorBlob);

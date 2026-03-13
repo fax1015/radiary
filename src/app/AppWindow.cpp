@@ -63,6 +63,7 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = instance_;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    windowClass.hbrBackground = CreateSolidBrush(RGB(10, 10, 13));
     windowClass.lpszClassName = L"RadiaryImGuiWindow";
     RegisterClassExW(&windowClass);
 
@@ -83,6 +84,10 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
         return false;
     }
     ApplyDarkTitleBar(window_);
+
+    ShowWindow(window_, showCommand);
+    UpdateWindow(window_);
+
     EnumerateAdapters();
     LoadPresets();
     if (presetLibrary_.Count() > 0) {
@@ -92,20 +97,6 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     if (presetLibrary_.Count() == 0) {
         ApplyUserSceneDefaults(scene_);
     }
-
-    if (!CreateDeviceD3D()) {
-        CleanupDeviceD3D();
-        DestroyWindow(window_);
-        window_ = nullptr;
-        CoUninitialize();
-        return false;
-    }
-
-    SetupImGui();
-    ApplyStyle();
-    scene_.animatePath = false;
-    lastFrame_ = std::chrono::steady_clock::now();
-    StartRenderThread();
 
     if (startupWindowPlacementLoaded_) {
         const int width = std::max(640, static_cast<int>(startupWindowRect_.right - startupWindowRect_.left));
@@ -118,9 +109,35 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
             width,
             height,
             SWP_NOZORDER | SWP_NOACTIVATE);
+        if (startupWindowMaximized_) {
+            ShowWindow(window_, SW_MAXIMIZE);
+        }
     }
-    ShowWindow(window_, startupWindowMaximized_ ? SW_MAXIMIZE : showCommand);
-    UpdateWindow(window_);
+
+    if (!CreateDeviceD3D()) {
+        CleanupDeviceD3D();
+        DestroyWindow(window_);
+        window_ = nullptr;
+        CoUninitialize();
+        return false;
+    }
+
+    SetupImGui();
+    ApplyStyle();
+
+    if (gpuFlamePreviewEnabled_) {
+        EnsureGpuFlameRendererInitialized();
+        EnsureGpuPathRendererInitialized(gpuPathRenderer_, L"GPU path renderer");
+        EnsureGpuPathRendererInitialized(gpuGridRenderer_, L"GPU grid renderer");
+        EnsureGpuDofRendererInitialized();
+    }
+
+    scene_.animatePath = false;
+    lastFrame_ = std::chrono::steady_clock::now();
+    StartRenderThread();
+    RenderFrame();
+    bootstrapUiFramePending_ = false;
+    viewportDirty_ = true;
     return true;
 }
 
@@ -140,7 +157,7 @@ int AppWindow::Run() {
         }
 
         if (!inSizeMove_ && !RenderTick()) {
-            Sleep(10);
+            Sleep(1);
         }
     }
 

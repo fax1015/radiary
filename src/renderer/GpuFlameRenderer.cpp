@@ -15,12 +15,13 @@ namespace radiary {
 namespace {
 
 constexpr int kVariationCountGpu = static_cast<int>(VariationType::Count);
+static_assert(kVariationCountGpu == 44, "Update GPU flame shader variation table to match VariationType::Count.");
 constexpr std::uint32_t kMinProgressiveBatchIterations = 32768u;
-constexpr std::uint32_t kMaxProgressiveBatchIterations = 196608u;
+constexpr std::uint32_t kMaxProgressiveBatchIterations = 262144u;
 constexpr std::uint32_t kGpuFlameBurnInIterations = 24u;
-constexpr std::uint32_t kGpuFlameTargetOrbitIterations = 8192u;
+constexpr std::uint32_t kGpuFlameTargetOrbitIterations = 4096u;
 constexpr std::uint32_t kMinOrbitThreadCount = 8u;
-constexpr std::uint32_t kMaxOrbitThreadCount = 64u;
+constexpr std::uint32_t kMaxOrbitThreadCount = 256u;
 constexpr float kFlameWorldScale = 0.63f;
 constexpr float kFlameDepthNear = 0.15f;
 constexpr float kFlameDepthRangePadding = 24.0f;
@@ -76,7 +77,7 @@ struct TransformGpu
     float ColorIndex;
     float UseCustomColor;
     float4 CustomColor;
-    float Variations[20];
+    float Variations[44];
 };
 
 StructuredBuffer<TransformGpu> Transforms : register(t0);
@@ -89,16 +90,46 @@ static const float kPi = 3.14159265358979323846;
 static const uint kBurnInIterations = 24u;
 static const uint kAccumulationScale = 4u;
 static const float kDepthNear = 0.15f;
+static const float kOrbitResetRadius = 1000000.0f;
 
 uint NextRandom(inout uint state)
 {
-    state = state * 1664525u + 1013904223u;
+    state ^= state << 13u;
+    state ^= state >> 17u;
+    state ^= state << 5u;
     return state;
 }
 
 float RandomFloat(inout uint state)
 {
-    return (NextRandom(state) & 0x00FFFFFFu) / 16777216.0;
+    return (NextRandom(state) & 0x00FFFFFFu) * (1.0 / 16777216.0);
+}
+
+float SafeSignedDenominator(float value)
+{
+    if (abs(value) >= 1.0e-9)
+        return value;
+    return (value < 0.0) ? -1.0e-9 : 1.0e-9;
+}
+
+bool IsFinitePoint(float2 sample)
+{
+    return isfinite(sample.x) && isfinite(sample.y);
+}
+
+bool IsFinitePoint3(float3 sample)
+{
+    return isfinite(sample.x) && isfinite(sample.y) && isfinite(sample.z);
+}
+
+bool IsOrbitOutOfRange(float2 sample)
+{
+    return abs(sample.x) > kOrbitResetRadius || abs(sample.y) > kOrbitResetRadius;
+}
+
+bool IsOrbitOutOfRange3(float3 sample)
+{
+    return abs(sample.x) > kOrbitResetRadius || abs(sample.y) > kOrbitResetRadius || abs(sample.z) > kOrbitResetRadius;
 }
 
 float2 ApplyVariation(uint variation, float2 samplePoint)
@@ -197,6 +228,150 @@ float2 ApplyVariation(uint variation, float2 samplePoint)
         float factor = sqrt(1.0 / max(1.0e-9, s * s));
         return float2(samplePoint.x * factor, samplePoint.y * factor);
     }
+)" R"(
+    case 20:
+    {
+        float nx = (samplePoint.x < 0.0) ? samplePoint.x * 2.0 : samplePoint.x;
+        float ny = (samplePoint.y < 0.0) ? samplePoint.y * 0.5 : samplePoint.y;
+        return float2(nx, ny);
+    }
+    case 21:
+        return float2(samplePoint.x + sin(samplePoint.y * 2.0), samplePoint.y + sin(samplePoint.x * 2.0));
+    case 22:
+    {
+        float fan = kPi * 0.5;
+        float t = angle + fan * floor(angle / fan);
+        float r = radius * fan / t;
+        return float2(r * cos(t), r * sin(t));
+    }
+    case 23:
+    {
+        float rings = 0.5;
+        float r = radius - rings * floor(radius / rings);
+        float factor = r / max(1.0e-9, radius);
+        return float2(samplePoint.x * factor, samplePoint.y * factor);
+    }
+    case 24:
+    {
+        float popcorn = 0.3;
+        return float2(
+            samplePoint.x + popcorn * sin(tan(3.0 * samplePoint.y)),
+            samplePoint.y + popcorn * sin(tan(3.0 * samplePoint.x)));
+    }
+    case 25:
+    {
+        float bipolar = 0.5;
+        float r = sqrt(samplePoint.x * samplePoint.x + samplePoint.y * samplePoint.y);
+        float t = atan2(samplePoint.y, samplePoint.x) + bipolar;
+        return float2(r * cos(t), r * sin(t));
+    }
+    case 26:
+    {
+        float wedge = 0.5;
+        float a = angle + wedge * floor(angle / wedge);
+        return float2(radius * cos(a), radius * sin(a));
+    }
+    case 27:
+    {
+        float split = 0.5;
+        return float2(
+            samplePoint.x + split * sin(samplePoint.y),
+            samplePoint.y + split * sin(samplePoint.x));
+    }
+    case 28:
+    {
+        float r = 2.0 / (radius + 1.0);
+        return float2(r * samplePoint.y, r * samplePoint.x);
+    }
+    case 29:
+    {
+        float theta = angle * radius;
+        return float2(radius * sin(angle + theta), radius * cos(angle - theta));
+    }
+    case 30:
+    {
+        float d = sqrt(samplePoint.x * samplePoint.x + samplePoint.y * samplePoint.y);
+        float ex = d * d * d;
+        return float2(ex * cos(angle * d), ex * sin(angle * d));
+    }
+    case 31:
+    {
+        float blade = angle * radius;
+        return float2(
+            samplePoint.x * cos(blade) + sin(blade),
+            samplePoint.y * cos(blade) - sin(blade));
+    }
+    case 32:
+    {
+        float flower = 0.5;
+        float r = radius * (flower + sin(angle * 3.0));
+        return float2(r * cos(angle), r * sin(angle));
+    }
+    case 33:
+        return float2(
+            cos(kPi * samplePoint.x) * cosh(samplePoint.y),
+            -sin(kPi * samplePoint.x) * sinh(samplePoint.y));
+    case 34:
+        return float2(
+            abs(samplePoint.x) - abs(samplePoint.y),
+            abs(samplePoint.x) + abs(samplePoint.y) - 1.0);
+    case 35:
+    {
+        float checkers = 0.5;
+        float xParity = fmod(floor(samplePoint.x), 2.0);
+        float yParity = fmod(floor(samplePoint.y), 2.0);
+        return float2(
+            samplePoint.x + checkers * (xParity == 0.0 ? 1.0 : -1.0),
+            samplePoint.y + checkers * (yParity == 0.0 ? 1.0 : -1.0));
+    }
+)" R"(
+    case 36:
+        return float2(samplePoint.x / radiusSquared, samplePoint.y);
+    case 37:
+        return float2((samplePoint.x / radius) * cos(radius), (samplePoint.y / radius) * sin(radius));
+    case 38:
+    {
+        float factor = exp(samplePoint.x - 1.0);
+        float theta = kPi * samplePoint.y;
+        return float2(factor * cos(theta), factor * sin(theta));
+    }
+    case 39:
+    {
+        float exponent = samplePoint.x / radius;
+        float factor = pow(radius, exponent);
+        return float2((samplePoint.y / radius) * factor, (samplePoint.x / radius) * factor);
+    }
+    case 40:
+    {
+        float denominator = SafeSignedDenominator(cos(2.0 * samplePoint.x) + cosh(2.0 * samplePoint.y));
+        float factor = 2.0 / denominator;
+        return float2(
+            factor * cos(samplePoint.x) * cosh(samplePoint.y),
+            factor * sin(samplePoint.x) * sinh(samplePoint.y));
+    }
+    case 41:
+    {
+        float denominator = SafeSignedDenominator(cosh(2.0 * samplePoint.y) - cos(2.0 * samplePoint.x));
+        float factor = 2.0 / denominator;
+        return float2(
+            factor * sin(samplePoint.x) * cosh(samplePoint.y),
+            -factor * cos(samplePoint.x) * sinh(samplePoint.y));
+    }
+    case 42:
+    {
+        float factor = 1.0 / SafeSignedDenominator(cosh(2.0 * samplePoint.y) - cos(2.0 * samplePoint.x));
+        return float2(
+            factor * sin(2.0 * samplePoint.x),
+            -factor * sinh(2.0 * samplePoint.y));
+    }
+    case 43:
+    {
+        float denominator = SafeSignedDenominator(cos(2.0 * samplePoint.y) + cosh(2.0 * samplePoint.x));
+        float factor = 2.0 / denominator;
+        return float2(
+            factor * cos(samplePoint.y) * cosh(samplePoint.x),
+            -factor * sin(samplePoint.y) * sinh(samplePoint.x));
+    }
     default:
         return samplePoint;
     }
@@ -220,17 +395,18 @@ uint ChooseTransform(float randomValue)
     return max(TransformCount, 1) - 1;
 }
 
-[numthreads(64, 1, 1)]
+[numthreads(128, 1, 1)]
 void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
     uint threadIndex = dispatchThreadId.x;
     if (threadIndex >= TotalThreadCount || TransformCount == 0)
         return;
 
-    uint rng = 0xC0FFEEu
-        ^ ((threadIndex + RandomSeedOffset * 977u) * 747796405u + TransformCount * 2891336453u);
+    uint rng = (threadIndex * 747796405u + 2891336453u) ^ (RandomSeedOffset * 1664525u + 1013904223u);
+    rng = max(rng, 1u);
     float3 samplePoint = float3(RandomFloat(rng) * 2.0 - 1.0, RandomFloat(rng) * 2.0 - 1.0, (RandomFloat(rng) * 2.0 - 1.0) * 0.35);
     float colorIndex = 0.5;
+    uint burnInRemaining = kBurnInIterations;
     uint iterationsPerThread = max(1u, (PreviewIterations + TotalThreadCount - 1u) / TotalThreadCount);
     float yawCos = cos(Yaw);
     float yawSin = sin(Yaw);
@@ -249,22 +425,50 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         float pick = RandomFloat(rng) * TotalWeight;
         TransformGpu layer = Transforms[ChooseTransform(pick)];
         float2 affine = ApplyAffine(layer, samplePoint.xy);
+        if (!IsFinitePoint(affine) || IsOrbitOutOfRange(affine))
+        {
+            samplePoint = float3(RandomFloat(rng) * 2.0 - 1.0, RandomFloat(rng) * 2.0 - 1.0, (RandomFloat(rng) * 2.0 - 1.0) * 0.35);
+            colorIndex = 0.5;
+            burnInRemaining = kBurnInIterations;
+            continue;
+        }
 
         float2 varied = float2(0.0, 0.0);
         float totalVariationWeight = 0.0;
+        bool unstableOrbit = false;
         [unroll]
-        for (uint variation = 0; variation < 20u; ++variation)
+        for (uint variation = 0; variation < 44u; ++variation)
         {
             float amount = layer.Variations[variation];
             if (amount == 0.0)
                 continue;
+            float2 variationPoint = ApplyVariation(variation, affine);
+            if (!IsFinitePoint(variationPoint) || IsOrbitOutOfRange(variationPoint))
+            {
+                unstableOrbit = true;
+                break;
+            }
             totalVariationWeight += amount;
-            varied += ApplyVariation(variation, affine) * amount;
+            varied += variationPoint * amount;
+        }
+        if (unstableOrbit)
+        {
+            samplePoint = float3(RandomFloat(rng) * 2.0 - 1.0, RandomFloat(rng) * 2.0 - 1.0, (RandomFloat(rng) * 2.0 - 1.0) * 0.35);
+            colorIndex = 0.5;
+            burnInRemaining = kBurnInIterations;
+            continue;
         }
         if (totalVariationWeight <= 1.0e-9)
             varied = affine;
         else
             varied *= (1.0 / totalVariationWeight);
+        if (!IsFinitePoint(varied) || IsOrbitOutOfRange(varied))
+        {
+            samplePoint = float3(RandomFloat(rng) * 2.0 - 1.0, RandomFloat(rng) * 2.0 - 1.0, (RandomFloat(rng) * 2.0 - 1.0) * 0.35);
+            colorIndex = 0.5;
+            burnInRemaining = kBurnInIterations;
+            continue;
+        }
 
         float radius = sqrt(varied.x * varied.x + varied.y * varied.y);
         float angle = atan2(varied.y, varied.x);
@@ -281,10 +485,20 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
             varied.x * swirlCos - varied.y * swirlSin,
             varied.x * swirlSin + varied.y * swirlCos,
             nextDepth);
+        if (!IsFinitePoint3(samplePoint) || IsOrbitOutOfRange3(samplePoint))
+        {
+            samplePoint = float3(RandomFloat(rng) * 2.0 - 1.0, RandomFloat(rng) * 2.0 - 1.0, (RandomFloat(rng) * 2.0 - 1.0) * 0.35);
+            colorIndex = 0.5;
+            burnInRemaining = kBurnInIterations;
+            continue;
+        }
         colorIndex = lerp(colorIndex, layer.ColorIndex, 0.16);
 
-        if (iteration < kBurnInIterations)
+        if (burnInRemaining > 0u)
+        {
+            burnInRemaining -= 1u;
             continue;
+        }
 
         radius = sqrt(samplePoint.x * samplePoint.x + samplePoint.y * samplePoint.y);
         angle = atan2(samplePoint.y, samplePoint.x);
@@ -300,11 +514,15 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 
         float3 rotated = float3(world.x * yawCos + world.z * yawSin, world.y, -world.x * yawSin + world.z * yawCos);
         rotated = float3(rotated.x, rotated.y * pitchCos - rotated.z * pitchSin, rotated.y * pitchSin + rotated.z * pitchCos);
+        if (!IsFinitePoint3(rotated))
+            continue;
         rotated.z += Distance;
         if (rotated.z <= 0.15)
             continue;
 
         float perspective = 240.0 * Zoom2D / rotated.z;
+        if (!isfinite(perspective))
+            continue;
         int px = (int)round(Width * 0.5 + PanX + rotated.x * perspective);
         int py = (int)round(Height * 0.5 + PanY - rotated.y * perspective);
         if (px < 0 || py < 0 || px >= (int)Width || py >= (int)Height)
@@ -528,7 +746,7 @@ bool GpuFlameRenderer::Render(const Scene& scene, const int width, const int hei
 
     const std::uint32_t targetIterations = std::max<std::uint32_t>(previewIterations, 1u);
     const std::uint64_t remainingIterations = accumulatedIterations_ >= targetIterations ? 0u : static_cast<std::uint64_t>(targetIterations) - accumulatedIterations_;
-    const std::uint32_t progressiveBudget = std::clamp(targetIterations / 5u, kMinProgressiveBatchIterations, kMaxProgressiveBatchIterations);
+    const std::uint32_t progressiveBudget = std::clamp(targetIterations / 3u, kMinProgressiveBatchIterations, kMaxProgressiveBatchIterations);
     const std::uint32_t dispatchIterations =
         remainingIterations == 0u ? 0u : static_cast<std::uint32_t>(std::min<std::uint64_t>(remainingIterations, progressiveBudget));
     const std::uint32_t totalThreads = dispatchIterations == 0u
@@ -580,7 +798,7 @@ bool GpuFlameRenderer::Render(const Scene& scene, const int width, const int hei
         deviceContext_->CSSetShaderResources(0, 2, accumulateSrvs);
         deviceContext_->CSSetUnorderedAccessViews(0, 1, accumulateUavs, nullptr);
         deviceContext_->CSSetShader(accumulateShader_, nullptr, 0);
-        deviceContext_->Dispatch((totalThreads + 63u) / 64u, 1u, 1u);
+        deviceContext_->Dispatch((totalThreads + 127u) / 128u, 1u, 1u);
         accumulatedIterations_ += dispatchIterations;
     }
 
@@ -894,6 +1112,7 @@ void GpuFlameRenderer::ReleaseBuffers() {
 ID3DBlob* GpuFlameRenderer::CompileShader(const char* source, const char* entryPoint, const char* target, std::string& error) {
     ID3DBlob* shaderBlob = nullptr;
     ID3DBlob* errorBlob = nullptr;
+    const UINT compileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_PREFER_FLOW_CONTROL;
     const HRESULT result = D3DCompile(
         source,
         std::strlen(source),
@@ -902,7 +1121,7 @@ ID3DBlob* GpuFlameRenderer::CompileShader(const char* source, const char* entryP
         nullptr,
         entryPoint,
         target,
-        0,
+        compileFlags,
         0,
         &shaderBlob,
         &errorBlob);

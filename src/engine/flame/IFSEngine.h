@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <vector>
 
 #include "core/Math.h"
@@ -17,7 +18,7 @@ struct FlamePixel {
 
 class IFSEngine {
 public:
-    void Render(const Scene& scene, int width, int height, std::vector<FlamePixel>& output);
+    bool Render(const Scene& scene, int width, int height, std::vector<FlamePixel>& output, const std::function<bool()>& shouldAbort = {});
 
 private:
     static Vec2 ApplyAffine(const TransformLayer& layer, const Vec2& point);

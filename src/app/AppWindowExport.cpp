@@ -458,14 +458,15 @@ bool AppWindow::RenderSceneToPixelsGpu(
     const bool exportGrid = !hideGrid && exportScene.gridVisible;
 
     auto renderPathSceneGpu = [&](const Scene& scene, const bool transparent, const bool renderGrid, ID3D11ShaderResourceView* flameDepthSrv, GpuPathRenderer& renderer) {
-        if (!renderer.IsReady()) {
+        const wchar_t* label = &renderer == &gpuGridRenderer_ ? L"GPU grid renderer" : L"GPU path renderer";
+        if (!EnsureGpuPathRendererInitialized(renderer, label)) {
             return false;
         }
         return renderer.Render(scene, exportWidth, exportHeight, transparent, renderGrid, flameDepthSrv);
     };
 
     auto renderFlameSceneGpu = [&](const Scene& scene, const bool transparent) {
-        if (!gpuFlameRenderer_.IsReady()) {
+        if (!EnsureGpuFlameRendererInitialized()) {
             return false;
         }
         const std::uint32_t targetIterations = ComputeGpuExportFlameIterations(
@@ -566,7 +567,8 @@ bool AppWindow::RenderSceneToPixelsGpu(
             invalidateViewportPreview();
             return false;
         }
-        success = gpuDofRenderer_.Render(exportScene, exportWidth, exportHeight, gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)
+        success = EnsureGpuDofRendererInitialized()
+            && gpuDofRenderer_.Render(exportScene, exportWidth, exportHeight, gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)
             && ReadbackGpuTexture(gpuDofRenderer_.OutputTexture(), pixels);
         invalidateViewportPreview();
         return success && !pixels.empty();
