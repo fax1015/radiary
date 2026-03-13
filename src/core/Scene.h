@@ -171,6 +171,11 @@ struct DepthOfFieldSettings {
     double blurStrength = 0.45;
 };
 
+struct DenoiserSettings {
+    bool enabled = false;
+    double strength = 0.5;
+};
+
 struct TransformLayer {
     std::string name;
     bool visible = true;
@@ -278,6 +283,7 @@ struct ScenePose {
     CameraState camera {};
     FlameRenderSettings flameRender {};
     DepthOfFieldSettings depthOfField {};
+    DenoiserSettings denoiser {};
     std::vector<TransformLayer> transforms;
     std::vector<PathSettings> paths;
     std::vector<GradientStop> gradientStops;
@@ -304,6 +310,7 @@ struct Scene {
     CameraState camera {};
     FlameRenderSettings flameRender {};
     DepthOfFieldSettings depthOfField {};
+    DenoiserSettings denoiser {};
     std::vector<TransformLayer> transforms;
     std::vector<PathSettings> paths;
     std::vector<GradientStop> gradientStops;

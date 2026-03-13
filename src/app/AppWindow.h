@@ -19,6 +19,7 @@
 #include "io/SceneSerializer.h"
 #include "renderer/GpuFlameRenderer.h"
 #include "renderer/GpuDofRenderer.h"
+#include "renderer/GpuDenoiser.h"
 #include "renderer/GpuPathRenderer.h"
 #include "renderer/SoftwareRenderer.h"
 
@@ -63,9 +64,10 @@ private:
         CpuPath,
         CpuHybrid,
         GpuFlame,
-        GpuDof,
         GpuPath,
-        GpuHybrid
+        GpuHybrid,
+        GpuDof,
+        GpuDenoised
     };
 
     enum class ExportFormat {
@@ -111,6 +113,7 @@ private:
     std::vector<Scene> redoStack_;
     GpuFlameRenderer gpuFlameRenderer_;
     GpuDofRenderer gpuDofRenderer_;
+    GpuDenoiser gpuDenoiser_;
     GpuPathRenderer gpuGridRenderer_;
     GpuPathRenderer gpuPathRenderer_;
     SoftwareRenderer renderer_;
@@ -230,6 +233,7 @@ private:
     bool EnsureGpuFlameRendererInitialized();
     bool EnsureGpuPathRendererInitialized(GpuPathRenderer& renderer, const wchar_t* label);
     bool EnsureGpuDofRendererInitialized();
+    bool EnsureGpuDenoiserInitialized();
     void EnumerateAdapters();
     bool ApplyPendingGraphicsDeviceChange();
     void CleanupDeviceD3D();

@@ -171,6 +171,7 @@ void AppWindow::RenderThreadMain() {
 
         std::vector<std::uint32_t> pixels;
         SoftwareRenderer::RenderOptions options;
+        options.interactive = interactivePreview_;
         options.shouldAbort = [this, generation]() {
             std::lock_guard<std::mutex> lock(renderMutex_);
             return renderThreadExit_ || pendingRenderGeneration_ > generation;
@@ -199,6 +200,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
     Scene renderScene = BuildRenderableScene(EvaluateSceneAtFrame(scene_, scene_.timelineFrame));
     const bool useGpuViewportPreview = gpuFlamePreviewEnabled_;
     const bool useGpuDofPreview = useGpuViewportPreview && renderScene.depthOfField.enabled;
+    const bool useGpuDenoiserPreview = useGpuViewportPreview && renderScene.denoiser.enabled;
     std::uint32_t previewIterations = ViewportPreviewIterations(
         renderScene,
         interactivePreview_,
@@ -234,8 +236,13 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
         useGpuDofPreview
         && !interactivePreview_
         && !gpuAccumulationIncomplete
-        && displayedPreviewBackend_ != PreviewBackend::GpuDof;
-    if ((!viewportDirty_ && !sizeChanged && !gpuAccumulationIncomplete && !needsGpuDofResolve) || throttleGpuAccumulation) {
+        && (displayedPreviewBackend_ != PreviewBackend::GpuDof && displayedPreviewBackend_ != PreviewBackend::GpuDenoised);
+    const bool needsGpuDenoiserResolve =
+        useGpuDenoiserPreview
+        && !interactivePreview_
+        && !gpuAccumulationIncomplete
+        && displayedPreviewBackend_ != PreviewBackend::GpuDenoised;
+    if ((!viewportDirty_ && !sizeChanged && !gpuAccumulationIncomplete && !needsGpuDofResolve && !needsGpuDenoiserResolve) || throttleGpuAccumulation) {
         return;
     }
 
@@ -263,6 +270,19 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
             return setDirectGpuPreview(PreviewBackend::GpuDof, displayedIterations);
         };
 
+        const auto renderGpuDenoiserPreview = [&](
+            ID3D11ShaderResourceView* gridSrv,
+            ID3D11ShaderResourceView* flameSrv,
+            ID3D11ShaderResourceView* flameDepthSrv,
+            ID3D11ShaderResourceView* pathSrv,
+            ID3D11ShaderResourceView* pathDepthSrv,
+            const std::uint32_t displayedIterations) {
+            if (!gpuDenoiser_.Render(renderScene, targetWidth, targetHeight, gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)) {
+                return false;
+            }
+            return setDirectGpuPreview(PreviewBackend::GpuDenoised, displayedIterations);
+        };
+
         if (renderScene.mode == SceneMode::Flame) {
             const bool flameRendererReady = EnsureGpuFlameRendererInitialized();
             const bool gridRendererReady = !renderScene.gridVisible || EnsureGpuPathRendererInitialized(gpuGridRenderer_, L"GPU grid renderer");
@@ -278,19 +298,43 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
             if (flameOk && gridOk) {
                 const std::uint32_t displayedIterations = static_cast<std::uint32_t>(
                     std::min<std::uint64_t>(gpuFlameRenderer_.AccumulatedIterations(), static_cast<std::uint64_t>(previewIterations)));
-                if (useGpuDofPreview && dofRendererReady) {
-                    const bool dofReady = !interactivePreview_ && displayedIterations >= previewIterations;
-                    if (!dofReady) {
-                        setDirectGpuPreview(renderScene.gridVisible ? PreviewBackend::GpuHybrid : PreviewBackend::GpuFlame, displayedIterations);
-                        return;
+                
+                const bool denoiserRendererReady = !useGpuDenoiserPreview || EnsureGpuDenoiserInitialized();
+                const bool applyDenoiser = useGpuDenoiserPreview && denoiserRendererReady && !interactivePreview_ && displayedIterations >= previewIterations;
+                const bool applyDof = useGpuDofPreview && dofRendererReady && !interactivePreview_ && displayedIterations >= previewIterations;
+
+                if (applyDenoiser || applyDof) {
+                    ID3D11ShaderResourceView* flameSrv = gpuFlameRenderer_.ShaderResourceView();
+                    ID3D11ShaderResourceView* flameDepthSrv = gpuFlameRenderer_.DepthShaderResourceView();
+                    
+                    if (applyDenoiser) {
+                        if (!gpuDenoiser_.Render(
+                                renderScene,
+                                targetWidth,
+                                targetHeight,
+                                renderScene.gridVisible ? gpuGridRenderer_.ShaderResourceView() : nullptr,
+                                flameSrv,
+                                flameDepthSrv,
+                                nullptr,
+                                nullptr)) {
+                            return;
+                        }
+                        flameSrv = gpuDenoiser_.ShaderResourceView();
+                        // Denoising preserves depth, but we don't have a new depth SRV. We reuse the original.
                     }
-                    if (renderGpuDofPreview(
-                            renderScene.gridVisible ? gpuGridRenderer_.ShaderResourceView() : nullptr,
-                            gpuFlameRenderer_.ShaderResourceView(),
-                            gpuFlameRenderer_.DepthShaderResourceView(),
-                            nullptr,
-                            nullptr,
-                            displayedIterations)) {
+
+                    if (applyDof) {
+                        if (renderGpuDofPreview(
+                                applyDenoiser ? nullptr : (renderScene.gridVisible ? gpuGridRenderer_.ShaderResourceView() : nullptr),
+                                flameSrv,
+                                flameDepthSrv,
+                                nullptr,
+                                nullptr,
+                                displayedIterations)) {
+                            return;
+                        }
+                    } else {
+                        setDirectGpuPreview(PreviewBackend::GpuDenoised, displayedIterations);
                         return;
                     }
                 } else {
@@ -362,19 +406,42 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
             if (flameOk && gridOk && pathOk) {
                 const std::uint32_t displayedIterations = static_cast<std::uint32_t>(
                     std::min<std::uint64_t>(gpuFlameRenderer_.AccumulatedIterations(), static_cast<std::uint64_t>(previewIterations)));
-                if (useGpuDofPreview && dofRendererReady) {
-                    const bool dofReady = !interactivePreview_ && displayedIterations >= previewIterations;
-                    if (!dofReady) {
-                        setDirectGpuPreview(PreviewBackend::GpuHybrid, displayedIterations);
-                        return;
+                
+                const bool denoiserRendererReady = !useGpuDenoiserPreview || EnsureGpuDenoiserInitialized();
+                const bool applyDenoiser = useGpuDenoiserPreview && denoiserRendererReady && !interactivePreview_ && displayedIterations >= previewIterations;
+                const bool applyDof = useGpuDofPreview && dofRendererReady && !interactivePreview_ && displayedIterations >= previewIterations;
+
+                if (applyDenoiser || applyDof) {
+                    ID3D11ShaderResourceView* flameSrv = gpuFlameRenderer_.ShaderResourceView();
+                    ID3D11ShaderResourceView* flameDepthSrv = gpuFlameRenderer_.DepthShaderResourceView();
+                    
+                    if (applyDenoiser) {
+                        if (!gpuDenoiser_.Render(
+                                renderScene,
+                                targetWidth,
+                                targetHeight,
+                                renderScene.gridVisible ? gpuGridRenderer_.ShaderResourceView() : nullptr,
+                                flameSrv,
+                                flameDepthSrv,
+                                gpuPathRenderer_.ShaderResourceView(),
+                                gpuPathRenderer_.DepthShaderResourceView())) {
+                            return;
+                        }
+                        flameSrv = gpuDenoiser_.ShaderResourceView();
                     }
-                    if (renderGpuDofPreview(
-                            renderScene.gridVisible ? gpuGridRenderer_.ShaderResourceView() : nullptr,
-                            gpuFlameRenderer_.ShaderResourceView(),
-                            gpuFlameRenderer_.DepthShaderResourceView(),
-                            gpuPathRenderer_.ShaderResourceView(),
-                            gpuPathRenderer_.DepthShaderResourceView(),
-                            displayedIterations)) {
+
+                    if (applyDof) {
+                        if (renderGpuDofPreview(
+                                applyDenoiser ? nullptr : (renderScene.gridVisible ? gpuGridRenderer_.ShaderResourceView() : nullptr),
+                                flameSrv,
+                                flameDepthSrv,
+                                applyDenoiser ? nullptr : gpuPathRenderer_.ShaderResourceView(),
+                                applyDenoiser ? nullptr : gpuPathRenderer_.DepthShaderResourceView(),
+                                displayedIterations)) {
+                            return;
+                        }
+                    } else {
+                        setDirectGpuPreview(PreviewBackend::GpuDenoised, displayedIterations);
                         return;
                     }
                 } else {

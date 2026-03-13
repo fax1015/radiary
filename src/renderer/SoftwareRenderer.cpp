@@ -1442,6 +1442,205 @@ void SoftwareRenderer::ApplyDepthOfField(
     }
 }
 
+void SoftwareRenderer::ApplyDenoising(
+    const Scene& scene,
+    std::vector<std::uint32_t>& pixels,
+    const int width,
+    const int height,
+    const std::vector<float>& depthBuffer,
+    const std::function<bool()>& shouldAbort) {
+    if (!scene.denoiser.enabled || scene.denoiser.strength <= 0.0 || width <= 0 || height <= 0 || pixels.empty() || depthBuffer.size() != pixels.size()) {
+        return;
+    }
+
+    const int passes = static_cast<int>(std::ceil(scene.denoiser.strength * 3.0));
+    const double sigmaSpatial = 3.0 + scene.denoiser.strength * 4.0;
+    const double sigmaDepth = 0.05 + scene.denoiser.strength * 0.1;
+    const int radius = std::clamp(static_cast<int>(std::ceil(sigmaSpatial * 2.0)), 1, 8);
+    const int blurRadius = std::clamp(static_cast<int>(std::ceil(sigmaSpatial)), 1, 4);
+
+    const double invSpatialVar = 1.0 / (2.0 * sigmaSpatial * sigmaSpatial);
+    const double invDepthVar = 1.0 / (2.0 * sigmaDepth * sigmaDepth);
+    const double thresholdMult = Lerp(4.0, 0.5, Clamp(scene.denoiser.strength, 0.0, 1.0));
+
+    std::vector<std::uint32_t> source = pixels;
+    std::vector<std::uint32_t> temp(pixels.size());
+
+    // Generate spatial weights once
+    std::vector<double> spatialWeightsLarge(static_cast<std::size_t>((radius * 2 + 1) * (radius * 2 + 1)));
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            const double distSq = static_cast<double>(dx * dx + dy * dy);
+            spatialWeightsLarge[static_cast<std::size_t>((dy + radius) * (radius * 2 + 1) + (dx + radius))] = std::exp(-distSq * invSpatialVar);
+        }
+    }
+
+    std::vector<double> spatialWeightsSmall(static_cast<std::size_t>((blurRadius * 2 + 1) * (blurRadius * 2 + 1)));
+    for (int dy = -blurRadius; dy <= blurRadius; ++dy) {
+        for (int dx = -blurRadius; dx <= blurRadius; ++dx) {
+            const double distSq = static_cast<double>(dx * dx + dy * dy);
+            spatialWeightsSmall[static_cast<std::size_t>((dy + blurRadius) * (blurRadius * 2 + 1) + (dx + blurRadius))] = std::exp(-distSq * invSpatialVar);
+        }
+    }
+
+    for (int pass = 0; pass < passes; ++pass) {
+        if (shouldAbort && shouldAbort()) {
+            return;
+        }
+
+        // Ping-pong buffers
+        const std::vector<std::uint32_t>& readBuffer = pass % 2 == 0 ? source : temp;
+        std::vector<std::uint32_t>& writeBuffer = pass % 2 == 0 ? temp : source;
+
+        #pragma omp parallel for schedule(dynamic)
+        for (int y = 0; y < height; ++y) {
+            if (shouldAbort && shouldAbort()) {
+                continue;
+            }
+            for (int x = 0; x < width; ++x) {
+                const std::size_t centerIndex = static_cast<std::size_t>(y * width + x);
+                const Color centerColorRaw = UnpackBgra(readBuffer[centerIndex]);
+                const float centerDepth = depthBuffer[centerIndex];
+                
+                const double cr = centerColorRaw.r / 255.0;
+                const double cg = centerColorRaw.g / 255.0;
+                const double cb = centerColorRaw.b / 255.0;
+                const double ca = centerColorRaw.a / 255.0;
+
+                // Pass 1: Local Mean and Variance
+                double sumR = 0.0, sumG = 0.0, sumB = 0.0, sumA = 0.0;
+                double sumSqR = 0.0, sumSqG = 0.0, sumSqB = 0.0, sumSqA = 0.0;
+                double weightSum = 0.0;
+
+                const int minY = std::max(0, y - radius);
+                const int maxY = std::min(height - 1, y + radius);
+                const int minX = std::max(0, x - radius);
+                const int maxX = std::min(width - 1, x + radius);
+
+                for (int sy = minY; sy <= maxY; ++sy) {
+                    for (int sx = minX; sx <= maxX; ++sx) {
+                        const std::size_t sampleIndex = static_cast<std::size_t>(sy * width + sx);
+                        const Color sampleColor = UnpackBgra(readBuffer[sampleIndex]);
+
+                        const double sr = sampleColor.r / 255.0;
+                        const double sg = sampleColor.g / 255.0;
+                        const double sb = sampleColor.b / 255.0;
+                        const double sa = sampleColor.a / 255.0;
+
+                        const double spatialWeight = spatialWeightsLarge[static_cast<std::size_t>((sy - y + radius) * (radius * 2 + 1) + (sx - x + radius))];
+                        
+                        // Only include actual flame pixels in the statistics to avoid biasing the mean towards the void
+                        const double weight = spatialWeight * (sa > 0.01 ? 1.0 : 0.001);
+
+                        sumR += sr * weight;
+                        sumG += sg * weight;
+                        sumB += sb * weight;
+                        sumA += sa * weight;
+                        
+                        sumSqR += sr * sr * weight;
+                        sumSqG += sg * sg * weight;
+                        sumSqB += sb * sb * weight;
+                        sumSqA += sa * sa * weight;
+
+                        weightSum += weight;
+                    }
+                }
+
+                const double meanR = sumR / weightSum;
+                const double meanG = sumG / weightSum;
+                const double meanB = sumB / weightSum;
+                const double meanA = sumA / weightSum;
+
+                const double varR = std::max(0.0, (sumSqR / weightSum) - (meanR * meanR));
+                const double varG = std::max(0.0, (sumSqG / weightSum) - (meanG * meanG));
+                const double varB = std::max(0.0, (sumSqB / weightSum) - (meanB * meanB));
+                const double varA = std::max(0.0, (sumSqA / weightSum) - (meanA * meanA));
+
+                const double devR = std::sqrt(varR);
+                const double devG = std::sqrt(varG);
+                const double devB = std::sqrt(varB);
+                const double devA = std::sqrt(varA);
+
+                const double minR = meanR - devR * thresholdMult;
+                const double minG = meanG - devG * thresholdMult;
+                const double minB = meanB - devB * thresholdMult;
+                const double minA = meanA - devA * thresholdMult;
+
+                const double maxR = meanR + devR * thresholdMult;
+                const double maxG = meanG + devG * thresholdMult;
+                const double maxB = meanB + devB * thresholdMult;
+                const double maxA = meanA + devA * thresholdMult;
+
+                const double clampedCr = Clamp(cr, minR, maxR);
+                const double clampedCg = Clamp(cg, minG, maxG);
+                const double clampedCb = Clamp(cb, minB, maxB);
+                const double clampedCa = Clamp(ca, minA, maxA);
+
+                // Pass 2: Blur with pre-clamped neighbors and depth edge-stopping
+                double blurSumR = 0.0, blurSumG = 0.0, blurSumB = 0.0, blurSumA = 0.0;
+                double blurWeightSum = 0.0;
+
+                const int bMinY = std::max(0, y - blurRadius);
+                const int bMaxY = std::min(height - 1, y + blurRadius);
+                const int bMinX = std::max(0, x - blurRadius);
+                const int bMaxX = std::min(width - 1, x + blurRadius);
+
+                for (int sy = bMinY; sy <= bMaxY; ++sy) {
+                    for (int sx = bMinX; sx <= bMaxX; ++sx) {
+                        const std::size_t sampleIndex = static_cast<std::size_t>(sy * width + sx);
+                        const Color sampleColorRaw = UnpackBgra(readBuffer[sampleIndex]);
+                        const float sampleDepth = depthBuffer[sampleIndex];
+
+                        // Clamp neighbor using the same local bounds to ignore its firefly status
+                        const double sr = Clamp(sampleColorRaw.r / 255.0, minR, maxR);
+                        const double sg = Clamp(sampleColorRaw.g / 255.0, minG, maxG);
+                        const double sb = Clamp(sampleColorRaw.b / 255.0, minB, maxB);
+                        const double sa = Clamp(sampleColorRaw.a / 255.0, minA, maxA);
+
+                        const double spatialWeight = spatialWeightsSmall[static_cast<std::size_t>((sy - y + blurRadius) * (blurRadius * 2 + 1) + (sx - x + blurRadius))];
+                        
+                        const double depthDist = static_cast<double>(sampleDepth - centerDepth);
+                        const double depthDistSq = depthDist * depthDist;
+                        const double depthWeight = std::exp(-depthDistSq * invDepthVar);
+                        
+                        const double weight = spatialWeight * depthWeight;
+
+                        blurSumR += sr * weight;
+                        blurSumG += sg * weight;
+                        blurSumB += sb * weight;
+                        blurSumA += sa * weight;
+                        blurWeightSum += weight;
+                    }
+                }
+
+                if (blurWeightSum > 1.0e-6) {
+                    const double finalR = Lerp(clampedCr, blurSumR / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
+                    const double finalG = Lerp(clampedCg, blurSumG / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
+                    const double finalB = Lerp(clampedCb, blurSumB / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
+                    const double finalA = Lerp(clampedCa, blurSumA / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
+
+                    writeBuffer[centerIndex] = ToBgra({
+                        static_cast<std::uint8_t>(std::clamp(std::round(finalR * 255.0), 0.0, 255.0)),
+                        static_cast<std::uint8_t>(std::clamp(std::round(finalG * 255.0), 0.0, 255.0)),
+                        static_cast<std::uint8_t>(std::clamp(std::round(finalB * 255.0), 0.0, 255.0)),
+                        static_cast<std::uint8_t>(std::clamp(std::round(finalA * 255.0), 0.0, 255.0))
+                    });
+                } else {
+                    writeBuffer[centerIndex] = ToBgra({
+                        static_cast<std::uint8_t>(std::clamp(std::round(clampedCr * 255.0), 0.0, 255.0)),
+                        static_cast<std::uint8_t>(std::clamp(std::round(clampedCg * 255.0), 0.0, 255.0)),
+                        static_cast<std::uint8_t>(std::clamp(std::round(clampedCb * 255.0), 0.0, 255.0)),
+                        static_cast<std::uint8_t>(std::clamp(std::round(clampedCa * 255.0), 0.0, 255.0))
+                    });
+                }
+            }
+        }
+    }
+
+    // Copy final result back to pixels
+    pixels = passes % 2 == 1 ? temp : source;
+}
+
 SoftwareRenderer::ProjectedPoint SoftwareRenderer::Project(
     const Vec3& point,
     const CameraState& camera,
@@ -1566,10 +1765,15 @@ bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
     }
 
     if (!options.renderPaths || scene.mode == SceneMode::Flame) {
-        if (scene.depthOfField.enabled) {
+        if (!options.interactive && (scene.denoiser.enabled || scene.depthOfField.enabled)) {
             std::vector<float> depthBuffer;
             BuildDepthMap(scene, width, height, depthBuffer);
-            ApplyDepthOfField(scene, pixels, width, height, depthBuffer);
+            if (scene.denoiser.enabled) {
+                ApplyDenoising(scene, pixels, width, height, depthBuffer, options.shouldAbort);
+            }
+            if (scene.depthOfField.enabled) {
+                ApplyDepthOfField(scene, pixels, width, height, depthBuffer);
+            }
         }
         return true;
     }
@@ -1599,10 +1803,15 @@ bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
             point.size);
     }
 
-    if (scene.depthOfField.enabled) {
+    if (!options.interactive && (scene.denoiser.enabled || scene.depthOfField.enabled)) {
         std::vector<float> depthBuffer;
         BuildDepthMap(scene, width, height, depthBuffer);
-        ApplyDepthOfField(scene, pixels, width, height, depthBuffer);
+        if (scene.denoiser.enabled) {
+            ApplyDenoising(scene, pixels, width, height, depthBuffer, options.shouldAbort);
+        }
+        if (scene.depthOfField.enabled) {
+            ApplyDepthOfField(scene, pixels, width, height, depthBuffer);
+        }
     }
 
     return true;

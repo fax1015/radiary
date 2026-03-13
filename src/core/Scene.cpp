@@ -1080,6 +1080,7 @@ ScenePose CaptureScenePose(const Scene& scene) {
     pose.camera = scene.camera;
     pose.flameRender = scene.flameRender;
     pose.depthOfField = scene.depthOfField;
+    pose.denoiser = scene.denoiser;
     pose.transforms = scene.transforms;
     pose.paths = scene.paths;
     pose.gradientStops = scene.gradientStops;
@@ -1104,6 +1105,7 @@ void ApplyScenePose(Scene& scene, const ScenePose& pose) {
     scene.camera = pose.camera;
     scene.flameRender = pose.flameRender;
     scene.depthOfField = pose.depthOfField;
+    scene.denoiser = pose.denoiser;
     scene.transforms = pose.transforms;
     scene.paths = pose.paths;
     scene.gradientStops = pose.gradientStops;
@@ -1230,6 +1232,8 @@ ScenePose InterpolatePose(const ScenePose& left, const ScenePose& right, const d
     pose.depthOfField.focusDepth = Lerp(left.depthOfField.focusDepth, right.depthOfField.focusDepth, alpha);
     pose.depthOfField.focusRange = Lerp(left.depthOfField.focusRange, right.depthOfField.focusRange, alpha);
     pose.depthOfField.blurStrength = Lerp(left.depthOfField.blurStrength, right.depthOfField.blurStrength, alpha);
+    pose.denoiser.enabled = alpha < 0.5 ? left.denoiser.enabled : right.denoiser.enabled;
+    pose.denoiser.strength = Lerp(left.denoiser.strength, right.denoiser.strength, alpha);
     pose.backgroundColor = Lerp(left.backgroundColor, right.backgroundColor, alpha);
     pose.gridVisible = alpha < 0.5 ? left.gridVisible : right.gridVisible;
 

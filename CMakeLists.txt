@@ -22,8 +22,9 @@ set(radiary_sources
     src/engine/path/SplinePath.cpp
     src/renderer/SoftwareRenderer.cpp
     src/renderer/GpuFlameRenderer.cpp
-    src/renderer/GpuDofRenderer.cpp
     src/renderer/GpuPathRenderer.cpp
+    src/renderer/GpuDofRenderer.cpp
+    src/renderer/GpuDenoiser.cpp
     src/io/SceneSerializer.cpp
     src/io/PresetLibrary.cpp
     src/app/AppWidgets.cpp

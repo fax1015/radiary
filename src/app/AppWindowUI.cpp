@@ -1985,7 +1985,37 @@ void AppWindow::DrawTimelinePanel() {
         }
         CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
 
+        ImGui::TableNextColumn();
+        const Scene beforeDenoiserEnabled = scene_;
+        bool denoiserEnabledChanged = ImGui::Checkbox("Denoiser", &scene_.denoiser.enabled);
+        denoiserEnabledChanged = ResetValueOnDoubleClick(scene_.denoiser.enabled, defaultScene.denoiser.enabled) || denoiserEnabledChanged;
+        if (denoiserEnabledChanged) {
+            viewportDirty_ = true;
+        }
+        CaptureWidgetUndo(beforeDenoiserEnabled, denoiserEnabledChanged);
+
         ImGui::EndTable();
+    }
+
+    if (scene_.denoiser.enabled) {
+        const double denoiserStrengthMin = 0.0;
+        const double denoiserStrengthMax = 1.0;
+
+        ImGui::SeparatorText("Denoising");
+        if (beginPreviewGrid("##preview_denoise_grid")) {
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("Denoiser Strength");
+            setPreviewColumnItemWidth();
+            Scene beforeDenoise = scene_;
+            bool denoiseChanged = SliderScalarWithInput("##preview_denoiser_strength", ImGuiDataType_Double, &scene_.denoiser.strength, &denoiserStrengthMin, &denoiserStrengthMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.denoiser.strength, defaultScene.denoiser.strength);
+            if (denoiseChanged) {
+                viewportDirty_ = true;
+            }
+            CaptureWidgetUndo(beforeDenoise, denoiseChanged);
+
+            ImGui::EndTable();
+        }
     }
 
     if (scene_.depthOfField.enabled) {
@@ -2063,6 +2093,9 @@ void AppWindow::DrawTimelinePanel() {
         break;
     case PreviewBackend::GpuHybrid:
         previewBackend = "GPU Flame + GPU Path";
+        break;
+    case PreviewBackend::GpuDenoised:
+        previewBackend = "GPU Denoised";
         break;
     }
     ImGui::TextDisabled(
@@ -2252,6 +2285,7 @@ void AppWindow::DrawViewportPanel() {
         gpuFlamePreviewEnabled_
         && (displayedPreviewBackend_ == PreviewBackend::GpuFlame
             || displayedPreviewBackend_ == PreviewBackend::GpuDof
+            || displayedPreviewBackend_ == PreviewBackend::GpuDenoised
             || displayedPreviewBackend_ == PreviewBackend::GpuPath
             || displayedPreviewBackend_ == PreviewBackend::GpuHybrid);
 
@@ -2282,6 +2316,10 @@ void AppWindow::DrawViewportPanel() {
         } else if (displayedPreviewBackend_ == PreviewBackend::GpuDof
             && gpuDofRenderer_.ShaderResourceView() != nullptr) {
             ImGui::Image(reinterpret_cast<ImTextureID>(gpuDofRenderer_.ShaderResourceView()), available);
+            hovered = ImGui::IsItemHovered();
+        } else if (displayedPreviewBackend_ == PreviewBackend::GpuDenoised
+            && gpuDenoiser_.ShaderResourceView() != nullptr) {
+            ImGui::Image(reinterpret_cast<ImTextureID>(gpuDenoiser_.ShaderResourceView()), available);
             hovered = ImGui::IsItemHovered();
         } else if (scene_.mode == SceneMode::Path
             && displayedPreviewBackend_ == PreviewBackend::GpuPath

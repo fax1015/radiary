@@ -283,6 +283,23 @@ bool AppWindow::EnsureGpuDofRendererInitialized() {
     return true;
 }
 
+bool AppWindow::EnsureGpuDenoiserInitialized() {
+    if (gpuDenoiser_.IsReady()) {
+        return true;
+    }
+    if (device_ == nullptr || deviceContext_ == nullptr) {
+        statusText_ = L"GPU Denoiser unavailable: D3D11 device/context is not ready.";
+        return false;
+    }
+    if (!gpuDenoiser_.Initialize(device_.Get(), deviceContext_.Get())) {
+        if (!gpuDenoiser_.LastError().empty()) {
+            statusText_ = L"GPU Denoiser unavailable: " + Utf8ToWide(gpuDenoiser_.LastError());
+        }
+        return false;
+    }
+    return true;
+}
+
 void AppWindow::EnumerateAdapters() {
     adapterOptions_.clear();
 
