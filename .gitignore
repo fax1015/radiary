@@ -1,0 +1,38 @@
+# Build directories
+build/
+build-release/
+build-vs/
+build-vsdev/
+out/
+cmake-build-*/
+
+# Build artifacts
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.exp
+*.idb
+*.suo
+*.user
+*.sln
+*.vcxproj
+*.vcxproj.filters
+
+# Logs
+*.log
+
+# Temporary files
+temp/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

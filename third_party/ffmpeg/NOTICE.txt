@@ -1,0 +1,19 @@
+Custom minimal FFmpeg bundle for Radiary
+
+Source repositories:
+- FFmpeg: https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz
+- x264: https://code.videolan.org/videolan/x264.git (branch: stable)
+
+Enabled runtime surface:
+- protocol: file
+- protocol: pipe
+- demuxer: rawvideo
+- muxer: mp4
+- muxer: mov
+- encoder: libx264
+- library: swscale
+
+Notes:
+- This bundle is intended only for Radiary raw BGRA stdin export to MP4/MOV.
+- The resulting binary can be embedded into Radiary.exe when RADIARY_EMBED_FFMPEG is ON.
+- Review FFmpeg and x264 licensing before redistribution.

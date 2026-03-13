@@ -1,0 +1,660 @@
+#include "app/AppWindow.h"
+#include "app/AppWidgets.h"
+
+#include <d3d11.h>
+#include <dxgi1_2.h>
+
+#include <algorithm>
+#include <fstream>
+#include <map>
+#include <string>
+
+#include "imgui.h"
+#include "imgui_impl_dx11.h"
+#include "imgui_impl_win32.h"
+
+using namespace radiary;
+
+namespace {
+
+constexpr int kAppSettingsVersion = 1;
+
+std::filesystem::path UserSettingsPath() {
+    wchar_t localAppData[MAX_PATH] = L"";
+    const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) {
+        return std::filesystem::path(localAppData) / "Radiary" / "user-settings.ini";
+    }
+    return std::filesystem::current_path() / "user-settings.ini";
+}
+
+std::string TrimAscii(std::string value) {
+    const auto isSpace = [](const unsigned char character) {
+        return std::isspace(character) != 0;
+    };
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [&](const char character) {
+        return !isSpace(static_cast<unsigned char>(character));
+    }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [&](const char character) {
+        return !isSpace(static_cast<unsigned char>(character));
+    }).base(), value.end());
+    return value;
+}
+
+std::map<std::string, std::string> LoadKeyValueFile(const std::filesystem::path& path) {
+    std::map<std::string, std::string> values;
+    std::ifstream stream(path);
+    if (!stream) {
+        return values;
+    }
+
+    std::string line;
+    while (std::getline(stream, line)) {
+        const std::string trimmed = TrimAscii(line);
+        if (trimmed.empty() || trimmed[0] == '#') {
+            continue;
+        }
+        const std::size_t separator = trimmed.find('=');
+        if (separator == std::string::npos) {
+            continue;
+        }
+        values.emplace(
+            TrimAscii(trimmed.substr(0, separator)),
+            TrimAscii(trimmed.substr(separator + 1)));
+    }
+    return values;
+}
+
+bool TryParseIntValue(const std::map<std::string, std::string>& values, const char* key, int& output) {
+    const auto iterator = values.find(key);
+    if (iterator == values.end()) {
+        return false;
+    }
+    try {
+        output = std::stoi(iterator->second);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool TryParseUintValue(const std::map<std::string, std::string>& values, const char* key, std::uint32_t& output) {
+    const auto iterator = values.find(key);
+    if (iterator == values.end()) {
+        return false;
+    }
+    try {
+        output = static_cast<std::uint32_t>(std::stoul(iterator->second));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool TryParseFloatValue(const std::map<std::string, std::string>& values, const char* key, float& output) {
+    const auto iterator = values.find(key);
+    if (iterator == values.end()) {
+        return false;
+    }
+    try {
+        output = std::stof(iterator->second);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool TryParseDoubleValue(const std::map<std::string, std::string>& values, const char* key, double& output) {
+    const auto iterator = values.find(key);
+    if (iterator == values.end()) {
+        return false;
+    }
+    try {
+        output = std::stod(iterator->second);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool TryParseBoolValue(const std::map<std::string, std::string>& values, const char* key, bool& output) {
+    const auto iterator = values.find(key);
+    if (iterator == values.end()) {
+        return false;
+    }
+    if (iterator->second == "1" || iterator->second == "true") {
+        output = true;
+        return true;
+    }
+    if (iterator->second == "0" || iterator->second == "false") {
+        output = false;
+        return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+namespace radiary {
+
+bool AppWindow::CreateDeviceD3D() {
+    IDXGIFactory1* factory = nullptr;
+    IDXGIAdapter* selectedAdapter = nullptr;
+    if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+        if (selectedAdapterIndex_ >= 0 && selectedAdapterIndex_ < static_cast<int>(adapterOptions_.size())) {
+            factory->EnumAdapters(adapterOptions_[static_cast<std::size_t>(selectedAdapterIndex_)].ordinal, &selectedAdapter);
+        }
+    }
+
+    DXGI_SWAP_CHAIN_DESC swapChainDesc {};
+    swapChainDesc.BufferCount = 2;
+    swapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    swapChainDesc.BufferDesc.RefreshRate.Numerator = 60;
+    swapChainDesc.BufferDesc.RefreshRate.Denominator = 1;
+    swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    swapChainDesc.OutputWindow = window_;
+    swapChainDesc.SampleDesc.Count = 1;
+    swapChainDesc.Windowed = TRUE;
+    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+    UINT createDeviceFlags = 0;
+    D3D_FEATURE_LEVEL featureLevel {};
+    constexpr D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0};
+
+    usingWarpDevice_ = false;
+
+    HRESULT result = D3D11CreateDeviceAndSwapChain(
+        selectedAdapter,
+        selectedAdapter != nullptr ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE,
+        nullptr,
+        createDeviceFlags,
+        levels,
+        2,
+        D3D11_SDK_VERSION,
+        &swapChainDesc,
+        swapChain_.GetAddressOf(),
+        device_.GetAddressOf(),
+        &featureLevel,
+        deviceContext_.GetAddressOf());
+    if (result == DXGI_ERROR_UNSUPPORTED) {
+        usingWarpDevice_ = true;
+        result = D3D11CreateDeviceAndSwapChain(
+            nullptr,
+            D3D_DRIVER_TYPE_WARP,
+            nullptr,
+            createDeviceFlags,
+            levels,
+            2,
+            D3D11_SDK_VERSION,
+            &swapChainDesc,
+            swapChain_.GetAddressOf(),
+            device_.GetAddressOf(),
+            &featureLevel,
+            deviceContext_.GetAddressOf());
+    }
+    if (FAILED(result)) {
+        if (selectedAdapter) { selectedAdapter->Release(); }
+        if (factory) { factory->Release(); }
+        return false;
+    }
+
+    IDXGIDevice* dxgiDevice = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    if (SUCCEEDED(device_->QueryInterface(IID_PPV_ARGS(&dxgiDevice)))
+        && SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+        DXGI_ADAPTER_DESC adapterDesc {};
+        if (SUCCEEDED(adapter->GetDesc(&adapterDesc))) {
+            renderAdapterName_ = adapterDesc.Description;
+            activeAdapterIndex_ = -1;
+            for (std::size_t index = 0; index < adapterOptions_.size(); ++index) {
+                const LUID& luid = adapterOptions_[index].luid;
+                if (luid.HighPart == adapterDesc.AdapterLuid.HighPart && luid.LowPart == adapterDesc.AdapterLuid.LowPart) {
+                    activeAdapterIndex_ = static_cast<int>(index);
+                    selectedAdapterIndex_ = activeAdapterIndex_;
+                    break;
+                }
+            }
+        }
+    }
+    if (adapter) { adapter->Release(); }
+    if (dxgiDevice) { dxgiDevice->Release(); }
+
+    IDXGIFactory* swapChainFactory = nullptr;
+    if (SUCCEEDED(swapChain_->GetParent(IID_PPV_ARGS(&swapChainFactory)))) {
+        swapChainFactory->MakeWindowAssociation(window_, DXGI_MWA_NO_ALT_ENTER);
+        swapChainFactory->Release();
+    }
+    if (selectedAdapter) { selectedAdapter->Release(); }
+    if (factory) { factory->Release(); }
+
+    CreateRenderTarget();
+    gpuFlameRenderer_.Initialize(device_.Get(), deviceContext_.Get());
+    if (!gpuDofRenderer_.Initialize(device_.Get(), deviceContext_.Get()) && !gpuDofRenderer_.LastError().empty()) {
+        statusText_ = L"GPU DOF unavailable: " + Utf8ToWide(gpuDofRenderer_.LastError());
+    }
+    gpuGridRenderer_.Initialize(device_.Get(), deviceContext_.Get());
+    gpuPathRenderer_.Initialize(device_.Get(), deviceContext_.Get());
+    return true;
+}
+
+void AppWindow::EnumerateAdapters() {
+    adapterOptions_.clear();
+
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+        return;
+    }
+
+    for (UINT ordinal = 0;; ++ordinal) {
+        IDXGIAdapter1* adapter = nullptr;
+        if (factory->EnumAdapters1(ordinal, &adapter) == DXGI_ERROR_NOT_FOUND) {
+            break;
+        }
+        if (adapter == nullptr) {
+            continue;
+        }
+
+        DXGI_ADAPTER_DESC1 desc {};
+        if (SUCCEEDED(adapter->GetDesc1(&desc))) {
+            AdapterOption option;
+            option.ordinal = ordinal;
+            option.name = desc.Description;
+            option.dedicatedVideoMemoryMb = static_cast<std::uint64_t>(desc.DedicatedVideoMemory / (1024ull * 1024ull));
+            option.software = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+            option.luid = desc.AdapterLuid;
+            adapterOptions_.push_back(std::move(option));
+        }
+        adapter->Release();
+    }
+
+    factory->Release();
+}
+
+bool AppWindow::ApplyPendingGraphicsDeviceChange() {
+    if (!graphicsDeviceChangePending_) {
+        return true;
+    }
+
+    graphicsDeviceChangePending_ = false;
+    ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    CleanupViewportTexture();
+    CleanupDeviceD3D();
+    if (!CreateDeviceD3D()) {
+        statusText_ = L"GPU switch failed";
+        return false;
+    }
+    ImGui_ImplWin32_Init(window_);
+    ImGui_ImplDX11_Init(device_.Get(), deviceContext_.Get());
+    viewportDirty_ = true;
+    resizeWidth_ = 0;
+    resizeHeight_ = 0;
+    statusText_ = L"Switched GPU to " + renderAdapterName_;
+    return true;
+}
+
+void AppWindow::CleanupDeviceD3D() {
+    gpuPathRenderer_.Shutdown();
+    gpuGridRenderer_.Shutdown();
+    gpuDofRenderer_.Shutdown();
+    gpuFlameRenderer_.Shutdown();
+    CleanupRenderTarget();
+    swapChain_.Reset();
+    deviceContext_.Reset();
+    device_.Reset();
+}
+
+void AppWindow::CreateRenderTarget() {
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> backbuffer;
+    swapChain_->GetBuffer(0, IID_PPV_ARGS(&backbuffer));
+    device_->CreateRenderTargetView(backbuffer.Get(), nullptr, mainRenderTargetView_.GetAddressOf());
+}
+
+void AppWindow::CleanupRenderTarget() {
+    mainRenderTargetView_.Reset();
+}
+
+void AppWindow::CleanupViewportTexture() {
+    viewportSrv_.Reset();
+    viewportTexture_.Reset();
+    uploadedViewportWidth_ = 0;
+    uploadedViewportHeight_ = 0;
+}
+
+bool AppWindow::EnsureViewportTexture(const int width, const int height) {
+    if (viewportTexture_ && uploadedViewportWidth_ == width && uploadedViewportHeight_ == height) {
+        return true;
+    }
+
+    CleanupViewportTexture();
+
+    D3D11_TEXTURE2D_DESC desc {};
+    desc.Width = static_cast<UINT>(width);
+    desc.Height = static_cast<UINT>(height);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    if (FAILED(device_->CreateTexture2D(&desc, nullptr, viewportTexture_.GetAddressOf()))) {
+        return false;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc {};
+    srvDesc.Format = desc.Format;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels = 1;
+    if (FAILED(device_->CreateShaderResourceView(viewportTexture_.Get(), &srvDesc, viewportSrv_.GetAddressOf()))) {
+        CleanupViewportTexture();
+        return false;
+    }
+
+    uploadedViewportWidth_ = width;
+    uploadedViewportHeight_ = height;
+    return true;
+}
+
+void AppWindow::LoadPresets() {
+    wchar_t modulePath[MAX_PATH] = L"";
+    GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    const std::filesystem::path exeDir = std::filesystem::path(modulePath).parent_path();
+    const std::vector<std::filesystem::path> presetCandidates = {
+        std::filesystem::current_path() / "assets" / "presets",
+        exeDir / "assets" / "presets",
+        exeDir.parent_path() / "assets" / "presets",
+        exeDir.parent_path().parent_path() / "assets" / "presets"
+    };
+
+    for (const auto& candidate : presetCandidates) {
+        if (std::filesystem::exists(candidate)) {
+            presetLibrary_.LoadFromDirectory(candidate);
+            break;
+        }
+    }
+    if (presetLibrary_.Count() == 0) {
+        presetLibrary_.LoadFromDirectory(std::filesystem::current_path() / "assets" / "presets");
+    }
+}
+
+void AppWindow::LoadUserSettings() {
+    const std::map<std::string, std::string> values = LoadKeyValueFile(UserSettingsPath());
+    if (values.empty()) {
+        return;
+    }
+
+    int settingsVersion = 0;
+    if (!TryParseIntValue(values, "version", settingsVersion) || settingsVersion != kAppSettingsVersion) {
+        return;
+    }
+
+    TryParseBoolValue(values, "settings_panel_open", settingsPanelOpen_);
+    TryParseBoolValue(values, "show_status_overlay", showStatusOverlay_);
+    TryParseBoolValue(values, "gpu_viewport_preview", gpuFlamePreviewEnabled_);
+    TryParseBoolValue(values, "export_hide_grid", exportHideGrid_);
+    TryParseBoolValue(values, "export_transparent_background", exportTransparentBackground_);
+    TryParseBoolValue(values, "export_use_gpu", exportUseGpu_);
+    TryParseBoolValue(values, "grid_visible", scene_.gridVisible);
+
+    TryParseUintValue(values, "interactive_preview_iterations", interactivePreviewIterations_);
+    TryParseUintValue(values, "scene_preview_iterations", scene_.previewIterations);
+    TryParseIntValue(values, "export_width", exportWidth_);
+    TryParseIntValue(values, "export_height", exportHeight_);
+    TryParseIntValue(values, "export_frame_start", exportFrameStart_);
+    TryParseIntValue(values, "export_frame_end", exportFrameEnd_);
+    TryParseDoubleValue(values, "new_scene_frame_rate", newSceneFrameRateDefault_);
+    TryParseIntValue(values, "new_scene_end_frame", newSceneEndFrameDefault_);
+
+    int exportFormat = static_cast<int>(exportFormat_);
+    if (TryParseIntValue(values, "export_format", exportFormat)
+        && exportFormat >= static_cast<int>(ExportFormat::Png)
+        && exportFormat <= static_cast<int>(ExportFormat::Mov)) {
+        exportFormat_ = static_cast<ExportFormat>(exportFormat);
+    }
+
+    int modeIndex = static_cast<int>(scene_.mode);
+    if (TryParseIntValue(values, "scene_mode", modeIndex)
+        && modeIndex >= static_cast<int>(SceneMode::Flame)
+        && modeIndex <= static_cast<int>(SceneMode::Hybrid)) {
+        scene_.mode = static_cast<SceneMode>(modeIndex);
+    }
+
+    int windowLeft = 0;
+    int windowTop = 0;
+    int windowRight = 0;
+    int windowBottom = 0;
+    if (TryParseIntValue(values, "window_left", windowLeft)
+        && TryParseIntValue(values, "window_top", windowTop)
+        && TryParseIntValue(values, "window_right", windowRight)
+        && TryParseIntValue(values, "window_bottom", windowBottom)
+        && windowRight > windowLeft
+        && windowBottom > windowTop) {
+        startupWindowRect_ = RECT {windowLeft, windowTop, windowRight, windowBottom};
+        startupWindowPlacementLoaded_ = true;
+    }
+    TryParseBoolValue(values, "window_maximized", startupWindowMaximized_);
+
+    int adapterLuidHigh = 0;
+    std::uint32_t adapterLuidLow = 0;
+    if (TryParseIntValue(values, "selected_adapter_luid_high", adapterLuidHigh)
+        && TryParseUintValue(values, "selected_adapter_luid_low", adapterLuidLow)) {
+        for (std::size_t index = 0; index < adapterOptions_.size(); ++index) {
+            const LUID& luid = adapterOptions_[index].luid;
+            if (luid.HighPart == adapterLuidHigh && luid.LowPart == adapterLuidLow) {
+                selectedAdapterIndex_ = static_cast<int>(index);
+                break;
+            }
+        }
+    }
+}
+
+void AppWindow::SaveUserSettings() const {
+    const std::filesystem::path settingsPath = UserSettingsPath();
+    std::error_code createError;
+    std::filesystem::create_directories(settingsPath.parent_path(), createError);
+
+    std::ofstream stream(settingsPath, std::ios::trunc);
+    if (!stream) {
+        return;
+    }
+
+    RECT windowRect {};
+    if (window_ != nullptr) {
+        GetWindowRect(window_, &windowRect);
+        WINDOWPLACEMENT placement {};
+        placement.length = sizeof(placement);
+        if (GetWindowPlacement(window_, &placement)) {
+            windowRect = placement.rcNormalPosition;
+        }
+    }
+
+    stream << "version=" << kAppSettingsVersion << "\n";
+    stream << "settings_panel_open=" << (settingsPanelOpen_ ? 1 : 0) << "\n";
+    stream << "show_status_overlay=" << (showStatusOverlay_ ? 1 : 0) << "\n";
+    stream << "gpu_viewport_preview=" << (gpuFlamePreviewEnabled_ ? 1 : 0) << "\n";
+    stream << "interactive_preview_iterations=" << interactivePreviewIterations_ << "\n";
+    stream << "scene_preview_iterations=" << scene_.previewIterations << "\n";
+    stream << "scene_mode=" << static_cast<int>(scene_.mode) << "\n";
+    stream << "grid_visible=" << (scene_.gridVisible ? 1 : 0) << "\n";
+    stream << "new_scene_frame_rate=" << newSceneFrameRateDefault_ << "\n";
+    stream << "new_scene_end_frame=" << newSceneEndFrameDefault_ << "\n";
+    stream << "export_hide_grid=" << (exportHideGrid_ ? 1 : 0) << "\n";
+    stream << "export_transparent_background=" << (exportTransparentBackground_ ? 1 : 0) << "\n";
+    stream << "export_use_gpu=" << (exportUseGpu_ ? 1 : 0) << "\n";
+    stream << "export_format=" << static_cast<int>(exportFormat_) << "\n";
+    stream << "export_width=" << exportWidth_ << "\n";
+    stream << "export_height=" << exportHeight_ << "\n";
+    stream << "export_frame_start=" << exportFrameStart_ << "\n";
+    stream << "export_frame_end=" << exportFrameEnd_ << "\n";
+    stream << "window_left=" << windowRect.left << "\n";
+    stream << "window_top=" << windowRect.top << "\n";
+    stream << "window_right=" << windowRect.right << "\n";
+    stream << "window_bottom=" << windowRect.bottom << "\n";
+    stream << "window_maximized=" << ((window_ != nullptr && IsZoomed(window_)) ? 1 : 0) << "\n";
+
+    if (selectedAdapterIndex_ >= 0 && selectedAdapterIndex_ < static_cast<int>(adapterOptions_.size())) {
+        const LUID& luid = adapterOptions_[static_cast<std::size_t>(selectedAdapterIndex_)].luid;
+        stream << "selected_adapter_luid_high=" << luid.HighPart << "\n";
+        stream << "selected_adapter_luid_low=" << static_cast<std::uint32_t>(luid.LowPart) << "\n";
+    }
+}
+
+void AppWindow::ApplyUserSceneDefaults(Scene& scene) const {
+    scene.timelineFrameRate = std::max(1.0, newSceneFrameRateDefault_);
+    scene.timelineStartFrame = 0;
+    scene.timelineEndFrame = std::max(scene.timelineStartFrame, newSceneEndFrameDefault_);
+    scene.timelineFrame = Clamp(scene.timelineFrame, static_cast<double>(scene.timelineStartFrame), static_cast<double>(scene.timelineEndFrame));
+    scene.timelineSeconds = TimelineSecondsForFrame(scene, scene.timelineFrame);
+}
+
+void AppWindow::SetupImGui() {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    io.ConfigDpiScaleFonts = true;
+    io.ConfigDpiScaleViewports = true;
+
+    wchar_t modulePath[MAX_PATH] = L"";
+    GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    const std::filesystem::path exeDir = std::filesystem::path(modulePath).parent_path();
+    const std::vector<std::filesystem::path> fontCandidates = {
+        std::filesystem::current_path() / "assets" / "fonts" / "Rubik-Regular.ttf",
+        exeDir / "assets" / "fonts" / "Rubik-Regular.ttf",
+        exeDir.parent_path() / "assets" / "fonts" / "Rubik-Regular.ttf",
+        exeDir.parent_path().parent_path() / "assets" / "fonts" / "Rubik-Regular.ttf",
+        std::filesystem::current_path() / "third_party" / "imgui" / "misc" / "fonts" / "Karla-Regular.ttf"
+    };
+    const std::vector<std::filesystem::path> brandFontCandidates = {
+        std::filesystem::current_path() / "assets" / "fonts" / "Rubik-Bold.ttf",
+        exeDir / "assets" / "fonts" / "Rubik-Bold.ttf",
+        exeDir.parent_path() / "assets" / "fonts" / "Rubik-Bold.ttf",
+        exeDir.parent_path().parent_path() / "assets" / "fonts" / "Rubik-Bold.ttf",
+        std::filesystem::current_path() / "assets" / "fonts" / "Rubik-Regular.ttf",
+        exeDir / "assets" / "fonts" / "Rubik-Regular.ttf",
+        exeDir.parent_path() / "assets" / "fonts" / "Rubik-Regular.ttf",
+        exeDir.parent_path().parent_path() / "assets" / "fonts" / "Rubik-Regular.ttf"
+    };
+    const std::vector<std::filesystem::path> iconFontCandidates = {
+        std::filesystem::current_path() / "assets" / "fonts" / "MaterialSymbolsRounded.ttf",
+        exeDir / "assets" / "fonts" / "MaterialSymbolsRounded.ttf",
+        exeDir.parent_path() / "assets" / "fonts" / "MaterialSymbolsRounded.ttf",
+        exeDir.parent_path().parent_path() / "assets" / "fonts" / "MaterialSymbolsRounded.ttf"
+    };
+    auto loadFont = [&](const std::vector<std::filesystem::path>& candidates, const float size, const ImFontConfig* config, const ImWchar* ranges = nullptr) -> ImFont* {
+        for (const auto& candidate : candidates) {
+            if (!std::filesystem::exists(candidate)) {
+                continue;
+            }
+            if (ImFont* font = io.Fonts->AddFontFromFileTTF(candidate.string().c_str(), size, config, ranges)) {
+                return font;
+            }
+        }
+        return nullptr;
+    };
+
+    uiFont_ = loadFont(fontCandidates, 16.0f, nullptr);
+    if (uiFont_ != nullptr) {
+        io.FontDefault = uiFont_;
+    }
+
+    ImFontConfig brandConfig {};
+    brandConfig.RasterizerMultiply = 1.05f;
+    brandFont_ = loadFont(brandFontCandidates, 18.0f, &brandConfig);
+    if (brandFont_ == nullptr) {
+        brandFont_ = uiFont_;
+    }
+
+    static const ImWchar iconRanges[] = {
+        0xE034, 0xE045,
+        0xE145, 0xE166,
+        0xE2C8, 0xE2C8,
+        0xE412, 0xE412,
+        0xE5C5, 0xE5C7,
+        0xE89C, 0xE89C,
+        0xE8B8, 0xE8B8,
+        0xEB60, 0xEB60,
+        0xF015, 0xF015,
+        0xF09B, 0xF09B,
+        0
+    };
+    ImFontConfig iconConfig {};
+    iconConfig.PixelSnapH = true;
+    iconConfig.RasterizerMultiply = 1.1f;
+    SetActionIconFont(loadFont(iconFontCandidates, 24.0f, &iconConfig, iconRanges));
+
+    ImGui_ImplWin32_Init(window_);
+    ImGui_ImplDX11_Init(device_.Get(), deviceContext_.Get());
+}
+
+void AppWindow::ShutdownImGui() {
+    SetActionIconFont(nullptr);
+    ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
+}
+
+void AppWindow::ApplyStyle() const {
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 10.0f;
+    style.ChildRounding = 8.0f;
+    style.FrameRounding = 8.0f;
+    style.GrabRounding = 8.0f;
+    style.TabRounding = 5.0f;
+    style.WindowBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
+    style.FrameBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
+    style.WindowPadding = ImVec2(11.0f, 9.0f);
+    style.FramePadding = ImVec2(9.0f, 6.0f);
+    style.CellPadding = ImVec2(8.0f, 4.0f);
+    style.ItemSpacing = ImVec2(9.0f, 8.0f);
+    style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.07f, 0.08f, 1.0f);
+    style.Colors[ImGuiCol_ChildBg] = ImVec4(0.09f, 0.09f, 0.10f, 1.0f);
+    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.13f, 0.13f, 0.15f, 1.0f);
+    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.18f, 0.18f, 0.21f, 1.0f);
+    style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.22f, 0.22f, 0.26f, 1.0f);
+    style.Colors[ImGuiCol_Button] = ImVec4(0.16f, 0.16f, 0.18f, 1.0f);
+    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.22f, 0.21f, 0.24f, 1.0f);
+    style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.27f, 0.26f, 0.29f, 1.0f);
+    style.Colors[ImGuiCol_Header] = ImVec4(0.16f, 0.16f, 0.19f, 0.96f);
+    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.22f, 0.21f, 0.25f, 1.0f);
+    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.28f, 0.27f, 0.31f, 1.0f);
+    style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.48f, 0.49f, 0.53f, 1.0f);
+    style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.58f, 0.58f, 0.62f, 1.0f);
+    style.Colors[ImGuiCol_CheckMark] = ImVec4(0.72f, 0.73f, 0.79f, 1.0f);
+    style.Colors[ImGuiCol_TitleBg] = ImVec4(0.10f, 0.10f, 0.12f, 1.0f);
+    style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.13f, 0.13f, 0.15f, 1.0f);
+    style.Colors[ImGuiCol_Border] = ImVec4(0.30f, 0.29f, 0.28f, 0.42f);
+    style.Colors[ImGuiCol_Separator] = ImVec4(0.34f, 0.33f, 0.31f, 0.34f);
+    style.Colors[ImGuiCol_SeparatorHovered] = ImVec4(0.48f, 0.47f, 0.43f, 0.62f);
+    style.Colors[ImGuiCol_SeparatorActive] = ImVec4(0.59f, 0.58f, 0.54f, 0.76f);
+    style.Colors[ImGuiCol_Tab] = ImVec4(0.11f, 0.11f, 0.13f, 0.92f);
+    style.Colors[ImGuiCol_TabActive] = ImVec4(0.17f, 0.17f, 0.20f, 0.98f);
+    style.Colors[ImGuiCol_TabHovered] = ImVec4(0.21f, 0.20f, 0.23f, 0.98f);
+    style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.09f, 0.09f, 0.11f, 0.86f);
+    style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.14f, 0.14f, 0.17f, 0.92f);
+    style.Colors[ImGuiCol_PopupBg] = ImVec4(0.10f, 0.10f, 0.12f, 0.98f);
+    style.Colors[ImGuiCol_Text] = ImVec4(0.93f, 0.92f, 0.90f, 1.0f);
+    style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.62f, 0.60f, 0.57f, 1.0f);
+}
+
+void AppWindow::ApplyPendingResize() {
+    if (resizeWidth_ == 0 || resizeHeight_ == 0) {
+        return;
+    }
+
+    CleanupRenderTarget();
+    swapChain_->ResizeBuffers(0, resizeWidth_, resizeHeight_, DXGI_FORMAT_UNKNOWN, 0);
+    resizeWidth_ = 0;
+    resizeHeight_ = 0;
+    CreateRenderTarget();
+}
+
+}  // namespace radiary
