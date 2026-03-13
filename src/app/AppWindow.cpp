@@ -88,11 +88,32 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     ShowWindow(window_, showCommand);
     UpdateWindow(window_);
 
+    auto updateLoading = [this](float progress, const char* label) {
+        loadingProgress_ = progress;
+        loadingLabel_ = label;
+        InvalidateRect(window_, nullptr, TRUE);
+        UpdateWindow(window_);
+    };
+
+    auto showLoadingFor = [this, &updateLoading](float progress, const char* label, int minMs) {
+        const auto start = std::chrono::steady_clock::now();
+        updateLoading(progress, label);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+        if (elapsed < minMs) {
+            Sleep(static_cast<DWORD>(minMs - elapsed));
+        }
+    };
+
+    showLoadingFor(0.05f, "Initializing...", 50);
     EnumerateAdapters();
+
+    showLoadingFor(0.15f, "Loading presets...", 40);
     LoadPresets();
     if (presetLibrary_.Count() > 0) {
         scene_ = presetLibrary_.SceneAt(0);
     }
+
+    showLoadingFor(0.25f, "Loading settings...", 40);
     LoadUserSettings();
     if (presetLibrary_.Count() == 0) {
         ApplyUserSceneDefaults(scene_);
@@ -114,6 +135,7 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
         }
     }
 
+    showLoadingFor(0.35f, "Creating D3D device...", 50);
     if (!CreateDeviceD3D()) {
         CleanupDeviceD3D();
         DestroyWindow(window_);
@@ -122,19 +144,31 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
         return false;
     }
 
+    showLoadingFor(0.45f, "Initializing UI...", 50);
     SetupImGui();
     ApplyStyle();
 
     if (gpuFlamePreviewEnabled_) {
+        updateLoading(0.50f, "Compiling flame shader...");
         EnsureGpuFlameRendererInitialized();
+
+        updateLoading(0.65f, "Compiling path shader...");
         EnsureGpuPathRendererInitialized(gpuPathRenderer_, L"GPU path renderer");
+
+        updateLoading(0.75f, "Compiling grid shader...");
         EnsureGpuPathRendererInitialized(gpuGridRenderer_, L"GPU grid renderer");
+
+        updateLoading(0.85f, "Compiling DOF shader...");
         EnsureGpuDofRendererInitialized();
     }
 
+    showLoadingFor(0.95f, "Starting render thread...", 40);
     scene_.animatePath = false;
     lastFrame_ = std::chrono::steady_clock::now();
     StartRenderThread();
+
+    updateLoading(1.0f, "Done");
+    loadingComplete_ = true;
     RenderFrame();
     bootstrapUiFramePending_ = false;
     viewportDirty_ = true;
@@ -192,6 +226,52 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
     }
 
     switch (message) {
+    case WM_PAINT:
+        if (!loadingComplete_) {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(window_, &ps);
+            RECT clientRect;
+            GetClientRect(window_, &clientRect);
+            const int width = clientRect.right - clientRect.left;
+            const int height = clientRect.bottom - clientRect.top;
+
+            HBRUSH bgBrush = CreateSolidBrush(RGB(10, 10, 13));
+            FillRect(hdc, &clientRect, bgBrush);
+            DeleteObject(bgBrush);
+
+            constexpr int barHeight = 4;
+            constexpr int barMargin = 80;
+            const int barWidth = width - barMargin * 2;
+            const int barY = height / 2 + 20;
+
+            RECT barBgRect = {barMargin, barY, barMargin + barWidth, barY + barHeight};
+            HBRUSH barBgBrush = CreateSolidBrush(RGB(40, 40, 50));
+            FillRect(hdc, &barBgRect, barBgBrush);
+            DeleteObject(barBgBrush);
+
+            const int progressWidth = static_cast<int>(barWidth * loadingProgress_);
+            if (progressWidth > 0) {
+                RECT barFillRect = {barMargin, barY, barMargin + progressWidth, barY + barHeight};
+                HBRUSH barFillBrush = CreateSolidBrush(RGB(115, 148, 235));
+                FillRect(hdc, &barFillRect, barFillBrush);
+                DeleteObject(barFillBrush);
+            }
+
+            if (!loadingLabel_.empty()) {
+                SetTextColor(hdc, RGB(200, 200, 210));
+                SetBkMode(hdc, TRANSPARENT);
+                HFONT font = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, font));
+                std::wstring wideLabel = Utf8ToWide(loadingLabel_);
+                TextOutW(hdc, barMargin, barY - 28, wideLabel.c_str(), static_cast<int>(wideLabel.length()));
+                SelectObject(hdc, oldFont);
+                DeleteObject(font);
+            }
+
+            EndPaint(window_, &ps);
+            return 0;
+        }
+        break;
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED) {
             return 0;

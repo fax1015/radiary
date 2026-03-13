@@ -206,6 +206,156 @@ std::vector<GradientStop> RandomProceduralGradient(std::mt19937& generator) {
     };
 }
 
+std::vector<GradientStop> RandomSuperColorfulGradient(std::mt19937& generator) {
+    std::uniform_real_distribution<double> hue(0.0, 360.0);
+    std::uniform_real_distribution<double> saturation(0.72, 0.98);
+    std::uniform_real_distribution<double> brightValue(0.78, 0.98);
+    std::uniform_real_distribution<double> midValue(0.55, 0.82);
+    std::uniform_real_distribution<double> jitter(-8.0, 8.0);
+    std::uniform_int_distribution<int> schemeDist(0, 5);
+
+    const double baseHue = hue(generator);
+    const int scheme = schemeDist(generator);
+
+    // Color harmony schemes producing 4-5 distinct hues that mesh well
+    double h0 = baseHue;
+    double h1 = 0.0;
+    double h2 = 0.0;
+    double h3 = 0.0;
+    double h4 = 0.0;
+
+    switch (scheme) {
+    case 0:
+        // Analogous warm spread (30-degree steps)
+        h1 = h0 + 28.0 + jitter(generator);
+        h2 = h0 + 56.0 + jitter(generator);
+        h3 = h0 + 84.0 + jitter(generator);
+        h4 = h0 + 112.0 + jitter(generator);
+        break;
+    case 1:
+        // Triadic with fill (120-degree primary, fill between)
+        h1 = h0 + 60.0 + jitter(generator);
+        h2 = h0 + 120.0 + jitter(generator);
+        h3 = h0 + 200.0 + jitter(generator);
+        h4 = h0 + 280.0 + jitter(generator);
+        break;
+    case 2:
+        // Split-complementary extended
+        h1 = h0 + 150.0 + jitter(generator);
+        h2 = h0 + 180.0 + jitter(generator);
+        h3 = h0 + 210.0 + jitter(generator);
+        h4 = h0 + 30.0 + jitter(generator);
+        break;
+    case 3:
+        // Tetradic / rectangular
+        h1 = h0 + 90.0 + jitter(generator);
+        h2 = h0 + 180.0 + jitter(generator);
+        h3 = h0 + 270.0 + jitter(generator);
+        h4 = h0 + 45.0 + jitter(generator);
+        break;
+    case 4:
+        // Rainbow sweep (wide hue range)
+        h1 = h0 + 72.0 + jitter(generator);
+        h2 = h0 + 144.0 + jitter(generator);
+        h3 = h0 + 216.0 + jitter(generator);
+        h4 = h0 + 288.0 + jitter(generator);
+        break;
+    case 5:
+    default:
+        // Complementary with analogous bridges
+        h1 = h0 + 35.0 + jitter(generator);
+        h2 = h0 + 165.0 + jitter(generator);
+        h3 = h0 + 195.0 + jitter(generator);
+        h4 = h0 + 330.0 + jitter(generator);
+        break;
+    }
+
+    h0 = WrapHue(h0);
+    h1 = WrapHue(h1);
+    h2 = WrapHue(h2);
+    h3 = WrapHue(h3);
+    h4 = WrapHue(h4);
+
+    // Build gradient with high-saturation, varied-brightness stops
+    const double s0 = saturation(generator);
+    const double s1 = saturation(generator);
+    const double s2 = saturation(generator);
+    const double s3 = saturation(generator);
+    const double s4 = saturation(generator) * 0.6;
+
+    const double v0 = midValue(generator);
+    const double v1 = brightValue(generator);
+    const double v2 = brightValue(generator);
+    const double v3 = brightValue(generator);
+    const double v4 = 0.95;
+
+    return {
+        {0.0, HsvToRgb(h0, s0, v0)},
+        {0.22, HsvToRgb(h1, s1, v1)},
+        {0.48, HsvToRgb(h2, s2, v2)},
+        {0.75, HsvToRgb(h3, s3, v3)},
+        {1.0, HsvToRgb(h4, s4, v4)}
+    };
+}
+
+std::vector<GradientStop> RandomSuperColorfulProceduralGradient(std::mt19937& generator) {
+    std::uniform_real_distribution<double> hue(0.0, 360.0);
+    std::uniform_real_distribution<double> saturation(0.65, 0.95);
+    std::uniform_real_distribution<double> brightValue(0.72, 0.95);
+    std::uniform_real_distribution<double> jitter(-10.0, 10.0);
+    std::uniform_int_distribution<int> schemeDist(0, 3);
+
+    const double baseHue = hue(generator);
+    const int scheme = schemeDist(generator);
+
+    double h0 = baseHue;
+    double h1 = 0.0;
+    double h2 = 0.0;
+    double h3 = 0.0;
+
+    switch (scheme) {
+    case 0:
+        h1 = h0 + 90.0 + jitter(generator);
+        h2 = h0 + 180.0 + jitter(generator);
+        h3 = h0 + 270.0 + jitter(generator);
+        break;
+    case 1:
+        h1 = h0 + 40.0 + jitter(generator);
+        h2 = h0 + 160.0 + jitter(generator);
+        h3 = h0 + 200.0 + jitter(generator);
+        break;
+    case 2:
+        h1 = h0 + 60.0 + jitter(generator);
+        h2 = h0 + 120.0 + jitter(generator);
+        h3 = h0 + 240.0 + jitter(generator);
+        break;
+    case 3:
+    default:
+        h1 = h0 + 72.0 + jitter(generator);
+        h2 = h0 + 144.0 + jitter(generator);
+        h3 = h0 + 288.0 + jitter(generator);
+        break;
+    }
+
+    h0 = WrapHue(h0);
+    h1 = WrapHue(h1);
+    h2 = WrapHue(h2);
+    h3 = WrapHue(h3);
+
+    const Color deep = HsvToRgb(h0, saturation(generator) * 0.8, 0.35);
+    const Color mid = HsvToRgb(h1, saturation(generator), brightValue(generator) * 0.8);
+    const Color bright = HsvToRgb(h2, saturation(generator), brightValue(generator));
+    const Color rim = HsvToRgb(h3, saturation(generator) * 0.7, 0.92);
+
+    return {
+        {0.0, deep},
+        {0.22, Lerp(deep, mid, 0.55)},
+        {0.50, mid},
+        {0.78, bright},
+        {1.0, rim}
+    };
+}
+
 std::vector<Vec3> ProceduralControlPoints(const double phase, const Vec3& offset, const double scale) {
     return {
         {-5.4 * scale + offset.x, -0.6 * scale + offset.y, -2.4 * scale + std::sin(phase + 0.2) * 1.2 + offset.z},
@@ -608,7 +758,8 @@ Scene CreateRandomScene(const std::uint32_t seed) {
     std::uniform_real_distribution<double> skewScale(0.18, 1.32);
     std::uniform_real_distribution<double> flameRotate(-110.0, 110.0);
     std::uniform_real_distribution<double> flameDepth(0.6, 2.4);
-    std::uniform_int_distribution<int> archetypeDist(0, 23);
+    std::uniform_int_distribution<int> archetypeDist(0, 31);
+    std::bernoulli_distribution superColorful(0.15);
     std::bernoulli_distribution addLinear(0.15);  // Reduced from 0.55 - Linear creates straight lines
     std::bernoulli_distribution invertShear(0.5);
     std::bernoulli_distribution addWaves(0.3);
@@ -635,7 +786,12 @@ Scene CreateRandomScene(const std::uint32_t seed) {
         scene.depthOfField.focusRange = dofFocusRange(generator);
         scene.depthOfField.blurStrength = dofBlurStrength(generator);
     }
-    scene.gradientStops = scene.mode == SceneMode::Flame ? RandomGradient(generator) : RandomProceduralGradient(generator);
+    const bool isSuperColorful = superColorful(generator);
+    if (isSuperColorful) {
+        scene.gradientStops = scene.mode == SceneMode::Flame ? RandomSuperColorfulGradient(generator) : RandomSuperColorfulProceduralGradient(generator);
+    } else {
+        scene.gradientStops = scene.mode == SceneMode::Flame ? RandomGradient(generator) : RandomProceduralGradient(generator);
+    }
     if (scene.mode != SceneMode::Path) {
         scene.flameRender.rotationXDegrees = flameRotate(generator);
         scene.flameRender.rotationYDegrees = flameRotate(generator);
@@ -794,12 +950,82 @@ Scene CreateRandomScene(const std::uint32_t seed) {
             layer.variations[static_cast<std::size_t>(VariationType::Bubble)] = amount(generator) * 0.48;
             break;
         case 23:
-        default:
             // Maximum chaos
             layer.variations[static_cast<std::size_t>(VariationType::Handkerchief)] = amount(generator) * 0.6;
             layer.variations[static_cast<std::size_t>(VariationType::Fisheye)] = amount(generator) * 0.5;
             layer.variations[static_cast<std::size_t>(VariationType::Fold)] = amount(generator) * 0.4;
             layer.variations[static_cast<std::size_t>(VariationType::Checkers)] = amount(generator) * 0.3;
+            break;
+        case 24:
+            // Nebula swirl - organic flowing shapes
+            layer.variations[static_cast<std::size_t>(VariationType::Swirl)] = amount(generator) * 0.85;
+            layer.variations[static_cast<std::size_t>(VariationType::Sinusoidal)] = amount(generator) * 0.6;
+            layer.variations[static_cast<std::size_t>(VariationType::Eyefish)] = amount(generator) * 0.45;
+            layer.variations[static_cast<std::size_t>(VariationType::Waves)] = amount(generator) * 0.35;
+            break;
+        case 25:
+            // Crystal lattice - geometric with depth
+            layer.variations[static_cast<std::size_t>(VariationType::Ngon)] = amount(generator) * 0.92;
+            layer.variations[static_cast<std::size_t>(VariationType::Checkers)] = amount(generator) * 0.55;
+            layer.variations[static_cast<std::size_t>(VariationType::Fold)] = amount(generator) * 0.48;
+            layer.variations[static_cast<std::size_t>(VariationType::Rings)] = amount(generator) * 0.3;
+            break;
+        case 26:
+            // Aurora - smooth flowing gradients
+            layer.variations[static_cast<std::size_t>(VariationType::Polar)] = amount(generator) * 0.78;
+            layer.variations[static_cast<std::size_t>(VariationType::Waves)] = amount(generator) * 0.65;
+            layer.variations[static_cast<std::size_t>(VariationType::Curl)] = amount(generator) * 0.52;
+            layer.variations[static_cast<std::size_t>(VariationType::Bubble)] = amount(generator) * 0.28;
+            break;
+        case 27:
+            // Solar flare - explosive radial energy
+            layer.variations[static_cast<std::size_t>(VariationType::Rays)] = amount(generator);
+            layer.variations[static_cast<std::size_t>(VariationType::Exponential)] = amount(generator) * 0.68;
+            layer.variations[static_cast<std::size_t>(VariationType::Tangent)] = amount(generator) * 0.45;
+            layer.variations[static_cast<std::size_t>(VariationType::Spiral)] = amount(generator) * 0.38;
+            break;
+        case 28:
+            // Silk threads - delicate interweaving
+            layer.variations[static_cast<std::size_t>(VariationType::Fan)] = amount(generator) * 0.82;
+            layer.variations[static_cast<std::size_t>(VariationType::Popcorn)] = amount(generator) * 0.55;
+            layer.variations[static_cast<std::size_t>(VariationType::Split)] = amount(generator) * 0.42;
+            layer.variations[static_cast<std::size_t>(VariationType::Sinusoidal)] = amount(generator) * 0.3;
+            break;
+        case 29:
+            // Deep ocean - organic with subtle ripples
+            layer.variations[static_cast<std::size_t>(VariationType::Spherical)] = amount(generator) * 0.75;
+            layer.variations[static_cast<std::size_t>(VariationType::Bipolar)] = amount(generator) * 0.62;
+            layer.variations[static_cast<std::size_t>(VariationType::Waves)] = amount(generator) * 0.48;
+            layer.variations[static_cast<std::size_t>(VariationType::Sech)] = amount(generator) * 0.32;
+            break;
+        case 30:
+            // Plasma storm - chaotic high-energy
+            layer.variations[static_cast<std::size_t>(VariationType::Julia)] = amount(generator) * 0.88;
+            layer.variations[static_cast<std::size_t>(VariationType::Blade)] = amount(generator) * 0.65;
+            layer.variations[static_cast<std::size_t>(VariationType::Cross)] = amount(generator) * 0.52;
+            layer.variations[static_cast<std::size_t>(VariationType::Power)] = amount(generator) * 0.38;
+            break;
+        case 31:
+            // Cosmic web - interconnected structures
+            layer.variations[static_cast<std::size_t>(VariationType::Wedge)] = amount(generator) * 0.72;
+            layer.variations[static_cast<std::size_t>(VariationType::Disc)] = amount(generator) * 0.58;
+            layer.variations[static_cast<std::size_t>(VariationType::Heart)] = amount(generator) * 0.45;
+            layer.variations[static_cast<std::size_t>(VariationType::Flower)] = amount(generator) * 0.35;
+            break;
+        case 32:
+            // Blobby fields - organic soft shapes
+            layer.variations[static_cast<std::size_t>(VariationType::Blob)] = amount(generator) * 0.85;
+            layer.variations[static_cast<std::size_t>(VariationType::TwinTrian)] = amount(generator) * 0.65;
+            layer.variations[static_cast<std::size_t>(VariationType::PDJ)] = amount(generator) * 0.45;
+            layer.variations[static_cast<std::size_t>(VariationType::Perspective)] = amount(generator) * 0.35;
+            break;
+        case 33:
+        default:
+            // Geometric rings - structured circular patterns
+            layer.variations[static_cast<std::size_t>(VariationType::Rings2)] = amount(generator) * 0.78;
+            layer.variations[static_cast<std::size_t>(VariationType::Fan2)] = amount(generator) * 0.62;
+            layer.variations[static_cast<std::size_t>(VariationType::PDJ)] = amount(generator) * 0.52;
+            layer.variations[static_cast<std::size_t>(VariationType::TwinTrian)] = amount(generator) * 0.42;
             break;
         }
 
@@ -827,6 +1053,7 @@ Scene CreateRandomScene(const std::uint32_t seed) {
         if (addSech(generator)) {
             layer.variations[static_cast<std::size_t>(VariationType::Sech)] = amount(generator) * 0.22;
             layer.variations[static_cast<std::size_t>(VariationType::Sec)] = amount(generator) * 0.16;
+            layer.variations[static_cast<std::size_t>(VariationType::Blob)] = amount(generator) * 0.15;
         }
 
         for (std::size_t variation = 0; variation < kVariationCount; ++variation) {
@@ -1327,7 +1554,13 @@ constexpr std::pair<VariationType, const char*> kVariationTypeNames[] = {
     {VariationType::Sec, "sec"},
     {VariationType::Csc, "csc"},
     {VariationType::Cot, "cot"},
-    {VariationType::Sech, "sech"}
+    {VariationType::Sech, "sech"},
+    {VariationType::Perspective, "perspective"},
+    {VariationType::Blob, "blob"},
+    {VariationType::PDJ, "pdj"},
+    {VariationType::Fan2, "fan2"},
+    {VariationType::Rings2, "rings2"},
+    {VariationType::TwinTrian, "twintrian"}
 };
 
 constexpr std::pair<ThicknessProfile, const char*> kThicknessProfileNames[] = {

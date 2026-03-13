@@ -180,6 +180,9 @@ private:
     bool startupWindowPlacementLoaded_ = false;
     bool startupWindowMaximized_ = false;
     bool bootstrapUiFramePending_ = true;
+    bool loadingComplete_ = false;
+    float loadingProgress_ = 0.0f;
+    std::string loadingLabel_;
     RECT startupWindowRect_ {CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT};
 
     std::chrono::steady_clock::time_point lastFrame_ {};

@@ -130,6 +130,12 @@ enum class VariationType : std::uint8_t {
     Csc,
     Cot,
     Sech,
+    Perspective,
+    Blob,
+    PDJ,
+    Fan2,
+    Rings2,
+    TwinTrian,
     Count
 };
 

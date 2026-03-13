@@ -246,6 +246,66 @@ Vec2 ApplyVariation(const VariationType variation, const Vec2& point) {
             -factor * std::sin(point.y) * std::sinh(point.x)
         };
     }
+    case VariationType::Perspective: {
+        const double p_angle = kPi / 4.0;
+        const double dist = 2.0;
+        const double denominator = SafeSignedDenominator(dist - point.y * std::sin(p_angle));
+        return {
+            dist * point.x / denominator,
+            dist * point.y * std::cos(p_angle) / denominator
+        };
+    }
+    case VariationType::Blob: {
+        const double p_high = 1.2;
+        const double p_low = 0.5;
+        const double p_waves = 3.0;
+        const double factor = radius * (p_low + 0.5 * (p_high - p_low) * (1.0 + std::sin(p_waves * angle)));
+        return {
+            factor * std::cos(angle),
+            factor * std::sin(angle)
+        };
+    }
+    case VariationType::PDJ: {
+        const double a = 0.1;
+        const double b = 1.9;
+        const double c = -0.8;
+        const double d = -1.2;
+        return {
+            std::sin(a * point.y) - std::cos(b * point.x),
+            std::sin(c * point.x) - std::cos(d * point.y)
+        };
+    }
+    case VariationType::Fan2: {
+        const double p_x = kPi * 0.1;
+        const double p_y = 0.5;
+        const double dx = kPi * (p_x * p_x + 1.0e-9);
+        const double dx2 = dx * 0.5;
+        const double t = angle + p_y - dx * std::floor((angle + p_y) / dx);
+        const double a = t > dx2 ? angle - dx2 : angle + dx2;
+        return {
+            radius * std::sin(a),
+            radius * std::cos(a)
+        };
+    }
+    case VariationType::Rings2: {
+        const double p_val = 0.5;
+        const double p_val2 = p_val * p_val + 1.0e-9;
+        const double t = radius - 2.0 * p_val2 * std::floor((radius + p_val2) / (2.0 * p_val2)) + radius * (1.0 - p_val2);
+        return {
+            t * std::sin(angle),
+            t * std::cos(angle)
+        };
+    }
+    case VariationType::TwinTrian: {
+        const double r = radius * 0.8;
+        const double sinr = std::sin(r);
+        const double cosr = std::cos(r);
+        const double diff = std::log10(std::max(1.0e-9, sinr * sinr)) + cosr;
+        return {
+            point.x + 0.8 * point.x * diff,
+            point.y + 0.8 * point.x * (diff - sinr * kPi)
+        };
+    }
     case VariationType::Count:
     default:
         return point;

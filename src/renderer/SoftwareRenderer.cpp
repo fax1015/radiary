@@ -1485,20 +1485,29 @@ double SoftwareRenderer::NormalizeProjectedDepth(const double depth, const Camer
 
 Color SoftwareRenderer::ToneMap(const FlamePixel& pixel) {
     if (pixel.density <= 0.0f) {
-        return {10, 10, 13, 255};
+        return {0, 0, 0, 0};
     }
 
     const double logDensity = std::log1p(static_cast<double>(pixel.density));
-    const double intensity = std::pow(Clamp(logDensity / 4.1, 0.0, 1.75), 1.18);
+    const double intensity = std::pow(Clamp(logDensity / 3.8, 0.0, 1.85), 1.12);
     const double divisor = std::max(1.0f, pixel.density);
-    const double rf = Clamp(std::pow(Clamp((pixel.red / divisor) / 255.0, 0.0, 1.0), 1.08) * intensity, 0.0, 1.0);
-    const double gf = Clamp(std::pow(Clamp((pixel.green / divisor) / 255.0, 0.0, 1.0), 1.08) * intensity, 0.0, 1.0);
-    const double bf = Clamp(std::pow(Clamp((pixel.blue / divisor) / 255.0, 0.0, 1.0), 1.08) * intensity, 0.0, 1.0);
+    const double rawR = Clamp((pixel.red / divisor) / 255.0, 0.0, 1.0);
+    const double rawG = Clamp((pixel.green / divisor) / 255.0, 0.0, 1.0);
+    const double rawB = Clamp((pixel.blue / divisor) / 255.0, 0.0, 1.0);
+    const double maxChannel = std::max({rawR, rawG, rawB, 1.0e-6});
+    const double saturationBoost = 1.0 + (1.0 - maxChannel) * 0.15;
+    
+    const double alpha = Clamp(intensity * 1.25, 0.0, 1.0);
+    const double bloom = std::max(1.0, intensity);
+    
+    const double rf = Clamp(std::pow(rawR, 1.04) * bloom * saturationBoost, 0.0, 1.0);
+    const double gf = Clamp(std::pow(rawG, 1.04) * bloom * saturationBoost, 0.0, 1.0);
+    const double bf = Clamp(std::pow(rawB, 1.04) * bloom * saturationBoost, 0.0, 1.0);
     return {
-        static_cast<std::uint8_t>(Clamp(std::pow(rf, 0.58) * 255.0, 0.0, 255.0)),
-        static_cast<std::uint8_t>(Clamp(std::pow(gf, 0.58) * 255.0, 0.0, 255.0)),
-        static_cast<std::uint8_t>(Clamp(std::pow(bf, 0.58) * 255.0, 0.0, 255.0)),
-        255
+        static_cast<std::uint8_t>(Clamp(std::pow(rf, 0.55) * 255.0, 0.0, 255.0)),
+        static_cast<std::uint8_t>(Clamp(std::pow(gf, 0.55) * 255.0, 0.0, 255.0)),
+        static_cast<std::uint8_t>(Clamp(std::pow(bf, 0.55) * 255.0, 0.0, 255.0)),
+        static_cast<std::uint8_t>(Clamp(alpha * 255.0, 0.0, 255.0))
     };
 }
 
@@ -1535,13 +1544,20 @@ bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
             }
 
             const Color mapped = ToneMap(pixel);
+            if (mapped.a == 0) {
+                continue;
+            }
+
             const std::uint32_t existing = pixels[i];
             const int er = static_cast<int>((existing >> 16U) & 0xFFU);
             const int eg = static_cast<int>((existing >> 8U) & 0xFFU);
             const int eb = static_cast<int>(existing & 0xFFU);
-            const int r = er + ((mapped.r - er) * 243 >> 8);
-            const int g = eg + ((mapped.g - eg) * 243 >> 8);
-            const int b = eb + ((mapped.b - eb) * 243 >> 8);
+            
+            const int alpha = mapped.a;
+            const int r = er + ((static_cast<int>(mapped.r) - er) * alpha >> 8);
+            const int g = eg + ((static_cast<int>(mapped.g) - eg) * alpha >> 8);
+            const int b = eb + ((static_cast<int>(mapped.b) - eb) * alpha >> 8);
+            
             pixels[i] = static_cast<std::uint32_t>(b)
                 | (static_cast<std::uint32_t>(g) << 8U)
                 | (static_cast<std::uint32_t>(r) << 16U)

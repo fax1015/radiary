@@ -15,7 +15,7 @@ namespace radiary {
 namespace {
 
 constexpr int kVariationCountGpu = static_cast<int>(VariationType::Count);
-static_assert(kVariationCountGpu == 44, "Update GPU flame shader variation table to match VariationType::Count.");
+static_assert(kVariationCountGpu == 50, "Update GPU flame shader variation table to match VariationType::Count.");
 constexpr std::uint32_t kMinProgressiveBatchIterations = 32768u;
 constexpr std::uint32_t kMaxProgressiveBatchIterations = 262144u;
 constexpr std::uint32_t kGpuFlameBurnInIterations = 24u;
@@ -77,7 +77,7 @@ struct TransformGpu
     float ColorIndex;
     float UseCustomColor;
     float4 CustomColor;
-    float Variations[44];
+    float Variations[50];
 };
 
 StructuredBuffer<TransformGpu> Transforms : register(t0);
@@ -372,6 +372,66 @@ float2 ApplyVariation(uint variation, float2 samplePoint)
             factor * cos(samplePoint.y) * cosh(samplePoint.x),
             -factor * sin(samplePoint.y) * sinh(samplePoint.x));
     }
+    case 44:
+    {
+        float p_angle = kPi / 4.0;
+        float dist = 2.0;
+        float denominator = SafeSignedDenominator(dist - samplePoint.y * sin(p_angle));
+        return float2(
+            dist * samplePoint.x / denominator,
+            dist * samplePoint.y * cos(p_angle) / denominator);
+    }
+    case 45:
+    {
+        float p_high = 1.2;
+        float p_low = 0.5;
+        float p_waves = 3.0;
+        float factor = radius * (p_low + 0.5 * (p_high - p_low) * (1.0 + sin(p_waves * angle)));
+        return float2(
+            factor * cos(angle),
+            factor * sin(angle));
+    }
+    case 46:
+    {
+        float a = 0.1;
+        float b = 1.9;
+        float c = -0.8;
+        float d = -1.2;
+        return float2(
+            sin(a * samplePoint.y) - cos(b * samplePoint.x),
+            sin(c * samplePoint.x) - cos(d * samplePoint.y));
+    }
+    case 47:
+    {
+        float p_x = kPi * 0.1;
+        float p_y = 0.5;
+        float dx = kPi * (p_x * p_x + 1.0e-9);
+        float dx2 = dx * 0.5;
+        float t = angle + p_y - dx * floor((angle + p_y) / dx);
+        float a_val = t > dx2 ? angle - dx2 : angle + dx2;
+        return float2(
+            radius * sin(a_val),
+            radius * cos(a_val));
+    }
+    case 48:
+    {
+        float p_val = 0.5;
+        float p_val2 = p_val * p_val + 1.0e-9;
+        float t = radius - 2.0 * p_val2 * floor((radius + p_val2) / (2.0 * p_val2)) + radius * (1.0 - p_val2);
+        return float2(
+            t * sin(angle),
+            t * cos(angle));
+    }
+    case 49:
+    {
+        float r = radius * 0.8;
+        float sinr = sin(r);
+        float cosr = cos(r);
+        float diff = log10(max(1.0e-9, sinr * sinr)) + cosr;
+        return float2(
+            samplePoint.x + 0.8 * samplePoint.x * diff,
+            samplePoint.y + 0.8 * samplePoint.x * (diff - sinr * kPi));
+    }
     default:
         return samplePoint;
     }
@@ -591,14 +651,23 @@ void ToneMapCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     float density = (float)pixel.x / (float)kAccumulationScale;
     float logDensity = log(1.0 + density);
-    float intensity = pow(clamp(logDensity / 4.1, 0.0, 1.75), 1.18);
+    float intensity = pow(clamp(logDensity / 3.8, 0.0, 1.85), 1.12);
     float divisor = max((float)kAccumulationScale, (float)pixel.x);
-    float rf = clamp(pow(clamp(((float)pixel.y / divisor) / 255.0, 0.0, 1.0), 1.08) * intensity, 0.0, 1.0);
-    float gf = clamp(pow(clamp(((float)pixel.z / divisor) / 255.0, 0.0, 1.0), 1.08) * intensity, 0.0, 1.0);
-    float bf = clamp(pow(clamp(((float)pixel.w / divisor) / 255.0, 0.0, 1.0), 1.08) * intensity, 0.0, 1.0);
-    float3 mapped = float3(pow(rf, 0.58), pow(gf, 0.58), pow(bf, 0.58));
-    float blend = 243.0 / 256.0;
-    float3 output = background + (mapped - background) * blend;
+    float rawR = clamp(((float)pixel.y / divisor) / 255.0, 0.0, 1.0);
+    float rawG = clamp(((float)pixel.z / divisor) / 255.0, 0.0, 1.0);
+    float rawB = clamp(((float)pixel.w / divisor) / 255.0, 0.0, 1.0);
+    float maxChannel = max(max(rawR, rawG), max(rawB, 1.0e-6));
+    float saturationBoost = 1.0 + (1.0 - maxChannel) * 0.15;
+    
+    float alpha = clamp(intensity * 1.25, 0.0, 1.0);
+    float bloom = max(1.0, intensity);
+    
+    float rf = clamp(pow(rawR, 1.04) * bloom * saturationBoost, 0.0, 1.0);
+    float gf = clamp(pow(rawG, 1.04) * bloom * saturationBoost, 0.0, 1.0);
+    float bf = clamp(pow(rawB, 1.04) * bloom * saturationBoost, 0.0, 1.0);
+    float3 mapped = float3(pow(rf, 0.55), pow(gf, 0.55), pow(bf, 0.55));
+    
+    float3 output = background + (mapped - background) * alpha;
     FlameOutput[int2(dispatchThreadId.xy)] = float4(output, 1.0);
     FlameDepthOutput[int2(dispatchThreadId.xy)] = saturate(((float)depthAccum / max(1.0, (float)pixel.x)) / 65535.0);
 }
