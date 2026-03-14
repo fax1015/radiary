@@ -1,0 +1,108 @@
+{
+  "version": 4,
+  "name": "cinematic-vortex",
+  "mode": "flame",
+  "previewIterations": 480000,
+  "animatePath": false,
+  "backgroundColor": {"r": 5, "g": 5, "b": 7, "a": 255},
+  "timelineFrame": 0,
+  "timelineFrameRate": 24,
+  "timelineStartFrame": 0,
+  "timelineEndFrame": 120,
+  "camera": {
+    "yaw": 0.35,
+    "pitch": -0.55,
+    "distance": 8,
+    "panX": 0,
+    "panY": 0,
+    "zoom2D": 1.5,
+    "frameWidth": 1.8,
+    "frameHeight": 1.2
+  },
+  "flameRender": {
+    "rotationXDegrees": 15,
+    "rotationYDegrees": 45,
+    "rotationZDegrees": 0,
+    "depthAmount": 1.2,
+    "curveExposure": 1.5,
+    "curveContrast": 1.2,
+    "curveHighlights": 0.8,
+    "curveGamma": 1.0
+  },
+  "depthOfField": {
+    "enabled": true,
+    "focusDepth": 0.45,
+    "focusRange": 0.1,
+    "blurStrength": 0.6
+  },
+  "postProcess": {
+    "enabled": true,
+    "bloomIntensity": 0.8,
+    "bloomRadius": 0.8,
+    "bloomThreshold": 0.4,
+    "chromaticAberration": 2.5,
+    "vignetteIntensity": 0.6,
+    "vignetteRoundness": 0.5,
+    "acesToneMap": true,
+    "filmGrain": 0.3,
+    "colorTemperature": 8500,
+    "saturationBoost": 0.2
+  },
+  "gradient": [
+    {"position": 0, "r": 255, "g": 100, "b": 50, "a": 255},
+    {"position": 0.3, "r": 255, "g": 200, "b": 100, "a": 255},
+    {"position": 0.6, "r": 50, "g": 150, "b": 255, "a": 255},
+    {"position": 1, "r": 20, "g": 50, "b": 150, "a": 255}
+  ],
+  "paths": [],
+  "transforms": [
+    {
+      "name": "Transform 1",
+      "weight": 1,
+      "rotationDegrees": 45,
+      "scaleX": 0.8,
+      "scaleY": 0.8,
+      "translateX": 0.2,
+      "translateY": -0.1,
+      "shearX": 0,
+      "shearY": 0,
+      "colorIndex": 0.2,
+      "useCustomColor": false,
+      "customColor": {"r": 255, "g": 255, "b": 255, "a": 255},
+      "vortex": 1.5,
+      "golden_spiral": 0.8
+    },
+    {
+      "name": "Transform 2",
+      "weight": 0.8,
+      "rotationDegrees": -30,
+      "scaleX": 0.6,
+      "scaleY": 0.6,
+      "translateX": -0.3,
+      "translateY": 0.2,
+      "shearX": 0.1,
+      "shearY": 0,
+      "colorIndex": 0.8,
+      "useCustomColor": false,
+      "customColor": {"r": 255, "g": 255, "b": 255, "a": 255},
+      "supershape": 1.2,
+      "kaleidoscope": 0.5
+    },
+    {
+      "name": "Transform 3",
+      "weight": 0.5,
+      "rotationDegrees": 90,
+      "scaleX": 1.2,
+      "scaleY": 1.2,
+      "translateX": 0,
+      "translateY": 0,
+      "shearX": 0,
+      "shearY": 0,
+      "colorIndex": 0.5,
+      "useCustomColor": false,
+      "customColor": {"r": 255, "g": 255, "b": 255, "a": 255},
+      "mobius": 0.7,
+      "interference": 0.4
+    }
+  ]
+}

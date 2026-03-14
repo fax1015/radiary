@@ -664,7 +664,6 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         float2 varied = float2(0.0, 0.0);
         float totalVariationWeight = 0.0;
         bool unstableOrbit = false;
-        [unroll]
         for (uint variation = 0; variation < 60u; ++variation)
         {
             float amount = layer.Variations[variation];
