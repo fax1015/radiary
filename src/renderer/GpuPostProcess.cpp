@@ -388,16 +388,16 @@ bool GpuPostProcess::Render(
 
         // Bloom upsample passes
         for (int i = kBloomMipCount - 2; i >= 0; --i) {
-            int mipW = width;
-            int mipH = height;
+            int upMipW = width;
+            int upMipH = height;
             for (int j = 0; j <= i; ++j) {
-                mipW = std::max(1, mipW / 2);
-                mipH = std::max(1, mipH / 2);
+                upMipW = std::max(1, upMipW / 2);
+                upMipH = std::max(1, upMipH / 2);
             }
 
             Params params {};
-            params.mipWidth = static_cast<std::uint32_t>(mipW);
-            params.mipHeight = static_cast<std::uint32_t>(mipH);
+            params.mipWidth = static_cast<std::uint32_t>(upMipW);
+            params.mipHeight = static_cast<std::uint32_t>(upMipH);
             D3D11_MAPPED_SUBRESOURCE mapped {};
             HRESULT result = deviceContext_->Map(paramsBuffer_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
             if (FAILED(result)) { SetError("Map(paramsBuffer bloom up)", result); return false; }
@@ -411,8 +411,8 @@ bool GpuPostProcess::Render(
             deviceContext_->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
             deviceContext_->CSSetShader(bloomUpShader_, nullptr, 0);
             deviceContext_->Dispatch(
-                (static_cast<std::uint32_t>(mipW) + 7u) / 8u,
-                (static_cast<std::uint32_t>(mipH) + 7u) / 8u, 1u);
+                (static_cast<std::uint32_t>(upMipW) + 7u) / 8u,
+                (static_cast<std::uint32_t>(upMipH) + 7u) / 8u, 1u);
             deviceContext_->CSSetShaderResources(0, 2, nullSrvs);
             deviceContext_->CSSetUnorderedAccessViews(0, 1, nullUavs, nullptr);
         }
