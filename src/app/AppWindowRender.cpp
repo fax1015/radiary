@@ -90,6 +90,17 @@ void AppWindow::QueueViewportRender(const int width, const int height, const boo
     renderCv_.notify_one();
 }
 
+void AppWindow::RecordPreviewUpdate() {
+    const auto now = std::chrono::steady_clock::now();
+    if (lastPreviewUpdate_ != std::chrono::steady_clock::time_point {}) {
+        const double deltaSeconds = std::chrono::duration<double>(now - lastPreviewUpdate_).count();
+        if (deltaSeconds > 0.0) {
+            previewFpsSmoothed_ = previewFpsSmoothed_ * 0.92 + (1.0 / deltaSeconds) * 0.08;
+        }
+    }
+    lastPreviewUpdate_ = now;
+}
+
 void AppWindow::ConsumeCompletedRender() {
     int width = 0;
     int height = 0;
@@ -123,6 +134,7 @@ void AppWindow::ConsumeCompletedRender() {
     box.bottom = static_cast<UINT>(height);
     box.back = 1;
     deviceContext_->UpdateSubresource(viewportTexture_.Get(), 0, &box, viewportPixels_.data(), width * 4, 0);
+    RecordPreviewUpdate();
 }
 
 void AppWindow::StartRenderThread() {
@@ -259,6 +271,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
             displayedPreviewBackend_ = backend;
             lastGpuPreviewDispatchAt_ = now;
             viewportDirty_ = false;
+            RecordPreviewUpdate();
             return true;
         };
 
@@ -604,6 +617,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
     box.back = 1;
     deviceContext_->UpdateSubresource(viewportTexture_.Get(), 0, &box, viewportPixels_.data(), targetWidth * 4, 0);
     viewportDirty_ = false;
+    RecordPreviewUpdate();
 }
 
 void AppWindow::HandleViewportInteraction(const bool hovered) {

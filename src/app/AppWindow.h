@@ -195,6 +195,8 @@ private:
 
     std::chrono::steady_clock::time_point lastFrame_ {};
     double fpsSmoothed_ = 60.0;
+    std::chrono::steady_clock::time_point lastPreviewUpdate_ {};
+    double previewFpsSmoothed_ = 60.0;
     bool viewportDirty_ = true;
     bool interactivePreview_ = false;
     bool asyncViewportRendering_ = true;
@@ -281,6 +283,7 @@ private:
     Scene BuildRenderableScene(const Scene& scene) const;
     void QueueViewportRender(int width, int height, bool interactive);
     void ConsumeCompletedRender();
+    void RecordPreviewUpdate();
     void StartRenderThread();
     void StopRenderThread();
     void RenderThreadMain();

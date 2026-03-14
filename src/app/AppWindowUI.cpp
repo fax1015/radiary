@@ -2246,7 +2246,7 @@ void AppWindow::DrawTimelinePanel() {
         displayedPreviewIterations_,
         targetPreviewIterations,
         previewBackend,
-        fpsSmoothed_);
+        previewFpsSmoothed_);
     ImGui::End();
 }
 
