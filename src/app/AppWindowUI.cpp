@@ -2448,36 +2448,28 @@ void AppWindow::DrawViewportPanel() {
         drawList->AddText(textPos, ImGui::GetColorU32(ImVec4(0.78f, 0.79f, 0.82f, 1.0f)), label);
     };
 
-    const auto applyPostProcessIfEnabled = [&](ID3D11ShaderResourceView* srv) -> ID3D11ShaderResourceView* {
-        if (!scene_.postProcess.enabled || srv == nullptr) return srv;
-        if (!EnsureGpuPostProcessInitialized()) return srv;
-        const int ppWidth = uploadedViewportWidth_ > 0 ? uploadedViewportWidth_ : static_cast<int>(available.x);
-        const int ppHeight = uploadedViewportHeight_ > 0 ? uploadedViewportHeight_ : static_cast<int>(available.y);
-        if (ppWidth <= 0 || ppHeight <= 0) return srv;
-        if (gpuPostProcess_.Render(scene_, ppWidth, ppHeight, srv)) {
-            return gpuPostProcess_.ShaderResourceView();
-        }
-        return srv;
-    };
-
     if (preferGpuPreview) {
         if (scene_.mode == SceneMode::Flame
             && displayedPreviewBackend_ == PreviewBackend::GpuFlame
             && gpuFlameRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(applyPostProcessIfEnabled(gpuFlameRenderer_.ShaderResourceView())), available);
+            ImGui::Image(reinterpret_cast<ImTextureID>(gpuFlameRenderer_.ShaderResourceView()), available);
+            hovered = ImGui::IsItemHovered();
+        } else if (displayedPreviewBackend_ == PreviewBackend::GpuPostProcessed
+            && gpuPostProcess_.ShaderResourceView() != nullptr) {
+            ImGui::Image(reinterpret_cast<ImTextureID>(gpuPostProcess_.ShaderResourceView()), available);
             hovered = ImGui::IsItemHovered();
         } else if (displayedPreviewBackend_ == PreviewBackend::GpuDof
             && gpuDofRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(applyPostProcessIfEnabled(gpuDofRenderer_.ShaderResourceView())), available);
+            ImGui::Image(reinterpret_cast<ImTextureID>(gpuDofRenderer_.ShaderResourceView()), available);
             hovered = ImGui::IsItemHovered();
         } else if (displayedPreviewBackend_ == PreviewBackend::GpuDenoised
             && gpuDenoiser_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(applyPostProcessIfEnabled(gpuDenoiser_.ShaderResourceView())), available);
+            ImGui::Image(reinterpret_cast<ImTextureID>(gpuDenoiser_.ShaderResourceView()), available);
             hovered = ImGui::IsItemHovered();
         } else if (scene_.mode == SceneMode::Path
             && displayedPreviewBackend_ == PreviewBackend::GpuPath
             && gpuPathRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(applyPostProcessIfEnabled(gpuPathRenderer_.ShaderResourceView())), available);
+            ImGui::Image(reinterpret_cast<ImTextureID>(gpuPathRenderer_.ShaderResourceView()), available);
             hovered = ImGui::IsItemHovered();
         } else if ((scene_.mode == SceneMode::Flame || scene_.mode == SceneMode::Hybrid)
             && displayedPreviewBackend_ == PreviewBackend::GpuHybrid

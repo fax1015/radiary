@@ -68,7 +68,8 @@ private:
         GpuPath,
         GpuHybrid,
         GpuDof,
-        GpuDenoised
+        GpuDenoised,
+        GpuPostProcessed
     };
 
     enum class ExportFormat {
