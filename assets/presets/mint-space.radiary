@@ -1,7 +1,7 @@
 {
   "version": 4,
   "name": "Mint Space",
-  "mode": "hybrid",
+  "mode": "path",
   "previewIterations": 400000,
   "animatePath": false,
   "backgroundColor": {"r": 82, "g": 202, "b": 123, "a": 255},

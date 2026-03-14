@@ -29,6 +29,81 @@ constexpr float kDefaultRightPanelSplit = 0.47f;
 
 namespace radiary {
 
+bool AppWindow::DrawAnimatedLoadingIcon(ImDrawList* drawList, const ImVec2& center, const float maxExtent, const std::uint32_t color) const {
+    if (drawList == nullptr) {
+        return false;
+    }
+    if (startupLogoSvgStrokes_.empty()) {
+        if (appLogoSrv_ == nullptr) {
+            return false;
+        }
+        const float imageSize = std::max(20.0f, maxExtent);
+        drawList->AddImage(
+            reinterpret_cast<ImTextureID>(appLogoSrv_.Get()),
+            ImVec2(center.x - imageSize * 0.5f, center.y - imageSize * 0.5f),
+            ImVec2(center.x + imageSize * 0.5f, center.y + imageSize * 0.5f));
+        return true;
+    }
+
+    const float boundsWidth = std::max(1.0f, startupLogoSvgMaxX_ - startupLogoSvgMinX_);
+    const float boundsHeight = std::max(1.0f, startupLogoSvgMaxY_ - startupLogoSvgMinY_);
+    const float scale = std::min(maxExtent / boundsWidth, maxExtent / boundsHeight) * 0.9f;
+    const float drawWidth = boundsWidth * scale;
+    const float drawHeight = boundsHeight * scale;
+    const float left = center.x - drawWidth * 0.5f;
+    const float top = center.y - drawHeight * 0.5f;
+    const float strokeWidth = std::clamp(maxExtent / 24.0f, 2.0f, 4.2f);
+    const float dashLength = std::max(3.0f, maxExtent * 0.07f);
+    const float dashGap = std::max(2.0f, maxExtent * 0.035f);
+    const float patternLength = dashLength + dashGap;
+    const float dashOffset = std::fmod(static_cast<float>(ImGui::GetTime()) * 35.0f, patternLength);
+
+    for (const StartupLogoStroke& stroke : startupLogoSvgStrokes_) {
+        if (stroke.points.size() < 2) {
+            continue;
+        }
+
+        float patternPos = dashOffset;
+        for (std::size_t index = 1; index < stroke.points.size(); ++index) {
+            const StartupLogoPoint& a = stroke.points[index - 1];
+            const StartupLogoPoint& b = stroke.points[index];
+            const ImVec2 segmentStart(
+                left + (a.x - startupLogoSvgMinX_) * scale,
+                top + (a.y - startupLogoSvgMinY_) * scale);
+            const ImVec2 segmentEnd(
+                left + (b.x - startupLogoSvgMinX_) * scale,
+                top + (b.y - startupLogoSvgMinY_) * scale);
+            const float dx = segmentEnd.x - segmentStart.x;
+            const float dy = segmentEnd.y - segmentStart.y;
+            const float segmentLength = std::sqrt(dx * dx + dy * dy);
+            if (segmentLength <= 0.001f) {
+                continue;
+            }
+
+            float consumed = 0.0f;
+            while (consumed < segmentLength) {
+                const bool drawDash = patternPos < dashLength;
+                const float target = drawDash ? dashLength : patternLength;
+                const float step = std::min(segmentLength - consumed, target - patternPos);
+                if (drawDash && step > 0.001f) {
+                    const float startT = consumed / segmentLength;
+                    const float endT = (consumed + step) / segmentLength;
+                    const ImVec2 dashStart(segmentStart.x + dx * startT, segmentStart.y + dy * startT);
+                    const ImVec2 dashEnd(segmentStart.x + dx * endT, segmentStart.y + dy * endT);
+                    drawList->AddLine(dashStart, dashEnd, color, strokeWidth);
+                }
+                consumed += step;
+                patternPos += step;
+                if (patternPos >= patternLength - 0.001f) {
+                    patternPos = 0.0f;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
 void AppWindow::DrawBlockingOverlay() const {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     if (viewport == nullptr) {
@@ -56,10 +131,24 @@ void AppWindow::DrawBlockingOverlay() const {
     ImGui::PopStyleVar(3);
 
     const float panelWidth = std::clamp(viewport->Size.x - 48.0f, 320.0f, 440.0f);
+    const float iconExtent = 76.0f;
+    const float iconGap = 22.0f;
+    const float panelEstimatedHeight = 184.0f;
+    const float groupHeight = iconExtent + iconGap + panelEstimatedHeight;
+    const float groupTop = viewport->Pos.y + std::max(24.0f, (viewport->Size.y - groupHeight) * 0.5f);
+    const ImVec2 iconCenter(
+        viewport->Pos.x + viewport->Size.x * 0.5f,
+        groupTop + iconExtent * 0.5f);
+    DrawAnimatedLoadingIcon(
+        ImGui::GetWindowDrawList(),
+        iconCenter,
+        iconExtent,
+        ImGui::GetColorU32(ImVec4(115.0f / 255.0f, 148.0f / 255.0f, 235.0f / 255.0f, 1.0f)));
+
     ImGui::SetNextWindowPos(
-        ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
+        ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, iconCenter.y + iconExtent * 0.5f + iconGap),
         ImGuiCond_Always,
-        ImVec2(0.5f, 0.5f));
+        ImVec2(0.5f, 0.0f));
     ImGui::SetNextWindowSizeConstraints(
         ImVec2(panelWidth, 0.0f),
         ImVec2(panelWidth, std::max(160.0f, viewport->Size.y - 48.0f)));
@@ -82,7 +171,9 @@ void AppWindow::DrawBlockingOverlay() const {
     const std::string eta = WideToUtf8(exportProgressEta_);
     ImGui::TextUnformatted(title.c_str());
     ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(115.0f / 255.0f, 148.0f / 255.0f, 235.0f / 255.0f, 1.0f));
     ImGui::ProgressBar(std::clamp(exportProgress_, 0.0f, 1.0f), ImVec2(-FLT_MIN, 0.0f));
+    ImGui::PopStyleColor();
     if (!detail.empty()) {
         ImGui::Spacing();
         ImGui::PushTextWrapPos(0.0f);
@@ -197,7 +288,15 @@ void AppWindow::DrawToolbar() {
         DrawSubtleToolbarDivider();
     };
 
-    ImGui::AlignTextToFramePadding();
+    const float brandLogoSize = ImGui::GetFrameHeight();
+    if (appLogoSrv_ != nullptr) {
+        const float brandRowStartY = ImGui::GetCursorPosY();
+        ImGui::Image(reinterpret_cast<ImTextureID>(appLogoSrv_.Get()), ImVec2(brandLogoSize, brandLogoSize));
+        ImGui::SameLine(0.0f, 10.0f);
+        ImGui::SetCursorPosY(brandRowStartY + std::max(0.0f, (brandLogoSize - ImGui::GetTextLineHeight()) * 0.5f));
+    } else {
+        ImGui::AlignTextToFramePadding();
+    }
     if (brandFont_ != nullptr) {
         ImGui::PushFont(brandFont_);
     }
@@ -649,10 +748,6 @@ void AppWindow::DrawExportPanel() {
         ImGui::Spacing();
         if (DrawActionButton("##export_confirm", "Export File", IconGlyph::ExportImage, ActionTone::Accent, false, true, 132.0f)) {
             ExportViewportToDialog();
-        }
-        ImGui::SameLine();
-        if (DrawActionButton("##export_cancel", "Close", IconGlyph::Remove, ActionTone::Slate, false, true, 96.0f)) {
-            exportPanelOpen_ = false;
         }
 
         ImGui::EndChild();
@@ -2443,9 +2538,19 @@ void AppWindow::DrawViewportPanel() {
         drawList->AddRect(imageMin, imageMax, borderColor, 6.0f, 0, 1.0f);
         const char* label = bootstrapUiFramePending_ ? "Loading UI..." : "Loading preview...";
         const ImVec2 textSize = ImGui::CalcTextSize(label);
+        const float iconExtent = std::clamp(std::min(available.x, available.y) * 0.16f, 34.0f, 64.0f);
+        const float blockHeight = iconExtent + 12.0f + textSize.y;
+        const ImVec2 iconCenter(
+            imageMin.x + available.x * 0.5f,
+            imageMin.y + std::max(0.0f, (available.y - blockHeight) * 0.5f) + iconExtent * 0.5f);
+        DrawAnimatedLoadingIcon(
+            drawList,
+            iconCenter,
+            iconExtent,
+            ImGui::GetColorU32(ImVec4(0.72f, 0.76f, 0.92f, 0.95f)));
         const ImVec2 textPos(
             imageMin.x + std::max(0.0f, (available.x - textSize.x) * 0.5f),
-            imageMin.y + std::max(0.0f, (available.y - textSize.y) * 0.5f));
+            iconCenter.y + iconExtent * 0.5f + 12.0f);
         drawList->AddText(textPos, ImGui::GetColorU32(ImVec4(0.78f, 0.79f, 0.82f, 1.0f)), label);
     };
 

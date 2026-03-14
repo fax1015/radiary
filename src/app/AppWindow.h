@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "core/Scene.h"
+#include "app/StartupLogoSvg.h"
 #include "io/PresetLibrary.h"
 #include "io/SceneSerializer.h"
 #include "renderer/GpuFlameRenderer.h"
@@ -26,6 +27,8 @@
 
 struct ImGuiContext;
 struct ImFont;
+struct ImDrawList;
+struct ImVec2;
 
 namespace radiary {
 
@@ -203,6 +206,22 @@ private:
     std::uint32_t interactivePreviewIterations_ = 60000;
     ImFont* uiFont_ = nullptr;
     ImFont* brandFont_ = nullptr;
+    std::filesystem::path appLogoPath_;
+    std::vector<std::uint32_t> appLogoPixels_;
+    int appLogoWidth_ = 0;
+    int appLogoHeight_ = 0;
+    bool appLogoLoadAttempted_ = false;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> appLogoSrv_;
+    std::filesystem::path startupLogoSvgPath_;
+    std::vector<StartupLogoStroke> startupLogoSvgStrokes_;
+    bool startupLogoSvgLoadAttempted_ = false;
+    COLORREF startupLogoSvgColor_ = RGB(115, 148, 235);
+    float startupLogoSvgMinX_ = 0.0f;
+    float startupLogoSvgMinY_ = 0.0f;
+    float startupLogoSvgMaxX_ = 0.0f;
+    float startupLogoSvgMaxY_ = 0.0f;
+    ULONG_PTR gdiplusToken_ = 0;
+    float startupAnimationDashOffset_ = 0.0f;
     int uploadedViewportWidth_ = 0;
     int uploadedViewportHeight_ = 0;
     std::thread renderThread_;
@@ -254,10 +273,14 @@ private:
     void LoadUserSettings();
     void SaveUserSettings() const;
     void ApplyUserSceneDefaults(Scene& scene) const;
+    bool EnsureAppLogoLoaded();
+    bool EnsureStartupLogoSvgLoaded();
     void SetupImGui();
     void ShutdownImGui();
     void ApplyStyle() const;
     void ApplyPendingResize();
+    void CreateAppLogoTexture();
+    void CleanupAppLogoTexture();
     bool RenderTick();
     void RenderFrame();
     void PumpPendingMessages();
@@ -349,6 +372,9 @@ private:
     bool RenderSceneToPixelsGpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels);
     bool ReadbackGpuTexture(ID3D11Texture2D* texture, std::vector<std::uint32_t>& pixels) const;
     bool ReadbackGpuDepthTexture(ID3D11Texture2D* texture, std::vector<float>& depthBuffer) const;
+    void DrawLoadingLogo(HDC hdc, int clientWidth, int clientHeight, int barY) const;
+    void DrawAnimatedLoadingLogo(HDC hdc, int clientWidth, int clientHeight, int barY) const;
+    bool DrawAnimatedLoadingIcon(ImDrawList* drawList, const ImVec2& center, float maxExtent, std::uint32_t color) const;
 
     static std::wstring Utf8ToWide(const std::string& value);
     static std::string WideToUtf8(const std::wstring& value);

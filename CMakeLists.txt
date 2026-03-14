@@ -31,6 +31,7 @@ set(radiary_sources
     src/app/AppWidgets.cpp
     src/app/CameraUtils.cpp
     src/app/ExportUtils.cpp
+    src/app/StartupLogoSvg.cpp
     src/app/AppWindow.cpp
     src/app/AppWindowD3D.cpp
     src/app/AppWindowUI.cpp
@@ -77,7 +78,7 @@ else()
     target_compile_options(Radiary PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-target_link_libraries(Radiary PRIVATE windowscodecs comdlg32 ole32 dwmapi d3d11 dxgi)
+target_link_libraries(Radiary PRIVATE windowscodecs comdlg32 ole32 dwmapi d3d11 dxgi gdiplus)
 
 install(TARGETS Radiary RUNTIME DESTINATION .)
 install(DIRECTORY assets DESTINATION .)

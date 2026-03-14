@@ -6,6 +6,7 @@
 
 #include <commdlg.h>
 #include <dwmapi.h>
+#include <gdiplus.h>
 #include <wincodec.h>
 #include <windowsx.h>
 
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iomanip>
 #include <map>
 #include <random>
@@ -38,7 +40,9 @@ namespace {
 constexpr int kInitialWindowWidth = 1560;
 constexpr int kInitialWindowHeight = 980;
 constexpr UINT_PTR kLiveResizeTimerId = 1;
+constexpr UINT_PTR kStartupAnimationTimerId = 2;
 constexpr UINT kLiveResizeTimerIntervalMs = 15;
+constexpr UINT kStartupAnimationTimerIntervalMs = 16;
 constexpr float kOverlayPanelMarginX = 16.0f;
 constexpr float kOverlayPanelMarginY = 12.0f;
 constexpr float kDefaultToolbarSplit = 0.055f;
@@ -46,7 +50,78 @@ constexpr float kDefaultBottomPanelSplit = 0.22f;
 constexpr float kDefaultLeftPanelSplit = 0.3f;
 constexpr float kDefaultRightPanelSplit = 0.47f;
 constexpr int kAppSettingsVersion = 1;
+// Replace this file to swap the app logo everywhere it is used.
+constexpr wchar_t kAppLogoRelativePath[] = L"assets/ui/app-logo.png";
+constexpr wchar_t kAnimatedAppLogoRelativePath[] = L"assets/ui/app-logo.svg";
 
+std::filesystem::path GetExecutableDirectory() {
+    wchar_t modulePath[MAX_PATH] = L"";
+    const DWORD length = GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) {
+        return {};
+    }
+    return std::filesystem::path(modulePath).parent_path();
+}
+
+std::vector<std::filesystem::path> AssetCandidates(const std::filesystem::path& relativePath) {
+    const std::filesystem::path exeDir = GetExecutableDirectory();
+    return {
+        std::filesystem::current_path() / relativePath,
+        exeDir / relativePath,
+        exeDir.parent_path() / relativePath,
+        exeDir.parent_path().parent_path() / relativePath
+    };
+}
+
+bool LoadImagePixelsWithWic(
+    const std::filesystem::path& path,
+    std::vector<std::uint32_t>& pixels,
+    int& width,
+    int& height) {
+    IWICImagingFactory* factory = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    bool success = false;
+    UINT imageWidth = 0;
+    UINT imageHeight = 0;
+
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))
+        && SUCCEEDED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder))
+        && SUCCEEDED(decoder->GetFrame(0, &frame))
+        && SUCCEEDED(factory->CreateFormatConverter(&converter))
+        && SUCCEEDED(frame->GetSize(&imageWidth, &imageHeight))
+        && imageWidth > 0
+        && imageHeight > 0
+        && SUCCEEDED(converter->Initialize(
+            frame,
+            GUID_WICPixelFormat32bppBGRA,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0,
+            WICBitmapPaletteTypeCustom))) {
+        width = static_cast<int>(imageWidth);
+        height = static_cast<int>(imageHeight);
+        const UINT stride = imageWidth * 4;
+        const UINT bufferSize = stride * imageHeight;
+        pixels.resize(static_cast<std::size_t>(imageWidth) * static_cast<std::size_t>(imageHeight));
+        if (SUCCEEDED(converter->CopyPixels(nullptr, stride, bufferSize, reinterpret_cast<BYTE*>(pixels.data())))) {
+            success = true;
+        }
+    }
+
+    if (!success) {
+        pixels.clear();
+        width = 0;
+        height = 0;
+    }
+
+    if (converter) { converter->Release(); }
+    if (frame) { frame->Release(); }
+    if (decoder) { decoder->Release(); }
+    if (factory) { factory->Release(); }
+    return success;
+}
 
 }  // namespace
 
@@ -56,6 +131,10 @@ namespace radiary {
 bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     instance_ = instance;
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+    if (Gdiplus::GdiplusStartup(&gdiplusToken_, &gdiplusStartupInput, nullptr) != Gdiplus::Ok) {
+        gdiplusToken_ = 0;
+    }
     ImGui_ImplWin32_EnableDpiAwareness();
 
     WNDCLASSEXW windowClass {};
@@ -80,8 +159,18 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
         instance_,
         this);
     if (!window_) {
+        if (gdiplusToken_ != 0) {
+            Gdiplus::GdiplusShutdown(gdiplusToken_);
+            gdiplusToken_ = 0;
+        }
         CoUninitialize();
         return false;
+    }
+    EnsureAppLogoLoaded();
+    EnsureStartupLogoSvgLoaded();
+    startupAnimationDashOffset_ = 0.0f;
+    if (gdiplusToken_ != 0 && !startupLogoSvgStrokes_.empty()) {
+        SetTimer(window_, kStartupAnimationTimerId, kStartupAnimationTimerIntervalMs, nullptr);
     }
     ApplyDarkTitleBar(window_);
 
@@ -91,17 +180,51 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     auto updateLoading = [this](float progress, const char* label) {
         loadingProgress_ = progress;
         loadingLabel_ = label;
-        InvalidateRect(window_, nullptr, TRUE);
+        InvalidateRect(window_, nullptr, FALSE);
         UpdateWindow(window_);
     };
 
     auto showLoadingFor = [this, &updateLoading](float progress, const char* label, int minMs) {
         const auto start = std::chrono::steady_clock::now();
         updateLoading(progress, label);
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
-        if (elapsed < minMs) {
-            Sleep(static_cast<DWORD>(minMs - elapsed));
+        while (true) {
+            PumpPendingMessages();
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+            if (elapsed >= minMs || !running_) {
+                break;
+            }
+            Sleep(static_cast<DWORD>(std::min<long long>(16, minMs - elapsed)));
         }
+    };
+    auto runAnimatedLoadingTask = [this, &updateLoading](float progress, const char* label, auto&& task) {
+        updateLoading(progress, label);
+        auto future = std::async(std::launch::async, [task = std::forward<decltype(task)>(task)]() mutable {
+            const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            const bool initializedCom = SUCCEEDED(comResult);
+            bool result = false;
+            try {
+                result = task();
+            } catch (...) {
+                if (initializedCom) {
+                    CoUninitialize();
+                }
+                throw;
+            }
+            if (initializedCom) {
+                CoUninitialize();
+            }
+            return result;
+        });
+
+        while (future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+            PumpPendingMessages();
+            if (!running_) {
+                Sleep(1);
+                continue;
+            }
+            Sleep(8);
+        }
+        return future.get();
     };
 
     showLoadingFor(0.05f, "Initializing...", 50);
@@ -135,11 +258,17 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
         }
     }
 
-    showLoadingFor(0.35f, "Creating D3D device...", 50);
-    if (!CreateDeviceD3D()) {
+    if (!runAnimatedLoadingTask(0.35f, "Creating D3D device...", [this]() {
+            return CreateDeviceD3D();
+        })) {
         CleanupDeviceD3D();
+        KillTimer(window_, kStartupAnimationTimerId);
         DestroyWindow(window_);
         window_ = nullptr;
+        if (gdiplusToken_ != 0) {
+            Gdiplus::GdiplusShutdown(gdiplusToken_);
+            gdiplusToken_ = 0;
+        }
         CoUninitialize();
         return false;
     }
@@ -149,17 +278,21 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     ApplyStyle();
 
     if (gpuFlamePreviewEnabled_) {
-        updateLoading(0.50f, "Compiling flame shader...");
-        EnsureGpuFlameRendererInitialized();
+        runAnimatedLoadingTask(0.50f, "Compiling flame shader...", [this]() {
+            return EnsureGpuFlameRendererInitialized();
+        });
 
-        updateLoading(0.65f, "Compiling path shader...");
-        EnsureGpuPathRendererInitialized(gpuPathRenderer_, L"GPU path renderer");
+        runAnimatedLoadingTask(0.65f, "Compiling path shader...", [this]() {
+            return EnsureGpuPathRendererInitialized(gpuPathRenderer_, L"GPU path renderer");
+        });
 
-        updateLoading(0.75f, "Compiling grid shader...");
-        EnsureGpuPathRendererInitialized(gpuGridRenderer_, L"GPU grid renderer");
+        runAnimatedLoadingTask(0.75f, "Compiling grid shader...", [this]() {
+            return EnsureGpuPathRendererInitialized(gpuGridRenderer_, L"GPU grid renderer");
+        });
 
-        updateLoading(0.85f, "Compiling DOF shader...");
-        EnsureGpuDofRendererInitialized();
+        runAnimatedLoadingTask(0.85f, "Compiling DOF shader...", [this]() {
+            return EnsureGpuDofRendererInitialized();
+        });
     }
 
     showLoadingFor(0.95f, "Starting render thread...", 40);
@@ -169,6 +302,7 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
 
     updateLoading(1.0f, "Done");
     loadingComplete_ = true;
+    KillTimer(window_, kStartupAnimationTimerId);
     RenderFrame();
     bootstrapUiFramePending_ = false;
     viewportDirty_ = true;
@@ -204,8 +338,196 @@ int AppWindow::Run() {
         DestroyWindow(window_);
         window_ = nullptr;
     }
+    if (gdiplusToken_ != 0) {
+        Gdiplus::GdiplusShutdown(gdiplusToken_);
+        gdiplusToken_ = 0;
+    }
     CoUninitialize();
     return static_cast<int>(message.wParam);
+}
+
+bool AppWindow::EnsureAppLogoLoaded() {
+    if (appLogoLoadAttempted_) {
+        return !appLogoPixels_.empty();
+    }
+
+    appLogoLoadAttempted_ = true;
+    for (const auto& candidate : AssetCandidates(kAppLogoRelativePath)) {
+        if (!std::filesystem::exists(candidate)) {
+            continue;
+        }
+        if (LoadImagePixelsWithWic(candidate, appLogoPixels_, appLogoWidth_, appLogoHeight_)) {
+            appLogoPath_ = candidate;
+            return true;
+        }
+    }
+
+    appLogoPixels_.clear();
+    appLogoWidth_ = 0;
+    appLogoHeight_ = 0;
+    appLogoPath_.clear();
+    return false;
+}
+
+bool AppWindow::EnsureStartupLogoSvgLoaded() {
+    if (startupLogoSvgLoadAttempted_) {
+        return !startupLogoSvgStrokes_.empty();
+    }
+
+    startupLogoSvgLoadAttempted_ = true;
+    for (const auto& candidate : AssetCandidates(kAnimatedAppLogoRelativePath)) {
+        if (!std::filesystem::exists(candidate)) {
+            continue;
+        }
+        StartupLogoSvgData svgData;
+        if (!LoadStartupLogoSvg(candidate, svgData)) {
+            continue;
+        }
+        startupLogoSvgPath_ = candidate;
+        startupLogoSvgStrokes_ = std::move(svgData.strokes);
+        startupLogoSvgColor_ = svgData.color;
+        startupLogoSvgMinX_ = svgData.minX;
+        startupLogoSvgMinY_ = svgData.minY;
+        startupLogoSvgMaxX_ = svgData.maxX;
+        startupLogoSvgMaxY_ = svgData.maxY;
+        return true;
+    }
+
+    startupLogoSvgPath_.clear();
+    startupLogoSvgStrokes_.clear();
+    startupLogoSvgMinX_ = 0.0f;
+    startupLogoSvgMinY_ = 0.0f;
+    startupLogoSvgMaxX_ = 0.0f;
+    startupLogoSvgMaxY_ = 0.0f;
+    return false;
+}
+
+void AppWindow::DrawAnimatedLoadingLogo(HDC hdc, const int clientWidth, const int clientHeight, const int barY) const {
+    if (hdc == nullptr || gdiplusToken_ == 0 || startupLogoSvgStrokes_.empty()) {
+        return;
+    }
+
+    const float boundsWidth = std::max(1.0f, startupLogoSvgMaxX_ - startupLogoSvgMinX_);
+    const float boundsHeight = std::max(1.0f, startupLogoSvgMaxY_ - startupLogoSvgMinY_);
+    const float maxExtent = static_cast<float>(std::clamp(std::min(clientWidth, clientHeight) / 4, 90, 156));
+    const float scale = std::min(maxExtent / boundsWidth, maxExtent / boundsHeight) * 0.9f;
+    const float drawWidth = boundsWidth * scale;
+    const float drawHeight = boundsHeight * scale;
+    const float drawX = std::floor((static_cast<float>(clientWidth) - drawWidth) * 0.5f);
+    const float drawY = std::floor(std::max(36.0f, static_cast<float>(barY) - drawHeight - 54.0f));
+
+    Gdiplus::Graphics graphics(hdc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+
+    Gdiplus::GraphicsPath path;
+    for (const StartupLogoStroke& stroke : startupLogoSvgStrokes_) {
+        if (stroke.points.size() < 2) {
+            continue;
+        }
+        std::vector<Gdiplus::PointF> transformedPoints;
+        transformedPoints.reserve(stroke.points.size());
+        for (const StartupLogoPoint& point : stroke.points) {
+            transformedPoints.push_back(Gdiplus::PointF(
+                drawX + (point.x - startupLogoSvgMinX_) * scale,
+                drawY + (point.y - startupLogoSvgMinY_) * scale));
+        }
+        path.StartFigure();
+        path.AddLines(transformedPoints.data(), static_cast<INT>(transformedPoints.size()));
+        if (stroke.closed) {
+            path.CloseFigure();
+        }
+    }
+
+    const float strokeWidth = std::clamp(maxExtent / 24.0f, 3.0f, 5.8f);
+    const Gdiplus::Color logoColor(255, GetRValue(startupLogoSvgColor_), GetGValue(startupLogoSvgColor_), GetBValue(startupLogoSvgColor_));
+    Gdiplus::GraphicsState state = graphics.Save();
+    graphics.SetClip(&path, Gdiplus::CombineModeIntersect);
+    Gdiplus::Pen dashPen(logoColor, strokeWidth);
+    dashPen.SetLineJoin(Gdiplus::LineJoinRound);
+    dashPen.SetStartCap(Gdiplus::LineCapSquare);
+    dashPen.SetEndCap(Gdiplus::LineCapSquare);
+    dashPen.SetDashCap(Gdiplus::DashCapFlat);
+    Gdiplus::REAL dashPattern[] = {1.7f, 2.0f};
+    dashPen.SetDashPattern(dashPattern, 2);
+    dashPen.SetDashOffset(static_cast<Gdiplus::REAL>(startupAnimationDashOffset_));
+    graphics.DrawPath(&dashPen, &path);
+    graphics.Restore(state);
+}
+
+void AppWindow::DrawLoadingLogo(HDC hdc, const int clientWidth, const int clientHeight, const int barY) const {
+    if (hdc == nullptr || appLogoPixels_.empty() || appLogoWidth_ <= 0 || appLogoHeight_ <= 0) {
+        return;
+    }
+
+    const int maxExtent = std::clamp(std::min(clientWidth, clientHeight) / 4, 72, 124);
+    int drawWidth = maxExtent;
+    int drawHeight = std::max(1, static_cast<int>(std::llround(static_cast<double>(drawWidth) * static_cast<double>(appLogoHeight_) / static_cast<double>(appLogoWidth_))));
+    if (drawHeight > maxExtent) {
+        drawHeight = maxExtent;
+        drawWidth = std::max(1, static_cast<int>(std::llround(static_cast<double>(drawHeight) * static_cast<double>(appLogoWidth_) / static_cast<double>(appLogoHeight_))));
+    }
+
+    const int drawX = (clientWidth - drawWidth) / 2;
+    const int drawY = std::max(36, barY - drawHeight - 58);
+
+    BITMAPINFO bitmapInfo {};
+    bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+    bitmapInfo.bmiHeader.biWidth = appLogoWidth_;
+    bitmapInfo.bmiHeader.biHeight = -appLogoHeight_;
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+    std::vector<std::uint32_t> compositedPixels(appLogoPixels_.size());
+    constexpr std::uint8_t backgroundB = 10;
+    constexpr std::uint8_t backgroundG = 10;
+    constexpr std::uint8_t backgroundR = 13;
+    for (std::size_t index = 0; index < appLogoPixels_.size(); ++index) {
+        const std::uint32_t pixel = appLogoPixels_[index];
+        const std::uint32_t alpha = (pixel >> 24U) & 0xFFU;
+        if (alpha == 0U) {
+            compositedPixels[index] = 0xFF000000U
+                | static_cast<std::uint32_t>(backgroundB)
+                | (static_cast<std::uint32_t>(backgroundG) << 8U)
+                | (static_cast<std::uint32_t>(backgroundR) << 16U);
+            continue;
+        }
+        if (alpha == 0xFFU) {
+            compositedPixels[index] = pixel;
+            continue;
+        }
+
+        const std::uint32_t inverseAlpha = 0xFFU - alpha;
+        const std::uint32_t b = pixel & 0xFFU;
+        const std::uint32_t g = (pixel >> 8U) & 0xFFU;
+        const std::uint32_t r = (pixel >> 16U) & 0xFFU;
+        const std::uint32_t outB = (b * alpha + backgroundB * inverseAlpha + 127U) / 255U;
+        const std::uint32_t outG = (g * alpha + backgroundG * inverseAlpha + 127U) / 255U;
+        const std::uint32_t outR = (r * alpha + backgroundR * inverseAlpha + 127U) / 255U;
+        compositedPixels[index] = 0xFF000000U | outB | (outG << 8U) | (outR << 16U);
+    }
+
+    const int previousStretchMode = SetStretchBltMode(hdc, HALFTONE);
+    POINT previousBrushOrigin {};
+    SetBrushOrgEx(hdc, 0, 0, &previousBrushOrigin);
+    StretchDIBits(
+        hdc,
+        drawX,
+        drawY,
+        drawWidth,
+        drawHeight,
+        0,
+        0,
+        appLogoWidth_,
+        appLogoHeight_,
+        compositedPixels.data(),
+        &bitmapInfo,
+        DIB_RGB_COLORS,
+        SRCCOPY);
+    SetBrushOrgEx(hdc, previousBrushOrigin.x, previousBrushOrigin.y, nullptr);
+    SetStretchBltMode(hdc, previousStretchMode);
 }
 
 LRESULT CALLBACK AppWindow::WindowProc(HWND window, const UINT message, const WPARAM wParam, const LPARAM lParam) {
@@ -226,6 +548,11 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
     }
 
     switch (message) {
+    case WM_ERASEBKGND:
+        if (!loadingComplete_) {
+            return 1;
+        }
+        break;
     case WM_PAINT:
         if (!loadingComplete_) {
             PAINTSTRUCT ps;
@@ -234,38 +561,65 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
             GetClientRect(window_, &clientRect);
             const int width = clientRect.right - clientRect.left;
             const int height = clientRect.bottom - clientRect.top;
+            HDC bufferDc = CreateCompatibleDC(hdc);
+            HBITMAP bufferBitmap = CreateCompatibleBitmap(hdc, std::max(1, width), std::max(1, height));
+            HBITMAP oldBitmap = bufferBitmap != nullptr ? static_cast<HBITMAP>(SelectObject(bufferDc, bufferBitmap)) : nullptr;
+            HDC paintDc = (bufferDc != nullptr && bufferBitmap != nullptr) ? bufferDc : hdc;
 
             HBRUSH bgBrush = CreateSolidBrush(RGB(10, 10, 13));
-            FillRect(hdc, &clientRect, bgBrush);
+            FillRect(paintDc, &clientRect, bgBrush);
             DeleteObject(bgBrush);
 
             constexpr int barHeight = 4;
-            constexpr int barMargin = 80;
-            const int barWidth = width - barMargin * 2;
-            const int barY = height / 2 + 20;
+            constexpr int barMargin = 32;
+            const int barWidth = std::max(280, std::min(width - barMargin * 2, 860));
+            const int barX = (width - barWidth) / 2;
+            const int barY = height / 2 + (appLogoPixels_.empty() ? 20 : 34);
 
-            RECT barBgRect = {barMargin, barY, barMargin + barWidth, barY + barHeight};
+            if (!startupLogoSvgStrokes_.empty()) {
+                DrawAnimatedLoadingLogo(paintDc, width, height, barY);
+            } else {
+                DrawLoadingLogo(paintDc, width, height, barY);
+            }
+
+            RECT barBgRect = {barX, barY, barX + barWidth, barY + barHeight};
             HBRUSH barBgBrush = CreateSolidBrush(RGB(40, 40, 50));
-            FillRect(hdc, &barBgRect, barBgBrush);
+            FillRect(paintDc, &barBgRect, barBgBrush);
             DeleteObject(barBgBrush);
 
             const int progressWidth = static_cast<int>(barWidth * loadingProgress_);
             if (progressWidth > 0) {
-                RECT barFillRect = {barMargin, barY, barMargin + progressWidth, barY + barHeight};
+                RECT barFillRect = {barX, barY, barX + progressWidth, barY + barHeight};
                 HBRUSH barFillBrush = CreateSolidBrush(RGB(115, 148, 235));
-                FillRect(hdc, &barFillRect, barFillBrush);
+                FillRect(paintDc, &barFillRect, barFillBrush);
                 DeleteObject(barFillBrush);
             }
 
             if (!loadingLabel_.empty()) {
-                SetTextColor(hdc, RGB(200, 200, 210));
-                SetBkMode(hdc, TRANSPARENT);
+                SetTextColor(paintDc, RGB(200, 200, 210));
+                SetBkMode(paintDc, TRANSPARENT);
                 HFONT font = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-                HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, font));
+                HFONT oldFont = static_cast<HFONT>(SelectObject(paintDc, font));
                 std::wstring wideLabel = Utf8ToWide(loadingLabel_);
-                TextOutW(hdc, barMargin, barY - 28, wideLabel.c_str(), static_cast<int>(wideLabel.length()));
-                SelectObject(hdc, oldFont);
+                SIZE labelSize {};
+                GetTextExtentPoint32W(paintDc, wideLabel.c_str(), static_cast<int>(wideLabel.length()), &labelSize);
+                const int labelX = (width - labelSize.cx) / 2;
+                TextOutW(paintDc, labelX, barY - 28, wideLabel.c_str(), static_cast<int>(wideLabel.length()));
+                SelectObject(paintDc, oldFont);
                 DeleteObject(font);
+            }
+
+            if (paintDc == bufferDc) {
+                BitBlt(hdc, 0, 0, width, height, bufferDc, 0, 0, SRCCOPY);
+            }
+            if (oldBitmap != nullptr) {
+                SelectObject(bufferDc, oldBitmap);
+            }
+            if (bufferBitmap != nullptr) {
+                DeleteObject(bufferBitmap);
+            }
+            if (bufferDc != nullptr) {
+                DeleteDC(bufferDc);
             }
 
             EndPaint(window_, &ps);
@@ -299,6 +653,14 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
             RenderTick();
             return 0;
         }
+        if (wParam == kStartupAnimationTimerId && !loadingComplete_) {
+            startupAnimationDashOffset_ -= 0.16f;
+            if (startupAnimationDashOffset_ < -200.0f) {
+                startupAnimationDashOffset_ += 200.0f;
+            }
+            InvalidateRect(window_, nullptr, FALSE);
+            return 0;
+        }
         break;
     case WM_SETTINGCHANGE:
     case WM_THEMECHANGED:
@@ -307,6 +669,7 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
         return 0;
     case WM_DESTROY:
         KillTimer(window_, kLiveResizeTimerId);
+        KillTimer(window_, kStartupAnimationTimerId);
         PostQuitMessage(0);
         running_ = false;
         return 0;

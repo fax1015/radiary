@@ -366,6 +366,7 @@ bool AppWindow::ApplyPendingGraphicsDeviceChange() {
     }
     ImGui_ImplWin32_Init(window_);
     ImGui_ImplDX11_Init(device_.Get(), deviceContext_.Get());
+    CreateAppLogoTexture();
     viewportDirty_ = true;
     resizeWidth_ = 0;
     resizeHeight_ = 0;
@@ -374,6 +375,7 @@ bool AppWindow::ApplyPendingGraphicsDeviceChange() {
 }
 
 void AppWindow::CleanupDeviceD3D() {
+    CleanupAppLogoTexture();
     gpuPostProcess_.Shutdown();
     gpuDenoiser_.Shutdown();
     gpuPathRenderer_.Shutdown();
@@ -590,6 +592,42 @@ void AppWindow::ApplyUserSceneDefaults(Scene& scene) const {
     scene.timelineSeconds = TimelineSecondsForFrame(scene, scene.timelineFrame);
 }
 
+void AppWindow::CreateAppLogoTexture() {
+    CleanupAppLogoTexture();
+    if (device_ == nullptr || !EnsureAppLogoLoaded() || appLogoPixels_.empty() || appLogoWidth_ <= 0 || appLogoHeight_ <= 0) {
+        return;
+    }
+
+    D3D11_TEXTURE2D_DESC desc {};
+    desc.Width = static_cast<UINT>(appLogoWidth_);
+    desc.Height = static_cast<UINT>(appLogoHeight_);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA subresource {};
+    subresource.pSysMem = appLogoPixels_.data();
+    subresource.SysMemPitch = static_cast<UINT>(appLogoWidth_ * 4);
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    if (FAILED(device_->CreateTexture2D(&desc, &subresource, texture.GetAddressOf()))) {
+        return;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc {};
+    srvDesc.Format = desc.Format;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels = 1;
+    device_->CreateShaderResourceView(texture.Get(), &srvDesc, appLogoSrv_.GetAddressOf());
+}
+
+void AppWindow::CleanupAppLogoTexture() {
+    appLogoSrv_.Reset();
+}
+
 void AppWindow::SetupImGui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -670,6 +708,7 @@ void AppWindow::SetupImGui() {
 
     ImGui_ImplWin32_Init(window_);
     ImGui_ImplDX11_Init(device_.Get(), deviceContext_.Get());
+    CreateAppLogoTexture();
 }
 
 void AppWindow::ShutdownImGui() {
