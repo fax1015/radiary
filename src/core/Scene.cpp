@@ -1228,6 +1228,10 @@ ScenePose InterpolatePose(const ScenePose& left, const ScenePose& right, const d
     pose.flameRender.rotationYDegrees = Lerp(left.flameRender.rotationYDegrees, right.flameRender.rotationYDegrees, alpha);
     pose.flameRender.rotationZDegrees = Lerp(left.flameRender.rotationZDegrees, right.flameRender.rotationZDegrees, alpha);
     pose.flameRender.depthAmount = Lerp(left.flameRender.depthAmount, right.flameRender.depthAmount, alpha);
+    pose.flameRender.curveExposure = Lerp(left.flameRender.curveExposure, right.flameRender.curveExposure, alpha);
+    pose.flameRender.curveContrast = Lerp(left.flameRender.curveContrast, right.flameRender.curveContrast, alpha);
+    pose.flameRender.curveHighlights = Lerp(left.flameRender.curveHighlights, right.flameRender.curveHighlights, alpha);
+    pose.flameRender.curveGamma = Lerp(left.flameRender.curveGamma, right.flameRender.curveGamma, alpha);
     pose.depthOfField.enabled = alpha < 0.5 ? left.depthOfField.enabled : right.depthOfField.enabled;
     pose.depthOfField.focusDepth = Lerp(left.depthOfField.focusDepth, right.depthOfField.focusDepth, alpha);
     pose.depthOfField.focusRange = Lerp(left.depthOfField.focusRange, right.depthOfField.focusRange, alpha);

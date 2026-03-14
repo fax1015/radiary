@@ -162,6 +162,10 @@ struct FlameRenderSettings {
     double rotationYDegrees = 0.0;
     double rotationZDegrees = 0.0;
     double depthAmount = 1.0;
+    double curveExposure = 1.0;
+    double curveContrast = 1.0;
+    double curveHighlights = 1.0;
+    double curveGamma = 1.0;
 };
 
 struct DepthOfFieldSettings {

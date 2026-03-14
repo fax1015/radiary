@@ -100,31 +100,6 @@ void WriteS32(std::ostream& stream, const std::int32_t value) {
     WriteU32(stream, static_cast<std::uint32_t>(value));
 }
 
-std::uint32_t ComputeGpuExportFlameIterations(
-    const radiary::Scene& scene,
-    const int previewWidth,
-    const int previewHeight,
-    const int exportWidth,
-    const int exportHeight) {
-    constexpr std::uint32_t kMinGpuExportFlameIterations = 240000u;
-    constexpr std::uint32_t kMaxGpuExportFlameIterations = 100000000u;
-    constexpr double kBaseIterationMultiplier = 1.6;
-    constexpr double kReferencePixels = 1280.0 * 720.0;
-
-    const std::uint32_t baseIterations = std::max<std::uint32_t>(scene.previewIterations, 1u);
-    const std::uint32_t qualityFloor = std::max(baseIterations, kMinGpuExportFlameIterations);
-    const double exportPixelCount = static_cast<double>(std::max(1, exportWidth)) * static_cast<double>(std::max(1, exportHeight));
-    const double previewPixelCount = previewWidth > 0 && previewHeight > 0
-        ? static_cast<double>(previewWidth) * static_cast<double>(previewHeight)
-        : kReferencePixels;
-    const double resolutionScale = std::clamp(exportPixelCount / std::max(1.0, previewPixelCount), 1.0, 8.0);
-    const double boostedIterations = std::ceil(static_cast<double>(qualityFloor) * kBaseIterationMultiplier * resolutionScale);
-    const std::uint64_t targetIterations = static_cast<std::uint64_t>(std::max<double>(
-        boostedIterations,
-        static_cast<double>(qualityFloor)));
-    return static_cast<std::uint32_t>(std::min<std::uint64_t>(targetIterations, kMaxGpuExportFlameIterations));
-}
-
 }  // namespace
 
 namespace radiary {
@@ -196,6 +171,7 @@ void AppWindow::OpenExportPanel() {
         exportHeight_ = 1080;
         ConstrainExportResolutionToCamera(scene_.camera, exportWidth_, exportHeight_, true);
     }
+    exportIterations_ = std::max<std::uint32_t>(scene_.previewIterations, 1u);
     exportFrameStart_ = scene_.timelineStartFrame;
     exportFrameEnd_ = scene_.timelineEndFrame;
     exportPanelOpen_ = true;
@@ -239,6 +215,7 @@ bool AppWindow::ExportViewportToDialog() {
     pendingExportRequest_.path = fileBuffer;
     pendingExportRequest_.width = exportWidth_;
     pendingExportRequest_.height = exportHeight_;
+    pendingExportRequest_.iterations = exportIterations_;
     pendingExportRequest_.transparentBackground = exportPng && exportTransparentBackground_;
     pendingExportRequest_.hideGrid = exportHideGrid_;
     pendingExportRequest_.useGpu = exportUseGpu_;
@@ -254,40 +231,20 @@ bool AppWindow::RenderSceneToPixels(
     const Scene& sourceScene,
     const int width,
     const int height,
+    const std::uint32_t iterations,
     const bool transparentBackground,
     const bool hideGrid,
     const bool useGpu,
     std::vector<std::uint32_t>& pixels) {
     return useGpu
-        ? RenderSceneToPixelsGpu(sourceScene, width, height, transparentBackground, hideGrid, pixels)
-        : RenderSceneToPixelsCpu(sourceScene, width, height, transparentBackground, hideGrid, pixels);
+        ? RenderSceneToPixelsGpu(sourceScene, width, height, iterations, transparentBackground, hideGrid, pixels)
+        : RenderSceneToPixelsCpu(sourceScene, width, height, iterations, transparentBackground, hideGrid, pixels);
 }
 
 namespace {
 
-std::uint32_t ComputeGpuExportFlameIterations(
-    const radiary::Scene& scene,
-    const int previewWidth,
-    const int previewHeight,
-    const int exportWidth,
-    const int exportHeight) {
-    constexpr std::uint32_t kMinGpuExportFlameIterations = 240000u;
-    constexpr std::uint32_t kMaxGpuExportFlameIterations = 100000000u;
-    constexpr double kBaseIterationMultiplier = 1.6;
-    constexpr double kReferencePixels = 1280.0 * 720.0;
-
-    const std::uint32_t baseIterations = std::max<std::uint32_t>(scene.previewIterations, 1u);
-    const std::uint32_t qualityFloor = std::max(baseIterations, kMinGpuExportFlameIterations);
-    const double exportPixelCount = static_cast<double>(std::max(1, exportWidth)) * static_cast<double>(std::max(1, exportHeight));
-    const double previewPixelCount = previewWidth > 0 && previewHeight > 0
-        ? static_cast<double>(previewWidth) * static_cast<double>(previewHeight)
-        : kReferencePixels;
-    const double resolutionScale = std::clamp(exportPixelCount / std::max(1.0, previewPixelCount), 1.0, 8.0);
-    const double boostedIterations = std::ceil(static_cast<double>(qualityFloor) * kBaseIterationMultiplier * resolutionScale);
-    const std::uint64_t targetIterations = static_cast<std::uint64_t>(std::max<double>(
-        boostedIterations,
-        static_cast<double>(qualityFloor)));
-    return static_cast<std::uint32_t>(std::min<std::uint64_t>(targetIterations, kMaxGpuExportFlameIterations));
+std::uint32_t ResolveGpuExportFlameIterations(const radiary::Scene& scene) {
+    return std::max<std::uint32_t>(scene.previewIterations, 1u);
 }
 
 }  // namespace
@@ -296,12 +253,14 @@ bool AppWindow::RenderSceneToPixelsCpu(
     const Scene& sourceScene,
     const int width,
     const int height,
+    const std::uint32_t iterations,
     const bool transparentBackground,
     const bool hideGrid,
     std::vector<std::uint32_t>& pixels) const {
     const int previewWidth = std::max(0, uploadedViewportWidth_);
     const int previewHeight = std::max(0, uploadedViewportHeight_);
-    const Scene exportScene = PrepareSceneForExport(BuildRenderableScene(sourceScene), previewWidth, previewHeight, width, height, hideGrid);
+    Scene exportScene = PrepareSceneForExport(BuildRenderableScene(sourceScene), previewWidth, previewHeight, width, height, hideGrid);
+    exportScene.previewIterations = std::max<std::uint32_t>(iterations, 1u);
     SoftwareRenderer exportRenderer;
     SoftwareRenderer::RenderOptions renderOptions;
     renderOptions.renderFlame = true;
@@ -426,6 +385,7 @@ bool AppWindow::RenderSceneToPixelsGpu(
     const Scene& sourceScene,
     const int width,
     const int height,
+    const std::uint32_t iterations,
     const bool transparentBackground,
     const bool hideGrid,
     std::vector<std::uint32_t>& pixels) {
@@ -452,7 +412,8 @@ bool AppWindow::RenderSceneToPixelsGpu(
 
     const int previewWidth = std::max(0, uploadedViewportWidth_);
     const int previewHeight = std::max(0, uploadedViewportHeight_);
-    const Scene exportScene = PrepareSceneForExport(BuildRenderableScene(sourceScene), previewWidth, previewHeight, width, height, hideGrid);
+    Scene exportScene = PrepareSceneForExport(BuildRenderableScene(sourceScene), previewWidth, previewHeight, width, height, hideGrid);
+    exportScene.previewIterations = std::max<std::uint32_t>(iterations, 1u);
     const int exportWidth = std::max(1, width);
     const int exportHeight = std::max(1, height);
     const bool exportGrid = !hideGrid && exportScene.gridVisible;
@@ -469,12 +430,7 @@ bool AppWindow::RenderSceneToPixelsGpu(
         if (!EnsureGpuFlameRendererInitialized()) {
             return false;
         }
-        const std::uint32_t targetIterations = ComputeGpuExportFlameIterations(
-            scene,
-            previewWidth,
-            previewHeight,
-            exportWidth,
-            exportHeight);
+        const std::uint32_t targetIterations = ResolveGpuExportFlameIterations(scene);
         do {
             if (exportCancelRequested_) {
                 return false;
@@ -506,25 +462,32 @@ bool AppWindow::RenderSceneToPixelsGpu(
         return ReadbackGpuTexture(gpuFlameRenderer_.OutputTexture(), output);
     };
 
-    if (exportScene.depthOfField.enabled) {
-        ID3D11ShaderResourceView* gridSrv = nullptr;
-        ID3D11ShaderResourceView* flameSrv = nullptr;
-        ID3D11ShaderResourceView* flameDepthSrv = nullptr;
-        ID3D11ShaderResourceView* pathSrv = nullptr;
-        ID3D11ShaderResourceView* pathDepthSrv = nullptr;
+    auto renderCompositeInputs = [&](
+        ID3D11ShaderResourceView*& gridSrv,
+        ID3D11ShaderResourceView*& flameSrv,
+        ID3D11ShaderResourceView*& flameDepthSrv,
+        ID3D11ShaderResourceView*& pathSrv,
+        ID3D11ShaderResourceView*& pathDepthSrv) {
         bool success = false;
+        gridSrv = nullptr;
+        flameSrv = nullptr;
+        flameDepthSrv = nullptr;
+        pathSrv = nullptr;
+        pathDepthSrv = nullptr;
 
         if (exportScene.mode == SceneMode::Path) {
             success = renderPathSceneGpu(exportScene, transparentBackground, exportGrid, nullptr, gpuPathRenderer_);
             pathSrv = success ? gpuPathRenderer_.ShaderResourceView() : nullptr;
             pathDepthSrv = success ? gpuPathRenderer_.DepthShaderResourceView() : nullptr;
-        } else if (exportScene.mode == SceneMode::Flame) {
+            return success;
+        }
+
+        if (exportScene.mode == SceneMode::Flame) {
             if (exportGrid) {
                 Scene backgroundScene = exportScene;
                 backgroundScene.mode = SceneMode::Flame;
                 success = renderPathSceneGpu(backgroundScene, transparentBackground, true, nullptr, gpuGridRenderer_);
                 if (!success) {
-                    invalidateViewportPreview();
                     return false;
                 }
                 gridSrv = gpuGridRenderer_.ShaderResourceView();
@@ -532,34 +495,58 @@ bool AppWindow::RenderSceneToPixelsGpu(
             success = renderFlameSceneGpu(exportScene, transparentBackground || exportGrid);
             flameSrv = success ? gpuFlameRenderer_.ShaderResourceView() : nullptr;
             flameDepthSrv = success ? gpuFlameRenderer_.DepthShaderResourceView() : nullptr;
-        } else {
-            if (!transparentBackground || exportGrid) {
-                Scene backgroundScene = exportScene;
-                backgroundScene.mode = SceneMode::Flame;
-                success = renderPathSceneGpu(backgroundScene, transparentBackground, exportGrid, nullptr, gpuGridRenderer_);
-                if (!success) {
-                    invalidateViewportPreview();
-                    return false;
-                }
-                gridSrv = gpuGridRenderer_.ShaderResourceView();
-            }
-
-            success = renderFlameSceneGpu(exportScene, true);
-            if (!success) {
-                invalidateViewportPreview();
-                return false;
-            }
-            flameSrv = gpuFlameRenderer_.ShaderResourceView();
-            flameDepthSrv = gpuFlameRenderer_.DepthShaderResourceView();
-
-            Scene pathScene = exportScene;
-            pathScene.mode = SceneMode::Path;
-            success = renderPathSceneGpu(pathScene, true, false, gpuFlameRenderer_.DepthShaderResourceView(), gpuPathRenderer_);
-            pathSrv = success ? gpuPathRenderer_.ShaderResourceView() : nullptr;
-            pathDepthSrv = success ? gpuPathRenderer_.DepthShaderResourceView() : nullptr;
+            return success;
         }
 
+        if (!transparentBackground || exportGrid) {
+            Scene backgroundScene = exportScene;
+            backgroundScene.mode = SceneMode::Flame;
+            success = renderPathSceneGpu(backgroundScene, transparentBackground, exportGrid, nullptr, gpuGridRenderer_);
+            if (!success) {
+                return false;
+            }
+            gridSrv = gpuGridRenderer_.ShaderResourceView();
+        }
+
+        success = renderFlameSceneGpu(exportScene, true);
         if (!success) {
+            return false;
+        }
+        flameSrv = gpuFlameRenderer_.ShaderResourceView();
+        flameDepthSrv = gpuFlameRenderer_.DepthShaderResourceView();
+
+        Scene pathScene = exportScene;
+        pathScene.mode = SceneMode::Path;
+        success = renderPathSceneGpu(pathScene, true, false, gpuFlameRenderer_.DepthShaderResourceView(), gpuPathRenderer_);
+        pathSrv = success ? gpuPathRenderer_.ShaderResourceView() : nullptr;
+        pathDepthSrv = success ? gpuPathRenderer_.DepthShaderResourceView() : nullptr;
+        return success;
+    };
+
+    auto renderDenoisedComposite = [&](
+        ID3D11ShaderResourceView* gridSrv,
+        ID3D11ShaderResourceView*& flameSrv,
+        ID3D11ShaderResourceView*& flameDepthSrv,
+        ID3D11ShaderResourceView* pathSrv,
+        ID3D11ShaderResourceView* pathDepthSrv) {
+        if (!EnsureGpuDenoiserInitialized()) {
+            return false;
+        }
+        if (!gpuDenoiser_.Render(exportScene, exportWidth, exportHeight, gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)) {
+            return false;
+        }
+        flameSrv = gpuDenoiser_.ShaderResourceView();
+        flameDepthSrv = gpuDenoiser_.DepthShaderResourceView();
+        return true;
+    };
+
+    if (exportScene.denoiser.enabled || exportScene.depthOfField.enabled) {
+        ID3D11ShaderResourceView* gridSrv = nullptr;
+        ID3D11ShaderResourceView* flameSrv = nullptr;
+        ID3D11ShaderResourceView* flameDepthSrv = nullptr;
+        ID3D11ShaderResourceView* pathSrv = nullptr;
+        ID3D11ShaderResourceView* pathDepthSrv = nullptr;
+        if (!renderCompositeInputs(gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)) {
             invalidateViewportPreview();
             return false;
         }
@@ -567,9 +554,29 @@ bool AppWindow::RenderSceneToPixelsGpu(
             invalidateViewportPreview();
             return false;
         }
-        success = EnsureGpuDofRendererInitialized()
-            && gpuDofRenderer_.Render(exportScene, exportWidth, exportHeight, gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)
-            && ReadbackGpuTexture(gpuDofRenderer_.OutputTexture(), pixels);
+
+        if (exportScene.denoiser.enabled) {
+            if (!renderDenoisedComposite(gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)) {
+                invalidateViewportPreview();
+                return false;
+            }
+            gridSrv = nullptr;
+            pathSrv = nullptr;
+            pathDepthSrv = nullptr;
+            if (!pumpExportOverlay()) {
+                invalidateViewportPreview();
+                return false;
+            }
+        }
+
+        bool success = false;
+        if (exportScene.depthOfField.enabled) {
+            success = EnsureGpuDofRendererInitialized()
+                && gpuDofRenderer_.Render(exportScene, exportWidth, exportHeight, gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)
+                && ReadbackGpuTexture(gpuDofRenderer_.OutputTexture(), pixels);
+        } else {
+            success = ReadbackGpuTexture(gpuDenoiser_.OutputTexture(), pixels);
+        }
         invalidateViewportPreview();
         return success && !pixels.empty();
     }
@@ -638,6 +645,7 @@ bool AppWindow::ExportViewportImage(
     const std::filesystem::path& path,
     const int width,
     const int height,
+    const std::uint32_t iterations,
     const bool transparentBackground,
     const bool hideGrid,
     const bool useGpu,
@@ -650,11 +658,11 @@ bool AppWindow::ExportViewportImage(
     const Scene exportScene = EvaluateSceneAtFrame(scene_, scene_.timelineFrame);
     std::vector<std::uint32_t> exportPixels;
     bool useGpuRender = useGpu;
-    if (useGpuRender && !RenderSceneToPixels(exportScene, width, height, transparentBackground, hideGrid, true, exportPixels)) {
+    if (useGpuRender && !RenderSceneToPixels(exportScene, width, height, iterations, transparentBackground, hideGrid, true, exportPixels)) {
         useGpuRender = false;
         statusText_ = L"GPU export unavailable, falling back to CPU";
     }
-    if (!useGpuRender && !RenderSceneToPixels(exportScene, width, height, transparentBackground, hideGrid, false, exportPixels)) {
+    if (!useGpuRender && !RenderSceneToPixels(exportScene, width, height, iterations, transparentBackground, hideGrid, false, exportPixels)) {
         statusText_ = L"Export failed";
         return false;
     }
@@ -676,6 +684,7 @@ bool AppWindow::ExportImageSequence(
     const std::filesystem::path& path,
     const int width,
     const int height,
+    const std::uint32_t iterations,
     const bool transparentBackground,
     const bool hideGrid,
     const bool useGpu,
@@ -704,11 +713,11 @@ bool AppWindow::ExportImageSequence(
         frameScene.timelineFrame = static_cast<double>(frame);
         frameScene.timelineSeconds = TimelineSecondsForFrame(frameScene, frameScene.timelineFrame);
         std::vector<std::uint32_t> pixels;
-        if (useGpuRender && !RenderSceneToPixels(frameScene, width, height, transparentBackground, hideGrid, true, pixels)) {
+        if (useGpuRender && !RenderSceneToPixels(frameScene, width, height, iterations, transparentBackground, hideGrid, true, pixels)) {
             useGpuRender = false;
             statusText_ = L"GPU export unavailable, falling back to CPU";
         }
-        if (!useGpuRender && !RenderSceneToPixels(frameScene, width, height, transparentBackground, hideGrid, false, pixels)) {
+        if (!useGpuRender && !RenderSceneToPixels(frameScene, width, height, iterations, transparentBackground, hideGrid, false, pixels)) {
             statusText_ = L"Export failed";
             return false;
         }
@@ -733,6 +742,7 @@ bool AppWindow::ExportAviVideo(
     const std::filesystem::path& path,
     const int width,
     const int height,
+    const std::uint32_t iterations,
     const bool hideGrid,
     const bool useGpu,
     const int startFrame,
@@ -836,11 +846,11 @@ bool AppWindow::ExportAviVideo(
         frameScene.timelineFrame = static_cast<double>(frame);
         frameScene.timelineSeconds = TimelineSecondsForFrame(frameScene, frameScene.timelineFrame);
         std::vector<std::uint32_t> pixels;
-        if (useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, false, hideGrid, true, pixels)) {
+        if (useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, true, pixels)) {
             useGpuRender = false;
             statusText_ = L"GPU export unavailable, falling back to CPU";
         }
-        if (!useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, false, hideGrid, false, pixels)) {
+        if (!useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, false, pixels)) {
             statusText_ = L"Export failed";
             return false;
         }
@@ -873,6 +883,7 @@ bool AppWindow::ExportFfmpegVideo(
     const std::filesystem::path& path,
     const int width,
     const int height,
+    const std::uint32_t iterations,
     const bool hideGrid,
     const bool useGpu,
     const int startFrame,
@@ -1017,11 +1028,11 @@ bool AppWindow::ExportFfmpegVideo(
         frameScene.timelineFrame = static_cast<double>(frame);
         frameScene.timelineSeconds = TimelineSecondsForFrame(frameScene, frameScene.timelineFrame);
         std::vector<std::uint32_t> pixels;
-        if (useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, false, hideGrid, true, pixels)) {
+        if (useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, true, pixels)) {
             useGpuRender = false;
             statusText_ = L"GPU export unavailable, falling back to CPU";
         }
-        if (!useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, false, hideGrid, false, pixels)) {
+        if (!useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, false, pixels)) {
             DWORD exitCode = 1u;
             finishFfmpegProcess(true, &exitCode);
             statusText_ = L"Export failed";

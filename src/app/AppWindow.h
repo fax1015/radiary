@@ -84,6 +84,7 @@ private:
         std::filesystem::path path;
         int width = 1920;
         int height = 1080;
+        std::uint32_t iterations = 480000;
         bool transparentBackground = false;
         bool hideGrid = true;
         bool useGpu = false;
@@ -151,6 +152,7 @@ private:
     float easingButtonAnchorY_ = 0.0f;
     int exportWidth_ = 1920;
     int exportHeight_ = 1080;
+    std::uint32_t exportIterations_ = 480000;
     int exportFrameStart_ = 0;
     int exportFrameEnd_ = 120;
     ExportFormat exportFormat_ = ExportFormat::Png;
@@ -331,13 +333,13 @@ private:
     bool ExecuteExportRequest(const ExportRequest& request);
     bool UpdateExportProgress(float progress, const std::wstring& detail);
     bool ExportViewportToDialog();
-    bool ExportViewportImage(const std::filesystem::path& path, int width, int height, bool transparentBackground, bool hideGrid, bool useGpu, ExportFormat format);
-    bool ExportImageSequence(const std::filesystem::path& path, int width, int height, bool transparentBackground, bool hideGrid, bool useGpu, ExportFormat format, int startFrame, int endFrame);
-    bool ExportAviVideo(const std::filesystem::path& path, int width, int height, bool hideGrid, bool useGpu, int startFrame, int endFrame);
-    bool ExportFfmpegVideo(const std::filesystem::path& path, int width, int height, bool hideGrid, bool useGpu, int startFrame, int endFrame, ExportFormat format);
-    bool RenderSceneToPixels(const Scene& sourceScene, int width, int height, bool transparentBackground, bool hideGrid, bool useGpu, std::vector<std::uint32_t>& pixels);
-    bool RenderSceneToPixelsCpu(const Scene& sourceScene, int width, int height, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels) const;
-    bool RenderSceneToPixelsGpu(const Scene& sourceScene, int width, int height, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels);
+    bool ExportViewportImage(const std::filesystem::path& path, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, bool useGpu, ExportFormat format);
+    bool ExportImageSequence(const std::filesystem::path& path, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, bool useGpu, ExportFormat format, int startFrame, int endFrame);
+    bool ExportAviVideo(const std::filesystem::path& path, int width, int height, std::uint32_t iterations, bool hideGrid, bool useGpu, int startFrame, int endFrame);
+    bool ExportFfmpegVideo(const std::filesystem::path& path, int width, int height, std::uint32_t iterations, bool hideGrid, bool useGpu, int startFrame, int endFrame, ExportFormat format);
+    bool RenderSceneToPixels(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, bool useGpu, std::vector<std::uint32_t>& pixels);
+    bool RenderSceneToPixelsCpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels) const;
+    bool RenderSceneToPixelsGpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels);
     bool ReadbackGpuTexture(ID3D11Texture2D* texture, std::vector<std::uint32_t>& pixels) const;
     bool ReadbackGpuDepthTexture(ID3D11Texture2D* texture, std::vector<float>& depthBuffer) const;
 

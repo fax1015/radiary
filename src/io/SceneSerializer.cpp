@@ -390,7 +390,11 @@ void WriteFlameRenderSettings(std::ostream& stream, const FlameRenderSettings& f
     stream << indent << "\"rotationXDegrees\": " << flameRender.rotationXDegrees << ",\n";
     stream << indent << "\"rotationYDegrees\": " << flameRender.rotationYDegrees << ",\n";
     stream << indent << "\"rotationZDegrees\": " << flameRender.rotationZDegrees << ",\n";
-    stream << indent << "\"depthAmount\": " << flameRender.depthAmount << "\n";
+    stream << indent << "\"depthAmount\": " << flameRender.depthAmount << ",\n";
+    stream << indent << "\"curveExposure\": " << flameRender.curveExposure << ",\n";
+    stream << indent << "\"curveContrast\": " << flameRender.curveContrast << ",\n";
+    stream << indent << "\"curveHighlights\": " << flameRender.curveHighlights << ",\n";
+    stream << indent << "\"curveGamma\": " << flameRender.curveGamma << "\n";
 }
 
 void WriteDepthOfFieldSettings(std::ostream& stream, const DepthOfFieldSettings& depthOfField, const std::string& indent) {
@@ -709,6 +713,10 @@ void LoadScenePose(const JsonValue& poseValue, ScenePose& pose) {
         pose.flameRender.rotationYDegrees = Number(*flameRender, "rotationYDegrees", pose.flameRender.rotationYDegrees);
         pose.flameRender.rotationZDegrees = Number(*flameRender, "rotationZDegrees", pose.flameRender.rotationZDegrees);
         pose.flameRender.depthAmount = Number(*flameRender, "depthAmount", pose.flameRender.depthAmount);
+        pose.flameRender.curveExposure = Number(*flameRender, "curveExposure", pose.flameRender.curveExposure);
+        pose.flameRender.curveContrast = Number(*flameRender, "curveContrast", pose.flameRender.curveContrast);
+        pose.flameRender.curveHighlights = Number(*flameRender, "curveHighlights", pose.flameRender.curveHighlights);
+        pose.flameRender.curveGamma = Number(*flameRender, "curveGamma", pose.flameRender.curveGamma);
     }
     if (const JsonValue* depthOfField = poseValue.Find("depthOfField"); depthOfField && depthOfField->type == JsonValue::Type::Object) {
         pose.depthOfField.enabled = Boolean(*depthOfField, "enabled", pose.depthOfField.enabled);
@@ -858,6 +866,10 @@ std::optional<Scene> SceneSerializer::Load(const std::filesystem::path& path, st
         scene.flameRender.rotationYDegrees = Number(*flameRender, "rotationYDegrees", scene.flameRender.rotationYDegrees);
         scene.flameRender.rotationZDegrees = Number(*flameRender, "rotationZDegrees", scene.flameRender.rotationZDegrees);
         scene.flameRender.depthAmount = Number(*flameRender, "depthAmount", scene.flameRender.depthAmount);
+        scene.flameRender.curveExposure = Number(*flameRender, "curveExposure", scene.flameRender.curveExposure);
+        scene.flameRender.curveContrast = Number(*flameRender, "curveContrast", scene.flameRender.curveContrast);
+        scene.flameRender.curveHighlights = Number(*flameRender, "curveHighlights", scene.flameRender.curveHighlights);
+        scene.flameRender.curveGamma = Number(*flameRender, "curveGamma", scene.flameRender.curveGamma);
     }
     if (const JsonValue* depthOfField = root.Find("depthOfField"); depthOfField && depthOfField->type == JsonValue::Type::Object) {
         scene.depthOfField.enabled = Boolean(*depthOfField, "enabled", scene.depthOfField.enabled);

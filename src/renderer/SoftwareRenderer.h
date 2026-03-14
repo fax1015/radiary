@@ -73,7 +73,7 @@ public:
     static void ApplyDenoising(const Scene& scene, std::vector<std::uint32_t>& pixels, int width, int height, const std::vector<float>& depthBuffer, const std::function<bool()>& shouldAbort);
     static ProjectedPoint Project(const Vec3& point, const CameraState& camera, int width, int height);
     static double NormalizeProjectedDepth(double depth, const CameraState& camera);
-    static Color ToneMap(const FlamePixel& pixel);
+    static Color ToneMap(const FlamePixel& pixel, const FlameRenderSettings& flameRender);
     static Color SurfaceColor(double factor);
 
 private:

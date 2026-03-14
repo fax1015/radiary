@@ -1,8 +1,10 @@
 #include "engine/flame/IFSEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <random>
+#include <utility>
 
 #include "engine/flame/Variation.h"
 
@@ -15,10 +17,15 @@ constexpr std::uint32_t kFlameBurnInIterations = 24u;
 constexpr std::uint32_t kFlameRetryMultiplier = 4u;
 constexpr double kFlameOrbitResetRadius = 1000000.0;
 constexpr std::uint64_t kAbortCheckInterval = 256u;
+constexpr std::array<std::pair<int, int>, 9> kAdaptiveSplatOffsets = {{
+    {-1, -1}, {0, -1}, {1, -1},
+    {-1, 0}, {0, 0}, {1, 0},
+    {-1, 1}, {0, 1}, {1, 1}
+}};
 
 struct ProjectedFlamePoint {
-    int x = 0;
-    int y = 0;
+    double x = 0.0;
+    double y = 0.0;
     double perspective = 0.0;
     double depth = 0.0;
     bool visible = false;
@@ -55,8 +62,8 @@ ProjectedFlamePoint ProjectFlamePoint(const Vec3& point, const CameraState& came
         return {};
     }
     return {
-        static_cast<int>(std::round(width * 0.5 + camera.panX + rotated.x * perspective)),
-        static_cast<int>(std::round(height * 0.5 + camera.panY - rotated.y * perspective)),
+        width * 0.5 + camera.panX + rotated.x * perspective,
+        height * 0.5 + camera.panY - rotated.y * perspective,
         perspective,
         rotated.z,
         true
@@ -121,6 +128,29 @@ bool IsOrbitOutOfRange(const Vec2& point) {
 
 bool IsOrbitOutOfRange(const Vec3& point) {
     return std::abs(point.x) > kFlameOrbitResetRadius || std::abs(point.y) > kFlameOrbitResetRadius || std::abs(point.z) > kFlameOrbitResetRadius;
+}
+
+double LocalDensityKernel(const int dx, const int dy) {
+    if (dx == 0 && dy == 0) {
+        return 1.0;
+    }
+    return (std::abs(dx) + std::abs(dy) == 1) ? 0.58 : 0.32;
+}
+
+double EdgeFavoringScale(const double localDensity) {
+    return Clamp(1.32 / std::pow(1.0 + std::max(0.0, localDensity), 0.38), 0.18, 1.32);
+}
+
+double LowDensitySplatBlend(const double localDensity) {
+    return Clamp((1.45 - std::log1p(std::max(0.0, localDensity))) / 1.45, 0.0, 1.0) * 0.58;
+}
+
+double WideSplatKernel(const double distance) {
+    constexpr double kSupportRadius = 1.35;
+    if (distance >= kSupportRadius) {
+        return 0.0;
+    }
+    return std::pow(1.0 - distance / kSupportRadius, 1.75);
 }
 
 }  // namespace
@@ -252,20 +282,145 @@ bool IFSEngine::Render(const Scene& scene, const int width, const int height, st
         ++stableIterations;
 
         const ProjectedFlamePoint projected = ProjectFlamePoint(FlamePointToWorld(point, flameWorldScale, scene.flameRender), scene.camera, width, height);
-        if (!projected.visible || projected.x < 0 || projected.y < 0 || projected.x >= width || projected.y >= height) {
+        if (!projected.visible) {
             continue;
         }
 
-        FlamePixel& pixel = output[static_cast<std::size_t>(projected.y * width + projected.x)];
         const Color sampleColor = layer.useCustomColor
             ? layer.customColor
             : palette[static_cast<std::size_t>(Clamp(colorIndex, 0.0, 1.0) * 255.0)];
         const double sampleWeight = Clamp(std::pow(projected.perspective / 30.0, 2.0), 0.35, 6.0);
-        pixel.density += static_cast<float>(sampleWeight);
-        pixel.red += static_cast<float>(sampleColor.r * sampleWeight);
-        pixel.green += static_cast<float>(sampleColor.g * sampleWeight);
-        pixel.blue += static_cast<float>(sampleColor.b * sampleWeight);
-        pixel.depth += static_cast<float>(Clamp((projected.depth - 0.15) / std::max(1.0, farDepth - 0.15), 0.0, 1.0) * sampleWeight);
+        const double normalizedDepth = Clamp((projected.depth - 0.15) / std::max(1.0, farDepth - 0.15), 0.0, 1.0);
+        const int baseX = static_cast<int>(std::floor(projected.x));
+        const int baseY = static_cast<int>(std::floor(projected.y));
+        const double fracX = projected.x - static_cast<double>(baseX);
+        const double fracY = projected.y - static_cast<double>(baseY);
+        const std::array<double, 4> splatWeights = {
+            (1.0 - fracX) * (1.0 - fracY),
+            fracX * (1.0 - fracY),
+            (1.0 - fracX) * fracY,
+            fracX * fracY
+        };
+        const std::array<std::pair<int, int>, 4> splatOffsets = {
+            std::pair<int, int>{0, 0},
+            std::pair<int, int>{1, 0},
+            std::pair<int, int>{0, 1},
+            std::pair<int, int>{1, 1}
+        };
+
+        std::array<double, 4> sharpenedSplatWeights = splatWeights;
+        double sharpenedWeightSum = 0.0;
+        for (double& weight : sharpenedSplatWeights) {
+            weight = std::pow(std::max(0.0, weight), 2.2);
+            sharpenedWeightSum += weight;
+        }
+        if (sharpenedWeightSum > 1.0e-9) {
+            for (double& weight : sharpenedSplatWeights) {
+                weight /= sharpenedWeightSum;
+            }
+        } else {
+            sharpenedSplatWeights = {1.0, 0.0, 0.0, 0.0};
+        }
+
+        const int centerX = static_cast<int>(std::floor(projected.x + 0.5));
+        const int centerY = static_cast<int>(std::floor(projected.y + 0.5));
+        double localDensityEstimate = 0.0;
+        double localDensityKernelSum = 0.0;
+        for (const auto& offset : kAdaptiveSplatOffsets) {
+            const int px = centerX + offset.first;
+            const int py = centerY + offset.second;
+            if (px < 0 || py < 0 || px >= width || py >= height) {
+                continue;
+            }
+
+            const double kernel = LocalDensityKernel(offset.first, offset.second);
+            localDensityEstimate += output[static_cast<std::size_t>(py * width + px)].density * kernel;
+            localDensityKernelSum += kernel;
+        }
+        if (localDensityKernelSum > 1.0e-9) {
+            localDensityEstimate /= localDensityKernelSum;
+        }
+
+        std::array<double, 9> wideSplatWeights {};
+        double wideWeightSum = 0.0;
+        for (std::size_t index = 0; index < kAdaptiveSplatOffsets.size(); ++index) {
+            const int px = centerX + kAdaptiveSplatOffsets[index].first;
+            const int py = centerY + kAdaptiveSplatOffsets[index].second;
+            const double pixelCenterX = static_cast<double>(px) + 0.5;
+            const double pixelCenterY = static_cast<double>(py) + 0.5;
+            const double wx = WideSplatKernel(std::abs(projected.x - pixelCenterX));
+            const double wy = WideSplatKernel(std::abs(projected.y - pixelCenterY));
+            wideSplatWeights[index] = wx * wy;
+            wideWeightSum += wideSplatWeights[index];
+        }
+        if (wideWeightSum > 1.0e-9) {
+            for (double& weight : wideSplatWeights) {
+                weight /= wideWeightSum;
+            }
+        } else {
+            wideSplatWeights[4] = 1.0;
+        }
+
+        std::array<double, 9> narrowSplatWeights {};
+        for (std::size_t splatIndex = 0; splatIndex < splatWeights.size(); ++splatIndex) {
+            const int px = baseX + splatOffsets[splatIndex].first;
+            const int py = baseY + splatOffsets[splatIndex].second;
+            const int gridX = px - (centerX - 1);
+            const int gridY = py - (centerY - 1);
+            if (gridX < 0 || gridX >= 3 || gridY < 0 || gridY >= 3) {
+                continue;
+            }
+            narrowSplatWeights[static_cast<std::size_t>(gridY * 3 + gridX)] += sharpenedSplatWeights[splatIndex];
+        }
+
+        const double wideBlend = LowDensitySplatBlend(localDensityEstimate);
+        std::array<double, 9> finalSplatWeights {};
+        double finalWeightSum = 0.0;
+        for (std::size_t index = 0; index < finalSplatWeights.size(); ++index) {
+            finalSplatWeights[index] = narrowSplatWeights[index] * (1.0 - wideBlend) + wideSplatWeights[index] * wideBlend;
+            finalWeightSum += finalSplatWeights[index];
+        }
+        if (finalWeightSum > 1.0e-9) {
+            for (double& weight : finalSplatWeights) {
+                weight /= finalWeightSum;
+            }
+        } else {
+            finalSplatWeights[4] = 1.0;
+        }
+
+        const double adjustedSampleWeight = sampleWeight * EdgeFavoringScale(localDensityEstimate);
+        double visibleWeightSum = 0.0;
+        for (std::size_t index = 0; index < finalSplatWeights.size(); ++index) {
+            const int px = centerX + kAdaptiveSplatOffsets[index].first;
+            const int py = centerY + kAdaptiveSplatOffsets[index].second;
+            if (px < 0 || py < 0 || px >= width || py >= height) {
+                continue;
+            }
+            visibleWeightSum += finalSplatWeights[index];
+        }
+        if (visibleWeightSum <= 1.0e-9) {
+            continue;
+        }
+
+        for (std::size_t index = 0; index < finalSplatWeights.size(); ++index) {
+            const int px = centerX + kAdaptiveSplatOffsets[index].first;
+            const int py = centerY + kAdaptiveSplatOffsets[index].second;
+            if (px < 0 || py < 0 || px >= width || py >= height) {
+                continue;
+            }
+
+            const double weight = adjustedSampleWeight * (finalSplatWeights[index] / visibleWeightSum);
+            if (weight <= 1.0e-6) {
+                continue;
+            }
+
+            FlamePixel& pixel = output[static_cast<std::size_t>(py * width + px)];
+            pixel.density += static_cast<float>(weight);
+            pixel.red += static_cast<float>(sampleColor.r * weight);
+            pixel.green += static_cast<float>(sampleColor.g * weight);
+            pixel.blue += static_cast<float>(sampleColor.b * weight);
+            pixel.depth += static_cast<float>(normalizedDepth * weight);
+        }
     }
 
     return true;

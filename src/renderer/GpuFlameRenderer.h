@@ -60,6 +60,10 @@ private:
         float flameRotateY = 0.0f;
         float flameRotateZ = 0.0f;
         float flameDepthAmount = 1.0f;
+        float flameCurveExposure = 1.0f;
+        float flameCurveContrast = 1.0f;
+        float flameCurveHighlights = 1.0f;
+        float flameCurveGamma = 1.0f;
         float backgroundR = 10.0f / 255.0f;
         float backgroundG = 10.0f / 255.0f;
         float backgroundB = 13.0f / 255.0f;

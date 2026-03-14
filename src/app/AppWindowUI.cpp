@@ -638,8 +638,13 @@ void AppWindow::DrawExportPanel() {
         ImGui::SeparatorText("Render");
         ImGui::Checkbox("Use GPU for export", &exportUseGpu_);
         ImGui::TextDisabled("Falls back to CPU if the GPU export path is unavailable.");
-        if (exportUseGpu_) {
-        }
+        constexpr std::uint32_t kMinExportIterations = 20000u;
+        constexpr std::uint32_t kMaxExportIterations = 100000000u;
+        exportIterations_ = std::clamp(exportIterations_, kMinExportIterations, kMaxExportIterations);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputScalar("Iterations", ImGuiDataType_U32, &exportIterations_, &kMinExportIterations, &kMinExportIterations, "%u");
+        exportIterations_ = std::clamp(exportIterations_, kMinExportIterations, kMaxExportIterations);
+        ImGui::TextDisabled("Used for export renders only. Higher values increase render time, with diminishing quality returns.");
 
         ImGui::Spacing();
         if (DrawActionButton("##export_confirm", "Export File", IconGlyph::ExportImage, ActionTone::Accent, false, true, 132.0f)) {
@@ -1530,6 +1535,32 @@ void AppWindow::DrawInspectorPanel() {
         changed = sliderDoubleWithReset("Flame Depth", &scene_.flameRender.depthAmount, &flameDepthMin, &flameDepthMax, "%.2f", defaultFlameRender.depthAmount);
         captureEdit(before, changed);
 
+        ImGui::SeparatorText("Flame Curve");
+        const double flameCurveExposureMin = 0.25;
+        const double flameCurveExposureMax = 2.5;
+        const double flameCurveContrastMin = 0.45;
+        const double flameCurveContrastMax = 2.0;
+        const double flameCurveHighlightsMin = 0.0;
+        const double flameCurveHighlightsMax = 2.0;
+        const double flameCurveGammaMin = 0.45;
+        const double flameCurveGammaMax = 1.8;
+
+        before = scene_;
+        changed = sliderDoubleWithReset("Exposure", &scene_.flameRender.curveExposure, &flameCurveExposureMin, &flameCurveExposureMax, "%.2f", defaultFlameRender.curveExposure);
+        captureEdit(before, changed);
+
+        before = scene_;
+        changed = sliderDoubleWithReset("Contrast", &scene_.flameRender.curveContrast, &flameCurveContrastMin, &flameCurveContrastMax, "%.2f", defaultFlameRender.curveContrast);
+        captureEdit(before, changed);
+
+        before = scene_;
+        changed = sliderDoubleWithReset("Highlights", &scene_.flameRender.curveHighlights, &flameCurveHighlightsMin, &flameCurveHighlightsMax, "%.2f", defaultFlameRender.curveHighlights);
+        captureEdit(before, changed);
+
+        before = scene_;
+        changed = sliderDoubleWithReset("Gamma", &scene_.flameRender.curveGamma, &flameCurveGammaMin, &flameCurveGammaMax, "%.2f", defaultFlameRender.curveGamma);
+        captureEdit(before, changed);
+
         ImGui::SeparatorText("Palette");
         for (int paletteIndex = 0; paletteIndex < 3; ++paletteIndex) {
             const std::size_t stopIndex = GradientStopIndexForPaletteColor(paletteIndex);
@@ -1920,7 +1951,7 @@ void AppWindow::DrawTimelinePanel() {
     const std::uint32_t minInteractiveIterations = 10000;
     const std::uint32_t maxInteractiveIterations = 2000000;
     const std::uint32_t minIterations = 20000;
-    const std::uint32_t maxIterations = 50000000;
+    const std::uint32_t maxIterations = 100000000u;
     const auto setPreviewColumnItemWidth = [&]() {
         ImGui::SetNextItemWidth(-FLT_MIN);
     };

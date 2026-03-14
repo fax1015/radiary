@@ -50,6 +50,10 @@ cbuffer RenderParams : register(b0)
     float FlameRotateY;
     float FlameRotateZ;
     float FlameDepthAmount;
+    float FlameCurveExposure;
+    float FlameCurveContrast;
+    float FlameCurveHighlights;
+    float FlameCurveGamma;
     float BackgroundR;
     float BackgroundG;
     float BackgroundB;
@@ -131,6 +135,74 @@ bool IsOrbitOutOfRange3(float3 sample)
 {
     return abs(sample.x) > kOrbitResetRadius || abs(sample.y) > kOrbitResetRadius || abs(sample.z) > kOrbitResetRadius;
 }
+
+float ReconstructionKernel(int dx, int dy)
+{
+    if (dx == 0 && dy == 0)
+        return 1.0;
+    return (abs(dx) + abs(dy) == 1) ? 0.16 : 0.06;
+}
+
+float LocalDensityKernel(int dx, int dy)
+{
+    if (dx == 0 && dy == 0)
+        return 1.0;
+    return (abs(dx) + abs(dy) == 1) ? 0.58 : 0.32;
+}
+
+void LoadAccumulation(int2 pixel, out float densityAccum, out float3 colorAccum, out float depthAccum)
+{
+    if (pixel.x < 0 || pixel.y < 0 || pixel.x >= (int)Width || pixel.y >= (int)Height)
+    {
+        densityAccum = 0.0;
+        colorAccum = float3(0.0, 0.0, 0.0);
+        depthAccum = 0.0;
+        return;
+    }
+
+    uint pixelOffset = ((uint(pixel.y) * Width) + uint(pixel.x)) * 20u;
+    densityAccum = (float)FlameAccum.Load(pixelOffset + 0u);
+    colorAccum = float3(
+        (float)FlameAccum.Load(pixelOffset + 4u),
+        (float)FlameAccum.Load(pixelOffset + 8u),
+        (float)FlameAccum.Load(pixelOffset + 12u));
+    depthAccum = (float)FlameAccum.Load(pixelOffset + 16u);
+}
+
+void AccumulateSampleToPixel(int px, int py, uint sampleWeight, uint3 sampleColor, uint sampleDepth)
+{
+    if (sampleWeight == 0u || px < 0 || py < 0 || px >= (int)Width || py >= (int)Height)
+        return;
+
+    uint pixelOffset = ((uint(py) * Width) + uint(px)) * 20u;
+    uint ignored = 0u;
+    FlameAccum.InterlockedAdd(pixelOffset + 0u, sampleWeight, ignored);
+    FlameAccum.InterlockedAdd(pixelOffset + 4u, sampleColor.x * sampleWeight, ignored);
+    FlameAccum.InterlockedAdd(pixelOffset + 8u, sampleColor.y * sampleWeight, ignored);
+    FlameAccum.InterlockedAdd(pixelOffset + 12u, sampleColor.z * sampleWeight, ignored);
+    FlameAccum.InterlockedAdd(pixelOffset + 16u, sampleDepth, ignored);
+}
+
+float EdgeFavoringScale(float localDensity)
+{
+    return clamp(1.32 / pow(1.0 + max(0.0, localDensity), 0.38), 0.18, 1.32);
+}
+
+float LowDensitySplatBlend(float localDensity)
+{
+    return saturate((1.45 - log(1.0 + max(0.0, localDensity))) / 1.45) * 0.58;
+}
+
+float WideSplatKernel(float distance)
+{
+    const float supportRadius = 1.35;
+    if (distance >= supportRadius)
+        return 0.0;
+    return pow(1.0 - distance / supportRadius, 1.75);
+}
+
+)"
+R"(
 
 float2 ApplyVariation(uint variation, float2 samplePoint)
 {
@@ -583,9 +655,9 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         float perspective = 240.0 * Zoom2D / rotated.z;
         if (!isfinite(perspective))
             continue;
-        int px = (int)round(Width * 0.5 + PanX + rotated.x * perspective);
-        int py = (int)round(Height * 0.5 + PanY - rotated.y * perspective);
-        if (px < 0 || py < 0 || px >= (int)Width || py >= (int)Height)
+        float screenX = Width * 0.5 + PanX + rotated.x * perspective;
+        float screenY = Height * 0.5 + PanY - rotated.y * perspective;
+        if (screenX < -1.0 || screenY < -1.0 || screenX > (float)Width || screenY > (float)Height)
             continue;
 
         uint4 sampleColor;
@@ -603,18 +675,202 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
             sampleColor = Palette[paletteIndex];
         }
         float sampleWeightReal = clamp(pow(perspective / 30.0, 2.0), 0.35, 6.0);
-        uint sampleWeight = max(1u, (uint)round(sampleWeightReal * (float)kAccumulationScale));
         float normalizedDepth = saturate((rotated.z - kDepthNear) / max(1.0e-5, FarDepth - kDepthNear));
-        uint sampleDepth = (uint)round(normalizedDepth * 65535.0) * sampleWeight;
-        uint pixelOffset = ((uint(py) * Width) + uint(px)) * 20u;
-        uint ignored = 0u;
-        FlameAccum.InterlockedAdd(pixelOffset + 0u, sampleWeight, ignored);
-        FlameAccum.InterlockedAdd(pixelOffset + 4u, sampleColor.x * sampleWeight, ignored);
-        FlameAccum.InterlockedAdd(pixelOffset + 8u, sampleColor.y * sampleWeight, ignored);
-        FlameAccum.InterlockedAdd(pixelOffset + 12u, sampleColor.z * sampleWeight, ignored);
-        FlameAccum.InterlockedAdd(pixelOffset + 16u, sampleDepth, ignored);
+        int baseX = (int)floor(screenX);
+        int baseY = (int)floor(screenY);
+        float fracX = screenX - (float)baseX;
+        float fracY = screenY - (float)baseY;
+        float bilinearWeights[4] = {
+            (1.0 - fracX) * (1.0 - fracY),
+            fracX * (1.0 - fracY),
+            (1.0 - fracX) * fracY,
+            fracX * fracY
+        };
+        int2 offsets[4] = {
+            int2(0, 0),
+            int2(1, 0),
+            int2(0, 1),
+            int2(1, 1)
+        };
+
+        float sharpenedWeights[4] = {0.0, 0.0, 0.0, 0.0};
+        float sharpenedWeightSum = 0.0;
+        [unroll]
+        for (uint index = 0u; index < 4u; ++index)
+        {
+            sharpenedWeights[index] = pow(max(0.0, bilinearWeights[index]), 2.2);
+            sharpenedWeightSum += sharpenedWeights[index];
+        }
+        if (sharpenedWeightSum > 1.0e-6)
+        {
+            [unroll]
+            for (uint index = 0u; index < 4u; ++index)
+            {
+                sharpenedWeights[index] /= sharpenedWeightSum;
+            }
+        }
+        else
+        {
+            sharpenedWeights[0] = 1.0;
+        }
+
+)"
+R"(
+        int centerX = (int)floor(screenX + 0.5);
+        int centerY = (int)floor(screenY + 0.5);
+        int2 adaptiveOffsets[9] = {
+            int2(-1, -1), int2(0, -1), int2(1, -1),
+            int2(-1, 0), int2(0, 0), int2(1, 0),
+            int2(-1, 1), int2(0, 1), int2(1, 1)
+        };
+
+        float localDensityAccum = 0.0;
+        float localDensityKernelSum = 0.0;
+        [unroll]
+        for (uint index = 0u; index < 9u; ++index)
+        {
+            float neighborDensityAccum = 0.0;
+            float3 ignoredColorAccum = float3(0.0, 0.0, 0.0);
+            float ignoredDepthAccum = 0.0;
+            int2 offset = adaptiveOffsets[index];
+            float kernel = LocalDensityKernel(offset.x, offset.y);
+            LoadAccumulation(
+                int2(centerX + offset.x, centerY + offset.y),
+                neighborDensityAccum,
+                ignoredColorAccum,
+                ignoredDepthAccum);
+            localDensityAccum += neighborDensityAccum * kernel;
+            localDensityKernelSum += kernel;
+        }
+
+        float localDensity = 0.0;
+        if (localDensityKernelSum > 1.0e-6)
+            localDensity = (localDensityAccum / localDensityKernelSum) / (float)kAccumulationScale;
+
+        float wideWeights[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        float wideWeightSum = 0.0;
+        [unroll]
+        for (uint index = 0u; index < 9u; ++index)
+        {
+            int2 offset = adaptiveOffsets[index];
+            int px = centerX + offset.x;
+            int py = centerY + offset.y;
+            float pixelCenterX = (float)px + 0.5;
+            float pixelCenterY = (float)py + 0.5;
+            float wx = WideSplatKernel(abs(screenX - pixelCenterX));
+            float wy = WideSplatKernel(abs(screenY - pixelCenterY));
+            wideWeights[index] = wx * wy;
+            wideWeightSum += wideWeights[index];
+        }
+        if (wideWeightSum > 1.0e-6)
+        {
+            [unroll]
+            for (uint index = 0u; index < 9u; ++index)
+            {
+                wideWeights[index] /= wideWeightSum;
+            }
+        }
+        else
+        {
+            wideWeights[4] = 1.0;
+        }
+
+        float narrowWeights[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        [unroll]
+        for (uint index = 0u; index < 4u; ++index)
+        {
+            int px = baseX + offsets[index].x;
+            int py = baseY + offsets[index].y;
+            int gridX = px - (centerX - 1);
+            int gridY = py - (centerY - 1);
+            if (gridX < 0 || gridX >= 3 || gridY < 0 || gridY >= 3)
+                continue;
+            narrowWeights[gridY * 3 + gridX] += sharpenedWeights[index];
+        }
+
+        float wideBlend = LowDensitySplatBlend(localDensity);
+        float finalWeights[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        float finalWeightSum = 0.0;
+        [unroll]
+        for (uint index = 0u; index < 9u; ++index)
+        {
+            finalWeights[index] = lerp(narrowWeights[index], wideWeights[index], wideBlend);
+            finalWeightSum += finalWeights[index];
+        }
+        if (finalWeightSum > 1.0e-6)
+        {
+            [unroll]
+            for (uint index = 0u; index < 9u; ++index)
+            {
+                finalWeights[index] /= finalWeightSum;
+            }
+        }
+        else
+        {
+            finalWeights[4] = 1.0;
+        }
+
+        float densityScale = EdgeFavoringScale(localDensity);
+        uint sampleWeight = max(1u, (uint)round(sampleWeightReal * densityScale * (float)kAccumulationScale));
+
+        float visibleWeightSum = 0.0;
+        uint bestIndex = 4u;
+        float bestWeight = -1.0;
+        [unroll]
+        for (uint index = 0u; index < 9u; ++index)
+        {
+            int2 offset = adaptiveOffsets[index];
+            int px = centerX + offset.x;
+            int py = centerY + offset.y;
+            if (px < 0 || py < 0 || px >= (int)Width || py >= (int)Height)
+                continue;
+            visibleWeightSum += finalWeights[index];
+            if (finalWeights[index] > bestWeight)
+            {
+                bestWeight = finalWeights[index];
+                bestIndex = index;
+            }
+        }
+
+        if (visibleWeightSum <= 1.0e-6)
+        {
+            continue;
+        }
+
+        uint distributedWeight = 0u;
+        uint weights[9] = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+        [unroll]
+        for (uint index = 0u; index < 9u; ++index)
+        {
+            int2 offset = adaptiveOffsets[index];
+            int px = centerX + offset.x;
+            int py = centerY + offset.y;
+            if (px < 0 || py < 0 || px >= (int)Width || py >= (int)Height)
+                continue;
+            float normalizedWeight = finalWeights[index] / visibleWeightSum;
+            weights[index] = (uint)floor((float)sampleWeight * normalizedWeight);
+            distributedWeight += weights[index];
+        }
+        weights[bestIndex] += sampleWeight - distributedWeight;
+
+        [unroll]
+        for (uint index = 0u; index < 9u; ++index)
+        {
+            uint localWeight = weights[index];
+            uint localDepth = (uint)round(normalizedDepth * 65535.0) * localWeight;
+            int2 offset = adaptiveOffsets[index];
+            AccumulateSampleToPixel(
+                centerX + offset.x,
+                centerY + offset.y,
+                localWeight,
+                sampleColor.xyz,
+                localDepth);
+        }
     }
 }
+
+)"
+R"(
 
 [numthreads(8, 8, 1)]
 void ToneMapCS(uint3 dispatchThreadId : SV_DispatchThreadID)
@@ -622,13 +878,42 @@ void ToneMapCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (dispatchThreadId.x >= Width || dispatchThreadId.y >= Height)
         return;
 
-    uint pixelOffset = ((dispatchThreadId.y * Width) + dispatchThreadId.x) * 20u;
-    uint4 pixel = uint4(
-        FlameAccum.Load(pixelOffset + 0u),
-        FlameAccum.Load(pixelOffset + 4u),
-        FlameAccum.Load(pixelOffset + 8u),
-        FlameAccum.Load(pixelOffset + 12u));
-    uint depthAccum = FlameAccum.Load(pixelOffset + 16u);
+    int2 pixelCoord = int2(dispatchThreadId.xy);
+    float densityAccum = 0.0;
+    float3 colorAccum = float3(0.0, 0.0, 0.0);
+    float depthAccum = 0.0;
+    LoadAccumulation(pixelCoord, densityAccum, colorAccum, depthAccum);
+
+    float reconstructedDensity = densityAccum;
+    float3 reconstructedColor = colorAccum;
+    float reconstructedDepth = depthAccum;
+
+    [unroll]
+    for (int dy = -1; dy <= 1; ++dy)
+    {
+        [unroll]
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            if (dx == 0 && dy == 0)
+                continue;
+
+            float sampleDensity = 0.0;
+            float3 sampleColor = float3(0.0, 0.0, 0.0);
+            float sampleDepth = 0.0;
+            LoadAccumulation(pixelCoord + int2(dx, dy), sampleDensity, sampleColor, sampleDepth);
+            float kernel = ReconstructionKernel(dx, dy);
+            reconstructedDensity += sampleDensity * kernel;
+            reconstructedColor += sampleColor * kernel;
+            reconstructedDepth += sampleDepth * kernel;
+        }
+    }
+
+    float centerDensity = densityAccum / (float)kAccumulationScale;
+    float reconstructionBlend = saturate((0.55 - centerDensity) / 0.55) * 0.18;
+    densityAccum = lerp(densityAccum, reconstructedDensity, reconstructionBlend);
+    colorAccum = lerp(colorAccum, reconstructedColor, reconstructionBlend);
+    depthAccum = lerp(depthAccum, reconstructedDepth, reconstructionBlend);
+
     float3 background = TransparentBackground != 0u ? float3(0.0, 0.0, 0.0) : float3(BackgroundR, BackgroundG, BackgroundB);
     if (GridVisible != 0u)
     {
@@ -642,34 +927,41 @@ void ToneMapCS(uint3 dispatchThreadId : SV_DispatchThreadID)
             background = float3(36.0 / 255.0, 38.0 / 255.0, 48.0 / 255.0) * 0.5 + background * 0.5;
     }
 
-    if (pixel.x == 0u)
+    if (densityAccum <= 1.0e-4)
     {
         FlameOutput[int2(dispatchThreadId.xy)] = float4(background, TransparentBackground != 0u ? 0.0 : 1.0);
         FlameDepthOutput[int2(dispatchThreadId.xy)] = 1.0;
         return;
     }
 
-    float density = (float)pixel.x / (float)kAccumulationScale;
+    float density = densityAccum / (float)kAccumulationScale;
     float logDensity = log(1.0 + density);
-    float intensity = pow(clamp(logDensity / 3.8, 0.0, 1.85), 1.12);
-    float divisor = max((float)kAccumulationScale, (float)pixel.x);
-    float rawR = clamp(((float)pixel.y / divisor) / 255.0, 0.0, 1.0);
-    float rawG = clamp(((float)pixel.z / divisor) / 255.0, 0.0, 1.0);
-    float rawB = clamp(((float)pixel.w / divisor) / 255.0, 0.0, 1.0);
+    float exposure = clamp(FlameCurveExposure, 0.25, 3.0);
+    float contrast = clamp(FlameCurveContrast, 0.45, 2.2);
+    float highlights = clamp(FlameCurveHighlights, 0.0, 2.0);
+    float gamma = clamp(FlameCurveGamma, 0.45, 1.8);
+    float intensity = pow(clamp((logDensity * exposure) / 4.05, 0.0, 1.72 + highlights * 0.18), 1.04);
+    float divisor = max((float)kAccumulationScale, densityAccum);
+    float rawR = clamp((colorAccum.x / divisor) / 255.0, 0.0, 1.0);
+    float rawG = clamp((colorAccum.y / divisor) / 255.0, 0.0, 1.0);
+    float rawB = clamp((colorAccum.z / divisor) / 255.0, 0.0, 1.0);
     float maxChannel = max(max(rawR, rawG), max(rawB, 1.0e-6));
-    float saturationBoost = 1.0 + (1.0 - maxChannel) * 0.15;
+    float saturationBoost = 1.0 + (1.0 - maxChannel) * (0.10 + highlights * 0.04);
+    float highlightLift = smoothstep(0.42, 1.08, intensity) * highlights;
     
-    float alpha = clamp(intensity * 1.25, 0.0, 1.0);
-    float bloom = max(1.0, intensity);
+    float alpha = clamp(intensity * (1.04 + highlightLift * 0.14), 0.0, 1.0);
+    float bloom = 0.94 + intensity * 0.18 + highlightLift * 0.30;
     
-    float rf = clamp(pow(rawR, 1.04) * bloom * saturationBoost, 0.0, 1.0);
-    float gf = clamp(pow(rawG, 1.04) * bloom * saturationBoost, 0.0, 1.0);
-    float bf = clamp(pow(rawB, 1.04) * bloom * saturationBoost, 0.0, 1.0);
-    float3 mapped = float3(pow(rf, 0.55), pow(gf, 0.55), pow(bf, 0.55));
+    float rf = clamp(pow(rawR, 1.02) * bloom * saturationBoost, 0.0, 1.0);
+    float gf = clamp(pow(rawG, 1.02) * bloom * saturationBoost, 0.0, 1.0);
+    float bf = clamp(pow(rawB, 1.02) * bloom * saturationBoost, 0.0, 1.0);
+    float3 mapped = float3(pow(rf, 0.58 / gamma), pow(gf, 0.58 / gamma), pow(bf, 0.58 / gamma));
+    mapped = clamp((mapped - 0.5) * contrast + 0.5, 0.0, 1.0);
     
     float3 output = background + (mapped - background) * alpha;
-    FlameOutput[int2(dispatchThreadId.xy)] = float4(output, 1.0);
-    FlameDepthOutput[int2(dispatchThreadId.xy)] = saturate(((float)depthAccum / max(1.0, (float)pixel.x)) / 65535.0);
+    float outputAlpha = TransparentBackground != 0u ? alpha : 1.0;
+    FlameOutput[int2(dispatchThreadId.xy)] = float4(output, outputAlpha);
+    FlameDepthOutput[int2(dispatchThreadId.xy)] = saturate((depthAccum / max(1.0, densityAccum)) / 65535.0);
 }
 
 )";
@@ -839,6 +1131,10 @@ bool GpuFlameRenderer::Render(const Scene& scene, const int width, const int hei
     params.flameRotateY = static_cast<float>(DegreesToRadians(scene.flameRender.rotationYDegrees));
     params.flameRotateZ = static_cast<float>(DegreesToRadians(scene.flameRender.rotationZDegrees));
     params.flameDepthAmount = static_cast<float>(scene.flameRender.depthAmount);
+    params.flameCurveExposure = static_cast<float>(scene.flameRender.curveExposure);
+    params.flameCurveContrast = static_cast<float>(scene.flameRender.curveContrast);
+    params.flameCurveHighlights = static_cast<float>(scene.flameRender.curveHighlights);
+    params.flameCurveGamma = static_cast<float>(scene.flameRender.curveGamma);
     params.backgroundR = static_cast<float>(scene.backgroundColor.r) / 255.0f;
     params.backgroundG = static_cast<float>(scene.backgroundColor.g) / 255.0f;
     params.backgroundB = static_cast<float>(scene.backgroundColor.b) / 255.0f;

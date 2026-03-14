@@ -320,7 +320,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                             return;
                         }
                         flameSrv = gpuDenoiser_.ShaderResourceView();
-                        // Denoising preserves depth, but we don't have a new depth SRV. We reuse the original.
+                        flameDepthSrv = gpuDenoiser_.DepthShaderResourceView();
                     }
 
                     if (applyDof) {
@@ -355,16 +355,47 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
             }
         } else if (renderScene.mode == SceneMode::Path) {
             const bool pathRendererReady = EnsureGpuPathRendererInitialized(gpuPathRenderer_, L"GPU path renderer");
+            const bool denoiserRendererReady = !useGpuDenoiserPreview || EnsureGpuDenoiserInitialized();
             const bool dofRendererReady = !useGpuDofPreview || EnsureGpuDofRendererInitialized();
             if (pathRendererReady && gpuPathRenderer_.Render(renderScene, targetWidth, targetHeight, false, true)) {
-                if (useGpuDofPreview && !interactivePreview_ && dofRendererReady) {
-                    if (renderGpuDofPreview(
-                            nullptr,
-                            nullptr,
-                            nullptr,
-                            gpuPathRenderer_.ShaderResourceView(),
-                            gpuPathRenderer_.DepthShaderResourceView(),
-                            previewIterations)) {
+                const bool applyDenoiser = useGpuDenoiserPreview && denoiserRendererReady && !interactivePreview_;
+                const bool applyDof = useGpuDofPreview && dofRendererReady && !interactivePreview_;
+                if (applyDenoiser || applyDof) {
+                    ID3D11ShaderResourceView* flameSrv = nullptr;
+                    ID3D11ShaderResourceView* flameDepthSrv = nullptr;
+                    ID3D11ShaderResourceView* pathSrv = gpuPathRenderer_.ShaderResourceView();
+                    ID3D11ShaderResourceView* pathDepthSrv = gpuPathRenderer_.DepthShaderResourceView();
+
+                    if (applyDenoiser) {
+                        if (!gpuDenoiser_.Render(
+                                renderScene,
+                                targetWidth,
+                                targetHeight,
+                                nullptr,
+                                nullptr,
+                                nullptr,
+                                pathSrv,
+                                pathDepthSrv)) {
+                            return;
+                        }
+                        flameSrv = gpuDenoiser_.ShaderResourceView();
+                        flameDepthSrv = gpuDenoiser_.DepthShaderResourceView();
+                        pathSrv = nullptr;
+                        pathDepthSrv = nullptr;
+                    }
+
+                    if (applyDof) {
+                        if (renderGpuDofPreview(
+                                nullptr,
+                                flameSrv,
+                                flameDepthSrv,
+                                pathSrv,
+                                pathDepthSrv,
+                                previewIterations)) {
+                            return;
+                        }
+                    } else {
+                        setDirectGpuPreview(PreviewBackend::GpuDenoised, previewIterations);
                         return;
                     }
                 } else {
@@ -376,6 +407,8 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                 statusText_ = L"GPU path preview failed: " + Utf8ToWide(gpuPathRenderer_.LastError());
             } else if (!gpuPathRenderer_.LastError().empty()) {
                 statusText_ = L"GPU path preview failed: " + Utf8ToWide(gpuPathRenderer_.LastError());
+            } else if (useGpuDenoiserPreview && !gpuDenoiser_.LastError().empty()) {
+                statusText_ = L"GPU denoiser preview failed: " + Utf8ToWide(gpuDenoiser_.LastError());
             } else if (useGpuDofPreview && !gpuDofRenderer_.LastError().empty()) {
                 statusText_ = L"GPU DOF preview failed: " + Utf8ToWide(gpuDofRenderer_.LastError());
             }
@@ -428,6 +461,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                             return;
                         }
                         flameSrv = gpuDenoiser_.ShaderResourceView();
+                        flameDepthSrv = gpuDenoiser_.DepthShaderResourceView();
                     }
 
                     if (applyDof) {

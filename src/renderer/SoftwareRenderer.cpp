@@ -21,6 +21,53 @@ struct Triangle2D {
     double depth = 0.0;
 };
 
+double FlameReconstructionKernel(const int dx, const int dy) {
+    if (dx == 0 && dy == 0) {
+        return 1.0;
+    }
+    return (std::abs(dx) + std::abs(dy) == 1) ? 0.16 : 0.06;
+}
+
+FlamePixel ReconstructFlamePixel(
+    const std::vector<FlamePixel>& flamePixels,
+    const int width,
+    const int height,
+    const int x,
+    const int y) {
+    const FlamePixel& center = flamePixels[static_cast<std::size_t>(y * width + x)];
+    FlamePixel reconstructed = center;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dy == 0) {
+                continue;
+            }
+
+            const int sampleX = x + dx;
+            const int sampleY = y + dy;
+            if (sampleX < 0 || sampleY < 0 || sampleX >= width || sampleY >= height) {
+                continue;
+            }
+
+            const FlamePixel& sample = flamePixels[static_cast<std::size_t>(sampleY * width + sampleX)];
+            const float kernel = static_cast<float>(FlameReconstructionKernel(dx, dy));
+            reconstructed.density += sample.density * kernel;
+            reconstructed.red += sample.red * kernel;
+            reconstructed.green += sample.green * kernel;
+            reconstructed.blue += sample.blue * kernel;
+            reconstructed.depth += sample.depth * kernel;
+        }
+    }
+
+    const float reconstructionBlend = static_cast<float>(Clamp((0.55 - center.density) / 0.55, 0.0, 1.0) * 0.18);
+    FlamePixel blended = center;
+    blended.density += (reconstructed.density - center.density) * reconstructionBlend;
+    blended.red += (reconstructed.red - center.red) * reconstructionBlend;
+    blended.green += (reconstructed.green - center.green) * reconstructionBlend;
+    blended.blue += (reconstructed.blue - center.blue) * reconstructionBlend;
+    blended.depth += (reconstructed.depth - center.depth) * reconstructionBlend;
+    return blended;
+}
+
 Vec3 AxisVector(const PathAxis axis) {
     switch (axis) {
     case PathAxis::X:
@@ -1341,11 +1388,16 @@ void SoftwareRenderer::BuildDepthMap(const Scene& scene, const int width, const 
         IFSEngine flameEngine;
         std::vector<FlamePixel> flamePixels;
         flameEngine.Render(scene, width, height, flamePixels);
-        const std::size_t totalPixels = std::min(depthBuffer.size(), flamePixels.size());
-        for (std::size_t index = 0; index < totalPixels; ++index) {
-            const FlamePixel& pixel = flamePixels[index];
-            if (pixel.density > 0.0f) {
-                depthBuffer[index] = std::min(depthBuffer[index], std::clamp(pixel.depth / pixel.density, 0.0f, 1.0f));
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const std::size_t index = static_cast<std::size_t>(y * width + x);
+                if (index >= depthBuffer.size() || index >= flamePixels.size()) {
+                    continue;
+                }
+                const FlamePixel pixel = ReconstructFlamePixel(flamePixels, width, height, x, y);
+                if (pixel.density > 0.0f) {
+                    depthBuffer[index] = std::min(depthBuffer[index], std::clamp(pixel.depth / pixel.density, 0.0f, 1.0f));
+                }
             }
         }
     }
@@ -1455,11 +1507,13 @@ void SoftwareRenderer::ApplyDenoising(
 
     const int passes = static_cast<int>(std::ceil(scene.denoiser.strength * 3.0));
     const double sigmaSpatial = 3.0 + scene.denoiser.strength * 4.0;
+    const double sigmaColor = 0.15 + scene.denoiser.strength * 0.25;
     const double sigmaDepth = 0.05 + scene.denoiser.strength * 0.1;
     const int radius = std::clamp(static_cast<int>(std::ceil(sigmaSpatial * 2.0)), 1, 8);
     const int blurRadius = std::clamp(static_cast<int>(std::ceil(sigmaSpatial)), 1, 4);
 
     const double invSpatialVar = 1.0 / (2.0 * sigmaSpatial * sigmaSpatial);
+    const double invColorVar = 1.0 / (2.0 * sigmaColor * sigmaColor);
     const double invDepthVar = 1.0 / (2.0 * sigmaDepth * sigmaDepth);
     const double thresholdMult = Lerp(4.0, 0.5, Clamp(scene.denoiser.strength, 0.0, 1.0));
 
@@ -1603,7 +1657,10 @@ void SoftwareRenderer::ApplyDenoising(
                         const double depthDistSq = depthDist * depthDist;
                         const double depthWeight = std::exp(-depthDistSq * invDepthVar);
                         
-                        const double weight = spatialWeight * depthWeight;
+                        const double colorDistSq = (sr - clampedCr) * (sr - clampedCr) + (sg - clampedCg) * (sg - clampedCg) + (sb - clampedCb) * (sb - clampedCb);
+                        const double colorWeight = std::exp(-colorDistSq * invColorVar);
+
+                        const double weight = spatialWeight * depthWeight * colorWeight;
 
                         blurSumR += sr * weight;
                         blurSumG += sg * weight;
@@ -1682,30 +1739,39 @@ double SoftwareRenderer::NormalizeProjectedDepth(const double depth, const Camer
     return std::clamp((depth - kFlameDepthNear) / std::max(1.0e-6, farDepth - kFlameDepthNear), 0.0, 1.0);
 }
 
-Color SoftwareRenderer::ToneMap(const FlamePixel& pixel) {
+Color SoftwareRenderer::ToneMap(const FlamePixel& pixel, const FlameRenderSettings& flameRender) {
     if (pixel.density <= 0.0f) {
         return {0, 0, 0, 0};
     }
 
+    const double exposure = Clamp(flameRender.curveExposure, 0.25, 3.0);
+    const double contrast = Clamp(flameRender.curveContrast, 0.45, 2.2);
+    const double highlights = Clamp(flameRender.curveHighlights, 0.0, 2.0);
+    const double gamma = Clamp(flameRender.curveGamma, 0.45, 1.8);
     const double logDensity = std::log1p(static_cast<double>(pixel.density));
-    const double intensity = std::pow(Clamp(logDensity / 3.8, 0.0, 1.85), 1.12);
+    const double intensity = std::pow(Clamp((logDensity * exposure) / 4.05, 0.0, 1.72 + highlights * 0.18), 1.04);
     const double divisor = std::max(1.0f, pixel.density);
     const double rawR = Clamp((pixel.red / divisor) / 255.0, 0.0, 1.0);
     const double rawG = Clamp((pixel.green / divisor) / 255.0, 0.0, 1.0);
     const double rawB = Clamp((pixel.blue / divisor) / 255.0, 0.0, 1.0);
     const double maxChannel = std::max({rawR, rawG, rawB, 1.0e-6});
-    const double saturationBoost = 1.0 + (1.0 - maxChannel) * 0.15;
+    const double saturationBoost = 1.0 + (1.0 - maxChannel) * (0.10 + highlights * 0.04);
+    const double highlightLift = Smoothstep(0.42, 1.08, intensity) * highlights;
     
-    const double alpha = Clamp(intensity * 1.25, 0.0, 1.0);
-    const double bloom = std::max(1.0, intensity);
+    const double alpha = Clamp(intensity * (1.04 + highlightLift * 0.14), 0.0, 1.0);
+    const double bloom = 0.94 + intensity * 0.18 + highlightLift * 0.30;
     
-    const double rf = Clamp(std::pow(rawR, 1.04) * bloom * saturationBoost, 0.0, 1.0);
-    const double gf = Clamp(std::pow(rawG, 1.04) * bloom * saturationBoost, 0.0, 1.0);
-    const double bf = Clamp(std::pow(rawB, 1.04) * bloom * saturationBoost, 0.0, 1.0);
+    const double rf = Clamp(std::pow(rawR, 1.02) * bloom * saturationBoost, 0.0, 1.0);
+    const double gf = Clamp(std::pow(rawG, 1.02) * bloom * saturationBoost, 0.0, 1.0);
+    const double bf = Clamp(std::pow(rawB, 1.02) * bloom * saturationBoost, 0.0, 1.0);
+    const auto applyCurve = [&](const double value) {
+        const double gammaMapped = std::pow(Clamp(value, 0.0, 1.0), 0.58 / gamma);
+        return Clamp((gammaMapped - 0.5) * contrast + 0.5, 0.0, 1.0);
+    };
     return {
-        static_cast<std::uint8_t>(Clamp(std::pow(rf, 0.55) * 255.0, 0.0, 255.0)),
-        static_cast<std::uint8_t>(Clamp(std::pow(gf, 0.55) * 255.0, 0.0, 255.0)),
-        static_cast<std::uint8_t>(Clamp(std::pow(bf, 0.55) * 255.0, 0.0, 255.0)),
+        static_cast<std::uint8_t>(Clamp(applyCurve(rf) * 255.0, 0.0, 255.0)),
+        static_cast<std::uint8_t>(Clamp(applyCurve(gf) * 255.0, 0.0, 255.0)),
+        static_cast<std::uint8_t>(Clamp(applyCurve(bf) * 255.0, 0.0, 255.0)),
         static_cast<std::uint8_t>(Clamp(alpha * 255.0, 0.0, 255.0))
     };
 }
@@ -1735,32 +1801,34 @@ bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
         if (!flameEngine_.Render(scene, width, height, flamePixels, options.shouldAbort)) {
             return false;
         }
-        const std::size_t totalPixels = static_cast<std::size_t>(width * height);
-        for (std::size_t i = 0; i < totalPixels; ++i) {
-            const FlamePixel& pixel = flamePixels[i];
-            if (pixel.density <= 0.0f) {
-                continue;
-            }
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const std::size_t i = static_cast<std::size_t>(y * width + x);
+                const FlamePixel pixel = ReconstructFlamePixel(flamePixels, width, height, x, y);
+                if (pixel.density <= 0.0f) {
+                    continue;
+                }
 
-            const Color mapped = ToneMap(pixel);
-            if (mapped.a == 0) {
-                continue;
-            }
+                const Color mapped = ToneMap(pixel, scene.flameRender);
+                if (mapped.a == 0) {
+                    continue;
+                }
 
-            const std::uint32_t existing = pixels[i];
-            const int er = static_cast<int>((existing >> 16U) & 0xFFU);
-            const int eg = static_cast<int>((existing >> 8U) & 0xFFU);
-            const int eb = static_cast<int>(existing & 0xFFU);
-            
-            const int alpha = mapped.a;
-            const int r = er + ((static_cast<int>(mapped.r) - er) * alpha >> 8);
-            const int g = eg + ((static_cast<int>(mapped.g) - eg) * alpha >> 8);
-            const int b = eb + ((static_cast<int>(mapped.b) - eb) * alpha >> 8);
-            
-            pixels[i] = static_cast<std::uint32_t>(b)
-                | (static_cast<std::uint32_t>(g) << 8U)
-                | (static_cast<std::uint32_t>(r) << 16U)
-                | 0xFF000000U;
+                const std::uint32_t existing = pixels[i];
+                const int er = static_cast<int>((existing >> 16U) & 0xFFU);
+                const int eg = static_cast<int>((existing >> 8U) & 0xFFU);
+                const int eb = static_cast<int>(existing & 0xFFU);
+
+                const int alpha = mapped.a;
+                const int r = er + ((static_cast<int>(mapped.r) - er) * alpha >> 8);
+                const int g = eg + ((static_cast<int>(mapped.g) - eg) * alpha >> 8);
+                const int b = eb + ((static_cast<int>(mapped.b) - eb) * alpha >> 8);
+
+                pixels[i] = static_cast<std::uint32_t>(b)
+                    | (static_cast<std::uint32_t>(g) << 8U)
+                    | (static_cast<std::uint32_t>(r) << 16U)
+                    | 0xFF000000U;
+            }
         }
     }
 

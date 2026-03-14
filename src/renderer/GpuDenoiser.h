@@ -27,7 +27,9 @@ public:
 
     ID3D11ShaderResourceView* ShaderResourceView() const { return outputSrv_; }
     ID3D11Texture2D* OutputTexture() const { return outputTexture_; }
-    bool IsReady() const { return device_ != nullptr && shader_ != nullptr && paramsBuffer_ != nullptr; }
+    ID3D11ShaderResourceView* DepthShaderResourceView() const { return depthSrv_; }
+    ID3D11Texture2D* DepthTexture() const { return depthTexture_; }
+    bool IsReady() const { return device_ != nullptr && composeShader_ != nullptr && filterShader_ != nullptr && paramsBuffer_ != nullptr; }
     const std::string& LastError() const { return lastError_; }
 
 private:
@@ -44,7 +46,7 @@ private:
         float padding[3] {};
     };
 
-    bool CreateShader();
+    bool CreateShaders();
     bool EnsureResources(int width, int height);
     void ReleaseResources();
     void SetError(const std::string& error) { lastError_ = error; }
@@ -55,11 +57,18 @@ private:
 
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* deviceContext_ = nullptr;
-    ID3D11ComputeShader* shader_ = nullptr;
+    ID3D11ComputeShader* composeShader_ = nullptr;
+    ID3D11ComputeShader* filterShader_ = nullptr;
     ID3D11Buffer* paramsBuffer_ = nullptr;
     ID3D11Texture2D* outputTexture_ = nullptr;
     ID3D11UnorderedAccessView* outputUav_ = nullptr;
     ID3D11ShaderResourceView* outputSrv_ = nullptr;
+    ID3D11Texture2D* tempTexture_ = nullptr;
+    ID3D11UnorderedAccessView* tempUav_ = nullptr;
+    ID3D11ShaderResourceView* tempSrv_ = nullptr;
+    ID3D11Texture2D* depthTexture_ = nullptr;
+    ID3D11UnorderedAccessView* depthUav_ = nullptr;
+    ID3D11ShaderResourceView* depthSrv_ = nullptr;
     DXGI_FORMAT outputFormat_ = DXGI_FORMAT_UNKNOWN;
     int outputWidth_ = 0;
     int outputHeight_ = 0;
