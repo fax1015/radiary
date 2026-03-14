@@ -23,13 +23,30 @@
     "rotationXDegrees": -13.0276,
     "rotationYDegrees": 73.5485,
     "rotationZDegrees": 36.0227,
-    "depthAmount": 2.35935
+    "depthAmount": 2.35935,
+    "curveExposure": 0.59,
+    "curveContrast": 1.07,
+    "curveHighlights": 2,
+    "curveGamma": 1.2
   },
   "depthOfField": {
     "enabled": true,
-    "focusDepth": 0.24,
+    "focusDepth": 0.34,
     "focusRange": 0.13,
     "blurStrength": 0.53
+  },
+  "postProcess": {
+    "enabled": true,
+    "bloomIntensity": 1.43,
+    "bloomRadius": 0.8,
+    "bloomThreshold": 0.65,
+    "chromaticAberration": 2,
+    "vignetteIntensity": 0.46,
+    "vignetteRoundness": 0.47,
+    "acesToneMap": true,
+    "filmGrain": 1,
+    "colorTemperature": 6233,
+    "saturationBoost": 0.13
   },
   "gradient": [
     {"position": 0, "r": 107, "g": 155, "b": 140, "a": 255},
@@ -338,7 +355,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -398,7 +431,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -458,7 +507,23 @@
         "sec": 0.390317,
         "csc": 0.116301,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -518,7 +583,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -578,7 +659,23 @@
         "sec": 0.476638,
         "csc": 0.636685,
         "cot": 0.578286,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -638,7 +735,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0,
-        "sech": 0.125856
+        "sech": 0.125856,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -698,7 +811,23 @@
         "sec": 0.0630577,
         "csc": 0,
         "cot": 0.280648,
-        "sech": 0.261757
+        "sech": 0.261757,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     }
   ],
