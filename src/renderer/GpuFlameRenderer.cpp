@@ -16,12 +16,12 @@ namespace {
 
 constexpr int kVariationCountGpu = static_cast<int>(VariationType::Count);
 static_assert(kVariationCountGpu == 60, "Update GPU flame shader variation table to match VariationType::Count.");
-constexpr std::uint32_t kMinProgressiveBatchIterations = 32768u;
-constexpr std::uint32_t kMaxProgressiveBatchIterations = 262144u;
+constexpr std::uint32_t kMinProgressiveBatchIterations = 262144u;
+constexpr std::uint32_t kMaxProgressiveBatchIterations = 2097152u;
 constexpr std::uint32_t kGpuFlameBurnInIterations = 24u;
-constexpr std::uint32_t kGpuFlameTargetOrbitIterations = 4096u;
-constexpr std::uint32_t kMinOrbitThreadCount = 8u;
-constexpr std::uint32_t kMaxOrbitThreadCount = 256u;
+constexpr std::uint32_t kGpuFlameTargetOrbitIterations = 128u;
+constexpr std::uint32_t kMinOrbitThreadCount = 256u;
+constexpr std::uint32_t kMaxOrbitThreadCount = 65536u;
 constexpr float kFlameWorldScale = 0.63f;
 constexpr float kFlameDepthNear = 0.15f;
 constexpr float kFlameDepthRangePadding = 24.0f;

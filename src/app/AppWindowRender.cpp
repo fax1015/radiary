@@ -11,9 +11,9 @@ using namespace radiary;
 
 namespace {
 
-constexpr auto kInteractiveGpuPreviewCadence = std::chrono::milliseconds(8);
-constexpr auto kUiBusyGpuPreviewCadence = std::chrono::milliseconds(32);
-constexpr auto kSettledGpuPreviewCadence = std::chrono::milliseconds(12);
+constexpr auto kInteractiveGpuPreviewCadence = std::chrono::milliseconds(16);
+constexpr auto kUiBusyGpuPreviewCadence = std::chrono::milliseconds(48);
+constexpr auto kSettledGpuPreviewCadence = std::chrono::milliseconds(16);
 
 std::uint32_t ViewportPreviewIterations(
     const Scene& scene,

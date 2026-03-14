@@ -388,18 +388,16 @@ bool GpuPostProcess::Render(
 
         // Bloom upsample passes
         for (int i = kBloomMipCount - 2; i >= 0; --i) {
-            ID3D11Resource* resource = nullptr;
-            bloomSrvs_[i]->GetResource(&resource);
-            ID3D11Texture2D* tex = nullptr;
-            resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&tex));
-            D3D11_TEXTURE2D_DESC desc {};
-            tex->GetDesc(&desc);
-            tex->Release();
-            resource->Release();
+            int mipW = width;
+            int mipH = height;
+            for (int j = 0; j <= i; ++j) {
+                mipW = std::max(1, mipW / 2);
+                mipH = std::max(1, mipH / 2);
+            }
 
             Params params {};
-            params.mipWidth = desc.Width;
-            params.mipHeight = desc.Height;
+            params.mipWidth = static_cast<std::uint32_t>(mipW);
+            params.mipHeight = static_cast<std::uint32_t>(mipH);
             D3D11_MAPPED_SUBRESOURCE mapped {};
             HRESULT result = deviceContext_->Map(paramsBuffer_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
             if (FAILED(result)) { SetError("Map(paramsBuffer bloom up)", result); return false; }
@@ -413,8 +411,8 @@ bool GpuPostProcess::Render(
             deviceContext_->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
             deviceContext_->CSSetShader(bloomUpShader_, nullptr, 0);
             deviceContext_->Dispatch(
-                (desc.Width + 7u) / 8u,
-                (desc.Height + 7u) / 8u, 1u);
+                (static_cast<std::uint32_t>(mipW) + 7u) / 8u,
+                (static_cast<std::uint32_t>(mipH) + 7u) / 8u, 1u);
             deviceContext_->CSSetShaderResources(0, 2, nullSrvs);
             deviceContext_->CSSetUnorderedAccessViews(0, 1, nullUavs, nullptr);
         }
