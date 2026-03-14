@@ -15,7 +15,7 @@ namespace radiary {
 namespace {
 
 constexpr int kVariationCountGpu = static_cast<int>(VariationType::Count);
-static_assert(kVariationCountGpu == 50, "Update GPU flame shader variation table to match VariationType::Count.");
+static_assert(kVariationCountGpu == 60, "Update GPU flame shader variation table to match VariationType::Count.");
 constexpr std::uint32_t kMinProgressiveBatchIterations = 32768u;
 constexpr std::uint32_t kMaxProgressiveBatchIterations = 262144u;
 constexpr std::uint32_t kGpuFlameBurnInIterations = 24u;
@@ -81,7 +81,7 @@ struct TransformGpu
     float ColorIndex;
     float UseCustomColor;
     float4 CustomColor;
-    float Variations[50];
+    float Variations[60];
 };
 
 StructuredBuffer<TransformGpu> Transforms : register(t0);
@@ -504,6 +504,102 @@ float2 ApplyVariation(uint variation, float2 samplePoint)
             samplePoint.x + 0.8 * samplePoint.x * diff,
             samplePoint.y + 0.8 * samplePoint.x * (diff - sinr * kPi));
     }
+    case 50:
+    {
+        float re_a = 1.0, im_a = 0.0;
+        float re_b = 0.5, im_b = 0.5;
+        float re_c = -0.5, im_c = 0.5;
+        float re_d = 1.0, im_d = 0.0;
+        float re_num = (re_a * samplePoint.x - im_a * samplePoint.y + re_b);
+        float im_num = (re_a * samplePoint.y + im_a * samplePoint.x + im_b);
+        float re_den = (re_c * samplePoint.x - im_c * samplePoint.y + re_d);
+        float im_den = (re_c * samplePoint.y + im_c * samplePoint.x + im_d);
+        float denom = SafeSignedDenominator(re_den * re_den + im_den * im_den);
+        return float2(
+            (re_num * re_den + im_num * im_den) / denom,
+            (im_num * re_den - re_num * im_den) / denom);
+    }
+    case 51:
+    {
+        float m = 6.0;
+        float n1 = 1.0, n2 = 1.0, n3 = 1.0;
+        float a_ss = 1.0, b_ss = 1.0;
+        float mAngle = m * angle / 4.0;
+        float t1 = pow(abs(cos(mAngle) / a_ss), n2);
+        float t2 = pow(abs(sin(mAngle) / b_ss), n3);
+        float rSuper = pow(max(1.0e-9, t1 + t2), -1.0 / n1);
+        return float2(rSuper * cos(angle), rSuper * sin(angle));
+    }
+    case 52:
+    {
+        float eccentricity = 0.8;
+        float r_conic = eccentricity / SafeSignedDenominator(1.0 + eccentricity * cos(angle));
+        return float2(r_conic * cos(angle), r_conic * sin(angle));
+    }
+    case 53:
+    {
+        float n_ast = 3.0;
+        float cosA = cos(angle);
+        float sinA = sin(angle);
+        float sx = (cosA >= 0.0) ? 1.0 : -1.0;
+        float sy = (sinA >= 0.0) ? 1.0 : -1.0;
+        return float2(
+            sx * pow(max(1.0e-9, abs(cosA)), 2.0 / n_ast),
+            sy * pow(max(1.0e-9, abs(sinA)), 2.0 / n_ast));
+    }
+    case 54:
+    {
+        float freqA = 3.0, freqB = 2.0;
+        float phaseA = 0.0, phaseB = kPi / 2.0;
+        float t = angle;
+        return float2(
+            sin(freqA * t + phaseA) * radius,
+            sin(freqB * t + phaseB) * radius);
+    }
+    case 55:
+    {
+        float vStrength = 2.0;
+        float vDecay = 0.5;
+        float twist = vStrength * exp(-radius * vDecay);
+        float newAngle = angle + twist;
+        return float2(radius * cos(newAngle), radius * sin(newAngle));
+    }
+    case 56:
+    {
+        float segments = 8.0;
+        float segAngle = 2.0 * kPi / segments;
+        float a_k = fmod(angle + kPi, segAngle);
+        if (a_k > segAngle * 0.5) a_k = segAngle - a_k;
+        a_k -= segAngle * 0.5;
+        return float2(radius * cos(a_k), radius * sin(a_k));
+    }
+    case 57:
+    {
+        float logR = log(max(1.0e-9, radius));
+        float dFactor = 1.2;
+        float newAngle = angle + logR * dFactor;
+        float newRadius = exp(logR - floor(logR));
+        return float2(newRadius * cos(newAngle), newRadius * sin(newAngle));
+    }
+    case 58:
+    {
+        float phi = (1.0 + sqrt(5.0)) / 2.0;
+        float logPhi = log(phi);
+        float spiralR = exp(logPhi * angle / (2.0 * kPi));
+        float blend = radius / (radius + 1.0);
+        float r2 = radius * (1.0 - blend) + spiralR * blend;
+        return float2(r2 * cos(angle), r2 * sin(angle));
+    }
+    case 59:
+    {
+        float freq1 = 5.0, freq2 = 7.0;
+        float wave1 = sin(freq1 * samplePoint.x) * cos(freq2 * samplePoint.y);
+        float wave2 = cos(freq1 * samplePoint.y) * sin(freq2 * samplePoint.x);
+        float interference = (wave1 + wave2) * 0.5;
+        return float2(
+            samplePoint.x + interference * 0.3,
+            samplePoint.y + interference * 0.3);
+    }
     default:
         return samplePoint;
     }
@@ -569,7 +665,7 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         float totalVariationWeight = 0.0;
         bool unstableOrbit = false;
         [unroll]
-        for (uint variation = 0; variation < 44u; ++variation)
+        for (uint variation = 0; variation < 60u; ++variation)
         {
             float amount = layer.Variations[variation];
             if (amount == 0.0)

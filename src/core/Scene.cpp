@@ -1081,6 +1081,7 @@ ScenePose CaptureScenePose(const Scene& scene) {
     pose.flameRender = scene.flameRender;
     pose.depthOfField = scene.depthOfField;
     pose.denoiser = scene.denoiser;
+    pose.postProcess = scene.postProcess;
     pose.transforms = scene.transforms;
     pose.paths = scene.paths;
     pose.gradientStops = scene.gradientStops;
@@ -1106,6 +1107,7 @@ void ApplyScenePose(Scene& scene, const ScenePose& pose) {
     scene.flameRender = pose.flameRender;
     scene.depthOfField = pose.depthOfField;
     scene.denoiser = pose.denoiser;
+    scene.postProcess = pose.postProcess;
     scene.transforms = pose.transforms;
     scene.paths = pose.paths;
     scene.gradientStops = pose.gradientStops;
@@ -1238,6 +1240,17 @@ ScenePose InterpolatePose(const ScenePose& left, const ScenePose& right, const d
     pose.depthOfField.blurStrength = Lerp(left.depthOfField.blurStrength, right.depthOfField.blurStrength, alpha);
     pose.denoiser.enabled = alpha < 0.5 ? left.denoiser.enabled : right.denoiser.enabled;
     pose.denoiser.strength = Lerp(left.denoiser.strength, right.denoiser.strength, alpha);
+    pose.postProcess.enabled = alpha < 0.5 ? left.postProcess.enabled : right.postProcess.enabled;
+    pose.postProcess.bloomIntensity = Lerp(left.postProcess.bloomIntensity, right.postProcess.bloomIntensity, alpha);
+    pose.postProcess.bloomRadius = Lerp(left.postProcess.bloomRadius, right.postProcess.bloomRadius, alpha);
+    pose.postProcess.bloomThreshold = Lerp(left.postProcess.bloomThreshold, right.postProcess.bloomThreshold, alpha);
+    pose.postProcess.chromaticAberration = Lerp(left.postProcess.chromaticAberration, right.postProcess.chromaticAberration, alpha);
+    pose.postProcess.vignetteIntensity = Lerp(left.postProcess.vignetteIntensity, right.postProcess.vignetteIntensity, alpha);
+    pose.postProcess.vignetteRoundness = Lerp(left.postProcess.vignetteRoundness, right.postProcess.vignetteRoundness, alpha);
+    pose.postProcess.acesToneMap = alpha < 0.5 ? left.postProcess.acesToneMap : right.postProcess.acesToneMap;
+    pose.postProcess.filmGrain = Lerp(left.postProcess.filmGrain, right.postProcess.filmGrain, alpha);
+    pose.postProcess.colorTemperature = Lerp(left.postProcess.colorTemperature, right.postProcess.colorTemperature, alpha);
+    pose.postProcess.saturationBoost = Lerp(left.postProcess.saturationBoost, right.postProcess.saturationBoost, alpha);
     pose.backgroundColor = Lerp(left.backgroundColor, right.backgroundColor, alpha);
     pose.gridVisible = alpha < 0.5 ? left.gridVisible : right.gridVisible;
 
@@ -1568,7 +1581,17 @@ constexpr std::pair<VariationType, const char*> kVariationTypeNames[] = {
     {VariationType::PDJ, "pdj"},
     {VariationType::Fan2, "fan2"},
     {VariationType::Rings2, "rings2"},
-    {VariationType::TwinTrian, "twintrian"}
+    {VariationType::TwinTrian, "twintrian"},
+    {VariationType::Mobius, "mobius"},
+    {VariationType::Supershape, "supershape"},
+    {VariationType::Conic, "conic"},
+    {VariationType::Astroid, "astroid"},
+    {VariationType::Lissajous, "lissajous"},
+    {VariationType::Vortex, "vortex"},
+    {VariationType::Kaleidoscope, "kaleidoscope"},
+    {VariationType::Droste, "droste"},
+    {VariationType::GoldenSpiral, "golden_spiral"},
+    {VariationType::Interference, "interference"}
 };
 
 constexpr std::pair<ThicknessProfile, const char*> kThicknessProfileNames[] = {

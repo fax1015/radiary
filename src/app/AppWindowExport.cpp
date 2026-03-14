@@ -540,6 +540,15 @@ bool AppWindow::RenderSceneToPixelsGpu(
         return true;
     };
 
+    auto applyPostProcessAndReadback = [&](ID3D11ShaderResourceView* srv, ID3D11Texture2D* fallbackTexture, std::vector<std::uint32_t>& output) -> bool {
+        if (exportScene.postProcess.enabled && srv != nullptr && EnsureGpuPostProcessInitialized()) {
+            if (gpuPostProcess_.Render(exportScene, exportWidth, exportHeight, srv)) {
+                return ReadbackGpuTexture(gpuPostProcess_.OutputTexture(), output);
+            }
+        }
+        return ReadbackGpuTexture(fallbackTexture, output);
+    };
+
     if (exportScene.denoiser.enabled || exportScene.depthOfField.enabled) {
         ID3D11ShaderResourceView* gridSrv = nullptr;
         ID3D11ShaderResourceView* flameSrv = nullptr;
@@ -573,10 +582,33 @@ bool AppWindow::RenderSceneToPixelsGpu(
         if (exportScene.depthOfField.enabled) {
             success = EnsureGpuDofRendererInitialized()
                 && gpuDofRenderer_.Render(exportScene, exportWidth, exportHeight, gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)
-                && ReadbackGpuTexture(gpuDofRenderer_.OutputTexture(), pixels);
+                && applyPostProcessAndReadback(gpuDofRenderer_.ShaderResourceView(), gpuDofRenderer_.OutputTexture(), pixels);
         } else {
-            success = ReadbackGpuTexture(gpuDenoiser_.OutputTexture(), pixels);
+            success = applyPostProcessAndReadback(gpuDenoiser_.ShaderResourceView(), gpuDenoiser_.OutputTexture(), pixels);
         }
+        invalidateViewportPreview();
+        return success && !pixels.empty();
+    }
+
+    if (exportScene.postProcess.enabled) {
+        ID3D11ShaderResourceView* gridSrv = nullptr;
+        ID3D11ShaderResourceView* flameSrv = nullptr;
+        ID3D11ShaderResourceView* flameDepthSrv = nullptr;
+        ID3D11ShaderResourceView* pathSrv = nullptr;
+        ID3D11ShaderResourceView* pathDepthSrv = nullptr;
+        if (!renderCompositeInputs(gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)) {
+            invalidateViewportPreview();
+            return false;
+        }
+        if (!EnsureGpuDenoiserInitialized()) {
+            invalidateViewportPreview();
+            return false;
+        }
+        if (!gpuDenoiser_.Render(exportScene, exportWidth, exportHeight, gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv)) {
+            invalidateViewportPreview();
+            return false;
+        }
+        bool success = applyPostProcessAndReadback(gpuDenoiser_.ShaderResourceView(), gpuDenoiser_.OutputTexture(), pixels);
         invalidateViewportPreview();
         return success && !pixels.empty();
     }

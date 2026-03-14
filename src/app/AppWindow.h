@@ -20,6 +20,7 @@
 #include "renderer/GpuFlameRenderer.h"
 #include "renderer/GpuDofRenderer.h"
 #include "renderer/GpuDenoiser.h"
+#include "renderer/GpuPostProcess.h"
 #include "renderer/GpuPathRenderer.h"
 #include "renderer/SoftwareRenderer.h"
 
@@ -115,6 +116,7 @@ private:
     GpuFlameRenderer gpuFlameRenderer_;
     GpuDofRenderer gpuDofRenderer_;
     GpuDenoiser gpuDenoiser_;
+    GpuPostProcess gpuPostProcess_;
     GpuPathRenderer gpuGridRenderer_;
     GpuPathRenderer gpuPathRenderer_;
     SoftwareRenderer renderer_;
@@ -236,6 +238,7 @@ private:
     bool EnsureGpuPathRendererInitialized(GpuPathRenderer& renderer, const wchar_t* label);
     bool EnsureGpuDofRendererInitialized();
     bool EnsureGpuDenoiserInitialized();
+    bool EnsureGpuPostProcessInitialized();
     void EnumerateAdapters();
     bool ApplyPendingGraphicsDeviceChange();
     void CleanupDeviceD3D();

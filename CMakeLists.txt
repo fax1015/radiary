@@ -25,6 +25,7 @@ set(radiary_sources
     src/renderer/GpuPathRenderer.cpp
     src/renderer/GpuDofRenderer.cpp
     src/renderer/GpuDenoiser.cpp
+    src/renderer/GpuPostProcess.cpp
     src/io/SceneSerializer.cpp
     src/io/PresetLibrary.cpp
     src/app/AppWidgets.cpp

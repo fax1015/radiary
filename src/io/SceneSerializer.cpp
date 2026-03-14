@@ -404,6 +404,20 @@ void WriteDepthOfFieldSettings(std::ostream& stream, const DepthOfFieldSettings&
     stream << indent << "\"blurStrength\": " << depthOfField.blurStrength << "\n";
 }
 
+void WritePostProcessSettings(std::ostream& stream, const PostProcessSettings& pp, const std::string& indent) {
+    stream << indent << "\"enabled\": " << (pp.enabled ? "true" : "false") << ",\n";
+    stream << indent << "\"bloomIntensity\": " << pp.bloomIntensity << ",\n";
+    stream << indent << "\"bloomRadius\": " << pp.bloomRadius << ",\n";
+    stream << indent << "\"bloomThreshold\": " << pp.bloomThreshold << ",\n";
+    stream << indent << "\"chromaticAberration\": " << pp.chromaticAberration << ",\n";
+    stream << indent << "\"vignetteIntensity\": " << pp.vignetteIntensity << ",\n";
+    stream << indent << "\"vignetteRoundness\": " << pp.vignetteRoundness << ",\n";
+    stream << indent << "\"acesToneMap\": " << (pp.acesToneMap ? "true" : "false") << ",\n";
+    stream << indent << "\"filmGrain\": " << pp.filmGrain << ",\n";
+    stream << indent << "\"colorTemperature\": " << pp.colorTemperature << ",\n";
+    stream << indent << "\"saturationBoost\": " << pp.saturationBoost << "\n";
+}
+
 void WriteColor(std::ostream& stream, const Color& color) {
     stream << "{\"r\": " << static_cast<int>(color.r)
            << ", \"g\": " << static_cast<int>(color.g)
@@ -646,6 +660,9 @@ void WriteScenePose(std::ostream& stream, const ScenePose& pose, const std::stri
     stream << indent << "  \"depthOfField\": {\n";
     WriteDepthOfFieldSettings(stream, pose.depthOfField, indent + "    ");
     stream << indent << "  },\n";
+    stream << indent << "  \"postProcess\": {\n";
+    WritePostProcessSettings(stream, pose.postProcess, indent + "    ");
+    stream << indent << "  },\n";
     stream << indent << "  \"gradient\": [\n";
     WriteGradientStops(stream, pose.gradientStops, indent + "    ");
     stream << indent << "  ],\n";
@@ -724,6 +741,19 @@ void LoadScenePose(const JsonValue& poseValue, ScenePose& pose) {
         pose.depthOfField.focusRange = Number(*depthOfField, "focusRange", pose.depthOfField.focusRange);
         pose.depthOfField.blurStrength = Number(*depthOfField, "blurStrength", pose.depthOfField.blurStrength);
     }
+    if (const JsonValue* postProcess = poseValue.Find("postProcess"); postProcess && postProcess->type == JsonValue::Type::Object) {
+        pose.postProcess.enabled = Boolean(*postProcess, "enabled", pose.postProcess.enabled);
+        pose.postProcess.bloomIntensity = Number(*postProcess, "bloomIntensity", pose.postProcess.bloomIntensity);
+        pose.postProcess.bloomRadius = Number(*postProcess, "bloomRadius", pose.postProcess.bloomRadius);
+        pose.postProcess.bloomThreshold = Number(*postProcess, "bloomThreshold", pose.postProcess.bloomThreshold);
+        pose.postProcess.chromaticAberration = Number(*postProcess, "chromaticAberration", pose.postProcess.chromaticAberration);
+        pose.postProcess.vignetteIntensity = Number(*postProcess, "vignetteIntensity", pose.postProcess.vignetteIntensity);
+        pose.postProcess.vignetteRoundness = Number(*postProcess, "vignetteRoundness", pose.postProcess.vignetteRoundness);
+        pose.postProcess.acesToneMap = Boolean(*postProcess, "acesToneMap", pose.postProcess.acesToneMap);
+        pose.postProcess.filmGrain = Number(*postProcess, "filmGrain", pose.postProcess.filmGrain);
+        pose.postProcess.colorTemperature = Number(*postProcess, "colorTemperature", pose.postProcess.colorTemperature);
+        pose.postProcess.saturationBoost = Number(*postProcess, "saturationBoost", pose.postProcess.saturationBoost);
+    }
     if (const JsonValue* gradient = poseValue.Find("gradient"); gradient && gradient->type == JsonValue::Type::Array) {
         pose.gradientStops.clear();
         for (const JsonValue& stopValue : gradient->arrayValue) {
@@ -778,6 +808,9 @@ bool SceneSerializer::Save(const Scene& scene, const std::filesystem::path& path
     stream << "  },\n";
     stream << "  \"depthOfField\": {\n";
     WriteDepthOfFieldSettings(stream, scene.depthOfField, "    ");
+    stream << "  },\n";
+    stream << "  \"postProcess\": {\n";
+    WritePostProcessSettings(stream, scene.postProcess, "    ");
     stream << "  },\n";
     stream << "  \"gradient\": [\n";
     WriteGradientStops(stream, scene.gradientStops, "    ");
@@ -876,6 +909,19 @@ std::optional<Scene> SceneSerializer::Load(const std::filesystem::path& path, st
         scene.depthOfField.focusDepth = Number(*depthOfField, "focusDepth", scene.depthOfField.focusDepth);
         scene.depthOfField.focusRange = Number(*depthOfField, "focusRange", scene.depthOfField.focusRange);
         scene.depthOfField.blurStrength = Number(*depthOfField, "blurStrength", scene.depthOfField.blurStrength);
+    }
+    if (const JsonValue* postProcess = root.Find("postProcess"); postProcess && postProcess->type == JsonValue::Type::Object) {
+        scene.postProcess.enabled = Boolean(*postProcess, "enabled", scene.postProcess.enabled);
+        scene.postProcess.bloomIntensity = Number(*postProcess, "bloomIntensity", scene.postProcess.bloomIntensity);
+        scene.postProcess.bloomRadius = Number(*postProcess, "bloomRadius", scene.postProcess.bloomRadius);
+        scene.postProcess.bloomThreshold = Number(*postProcess, "bloomThreshold", scene.postProcess.bloomThreshold);
+        scene.postProcess.chromaticAberration = Number(*postProcess, "chromaticAberration", scene.postProcess.chromaticAberration);
+        scene.postProcess.vignetteIntensity = Number(*postProcess, "vignetteIntensity", scene.postProcess.vignetteIntensity);
+        scene.postProcess.vignetteRoundness = Number(*postProcess, "vignetteRoundness", scene.postProcess.vignetteRoundness);
+        scene.postProcess.acesToneMap = Boolean(*postProcess, "acesToneMap", scene.postProcess.acesToneMap);
+        scene.postProcess.filmGrain = Number(*postProcess, "filmGrain", scene.postProcess.filmGrain);
+        scene.postProcess.colorTemperature = Number(*postProcess, "colorTemperature", scene.postProcess.colorTemperature);
+        scene.postProcess.saturationBoost = Number(*postProcess, "saturationBoost", scene.postProcess.saturationBoost);
     }
     if (const JsonValue* gradient = root.Find("gradient"); gradient && gradient->type == JsonValue::Type::Array) {
         scene.gradientStops.clear();

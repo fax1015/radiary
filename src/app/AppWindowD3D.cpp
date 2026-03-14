@@ -300,6 +300,23 @@ bool AppWindow::EnsureGpuDenoiserInitialized() {
     return true;
 }
 
+bool AppWindow::EnsureGpuPostProcessInitialized() {
+    if (gpuPostProcess_.IsReady()) {
+        return true;
+    }
+    if (device_ == nullptr || deviceContext_ == nullptr) {
+        statusText_ = L"GPU Post-Process unavailable: D3D11 device/context is not ready.";
+        return false;
+    }
+    if (!gpuPostProcess_.Initialize(device_.Get(), deviceContext_.Get())) {
+        if (!gpuPostProcess_.LastError().empty()) {
+            statusText_ = L"GPU Post-Process unavailable: " + Utf8ToWide(gpuPostProcess_.LastError());
+        }
+        return false;
+    }
+    return true;
+}
+
 void AppWindow::EnumerateAdapters() {
     adapterOptions_.clear();
 
@@ -357,6 +374,8 @@ bool AppWindow::ApplyPendingGraphicsDeviceChange() {
 }
 
 void AppWindow::CleanupDeviceD3D() {
+    gpuPostProcess_.Shutdown();
+    gpuDenoiser_.Shutdown();
     gpuPathRenderer_.Shutdown();
     gpuGridRenderer_.Shutdown();
     gpuDofRenderer_.Shutdown();

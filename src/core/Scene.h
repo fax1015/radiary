@@ -136,6 +136,16 @@ enum class VariationType : std::uint8_t {
     Fan2,
     Rings2,
     TwinTrian,
+    Mobius,
+    Supershape,
+    Conic,
+    Astroid,
+    Lissajous,
+    Vortex,
+    Kaleidoscope,
+    Droste,
+    GoldenSpiral,
+    Interference,
     Count
 };
 
@@ -178,6 +188,20 @@ struct DepthOfFieldSettings {
 struct DenoiserSettings {
     bool enabled = false;
     double strength = 0.5;
+};
+
+struct PostProcessSettings {
+    bool enabled = false;
+    double bloomIntensity = 0.35;
+    double bloomRadius = 0.8;
+    double bloomThreshold = 0.6;
+    double chromaticAberration = 0.0;
+    double vignetteIntensity = 0.0;
+    double vignetteRoundness = 0.5;
+    bool acesToneMap = false;
+    double filmGrain = 0.0;
+    double colorTemperature = 6500.0;
+    double saturationBoost = 0.0;
 };
 
 struct TransformLayer {
@@ -288,6 +312,7 @@ struct ScenePose {
     FlameRenderSettings flameRender {};
     DepthOfFieldSettings depthOfField {};
     DenoiserSettings denoiser {};
+    PostProcessSettings postProcess {};
     std::vector<TransformLayer> transforms;
     std::vector<PathSettings> paths;
     std::vector<GradientStop> gradientStops;
@@ -315,6 +340,7 @@ struct Scene {
     FlameRenderSettings flameRender {};
     DepthOfFieldSettings depthOfField {};
     DenoiserSettings denoiser {};
+    PostProcessSettings postProcess {};
     std::vector<TransformLayer> transforms;
     std::vector<PathSettings> paths;
     std::vector<GradientStop> gradientStops;

@@ -2096,6 +2096,116 @@ void AppWindow::DrawTimelinePanel() {
             ImGui::EndTable();
         }
     }
+    {
+        const Scene beforePostProcessEnabled = scene_;
+        bool postProcessEnabledChanged = ImGui::Checkbox("Post-Processing", &scene_.postProcess.enabled);
+        postProcessEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.enabled, defaultScene.postProcess.enabled) || postProcessEnabledChanged;
+        if (postProcessEnabledChanged) {
+            viewportDirty_ = true;
+        }
+        CaptureWidgetUndo(beforePostProcessEnabled, postProcessEnabledChanged);
+    }
+
+    if (scene_.postProcess.enabled) {
+        const double bloomIntensityMin = 0.0, bloomIntensityMax = 2.0;
+        const double bloomThresholdMin = 0.0, bloomThresholdMax = 2.0;
+        const double chromaticMin = 0.0, chromaticMax = 5.0;
+        const double vignetteIntensityMin = 0.0, vignetteIntensityMax = 1.5;
+        const double vignetteRoundnessMin = 0.0, vignetteRoundnessMax = 1.0;
+        const double filmGrainMin = 0.0, filmGrainMax = 1.0;
+        const double colorTempMin = 2000.0, colorTempMax = 12000.0;
+        const double saturationMin = -1.0, saturationMax = 1.0;
+
+        ImGui::SeparatorText("Post-Processing");
+        if (beginPreviewGrid("##preview_postprocess_grid")) {
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("Bloom Intensity");
+            setPreviewColumnItemWidth();
+            Scene beforePP = scene_;
+            bool ppChanged = SliderScalarWithInput("##pp_bloom_intensity", ImGuiDataType_Double, &scene_.postProcess.bloomIntensity, &bloomIntensityMin, &bloomIntensityMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.postProcess.bloomIntensity, defaultScene.postProcess.bloomIntensity);
+            if (ppChanged) viewportDirty_ = true;
+            CaptureWidgetUndo(beforePP, ppChanged);
+
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("Bloom Threshold");
+            setPreviewColumnItemWidth();
+            beforePP = scene_;
+            ppChanged = SliderScalarWithInput("##pp_bloom_threshold", ImGuiDataType_Double, &scene_.postProcess.bloomThreshold, &bloomThresholdMin, &bloomThresholdMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.postProcess.bloomThreshold, defaultScene.postProcess.bloomThreshold);
+            if (ppChanged) viewportDirty_ = true;
+            CaptureWidgetUndo(beforePP, ppChanged);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("Chromatic Aberration");
+            setPreviewColumnItemWidth();
+            beforePP = scene_;
+            ppChanged = SliderScalarWithInput("##pp_chromatic", ImGuiDataType_Double, &scene_.postProcess.chromaticAberration, &chromaticMin, &chromaticMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.postProcess.chromaticAberration, defaultScene.postProcess.chromaticAberration);
+            if (ppChanged) viewportDirty_ = true;
+            CaptureWidgetUndo(beforePP, ppChanged);
+
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("Vignette");
+            setPreviewColumnItemWidth();
+            beforePP = scene_;
+            ppChanged = SliderScalarWithInput("##pp_vignette", ImGuiDataType_Double, &scene_.postProcess.vignetteIntensity, &vignetteIntensityMin, &vignetteIntensityMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.postProcess.vignetteIntensity, defaultScene.postProcess.vignetteIntensity);
+            if (ppChanged) viewportDirty_ = true;
+            CaptureWidgetUndo(beforePP, ppChanged);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("Vignette Roundness");
+            setPreviewColumnItemWidth();
+            beforePP = scene_;
+            ppChanged = SliderScalarWithInput("##pp_vignette_round", ImGuiDataType_Double, &scene_.postProcess.vignetteRoundness, &vignetteRoundnessMin, &vignetteRoundnessMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.postProcess.vignetteRoundness, defaultScene.postProcess.vignetteRoundness);
+            if (ppChanged) viewportDirty_ = true;
+            CaptureWidgetUndo(beforePP, ppChanged);
+
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("Film Grain");
+            setPreviewColumnItemWidth();
+            beforePP = scene_;
+            ppChanged = SliderScalarWithInput("##pp_film_grain", ImGuiDataType_Double, &scene_.postProcess.filmGrain, &filmGrainMin, &filmGrainMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.postProcess.filmGrain, defaultScene.postProcess.filmGrain);
+            if (ppChanged) viewportDirty_ = true;
+            CaptureWidgetUndo(beforePP, ppChanged);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("Color Temperature");
+            setPreviewColumnItemWidth();
+            beforePP = scene_;
+            ppChanged = SliderScalarWithInput("##pp_color_temp", ImGuiDataType_Double, &scene_.postProcess.colorTemperature, &colorTempMin, &colorTempMax, "%.0f K")
+                || ResetValueOnDoubleClick(scene_.postProcess.colorTemperature, defaultScene.postProcess.colorTemperature);
+            if (ppChanged) viewportDirty_ = true;
+            CaptureWidgetUndo(beforePP, ppChanged);
+
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("Saturation Boost");
+            setPreviewColumnItemWidth();
+            beforePP = scene_;
+            ppChanged = SliderScalarWithInput("##pp_saturation", ImGuiDataType_Double, &scene_.postProcess.saturationBoost, &saturationMin, &saturationMax, "%.2f")
+                || ResetValueOnDoubleClick(scene_.postProcess.saturationBoost, defaultScene.postProcess.saturationBoost);
+            if (ppChanged) viewportDirty_ = true;
+            CaptureWidgetUndo(beforePP, ppChanged);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            drawPreviewFieldLabel("ACES Tone Mapping");
+            beforePP = scene_;
+            ppChanged = ImGui::Checkbox("##pp_aces", &scene_.postProcess.acesToneMap)
+                || ResetValueOnDoubleClick(scene_.postProcess.acesToneMap, defaultScene.postProcess.acesToneMap);
+            if (ppChanged) viewportDirty_ = true;
+            CaptureWidgetUndo(beforePP, ppChanged);
+
+            ImGui::EndTable();
+        }
+    }
+
     const int previewWidth = std::max(1, uploadedViewportWidth_);
     const int previewHeight = std::max(1, uploadedViewportHeight_);
     const std::uint32_t targetPreviewIterations =
@@ -2338,24 +2448,36 @@ void AppWindow::DrawViewportPanel() {
         drawList->AddText(textPos, ImGui::GetColorU32(ImVec4(0.78f, 0.79f, 0.82f, 1.0f)), label);
     };
 
+    const auto applyPostProcessIfEnabled = [&](ID3D11ShaderResourceView* srv) -> ID3D11ShaderResourceView* {
+        if (!scene_.postProcess.enabled || srv == nullptr) return srv;
+        if (!EnsureGpuPostProcessInitialized()) return srv;
+        const int ppWidth = uploadedViewportWidth_ > 0 ? uploadedViewportWidth_ : static_cast<int>(available.x);
+        const int ppHeight = uploadedViewportHeight_ > 0 ? uploadedViewportHeight_ : static_cast<int>(available.y);
+        if (ppWidth <= 0 || ppHeight <= 0) return srv;
+        if (gpuPostProcess_.Render(scene_, ppWidth, ppHeight, srv)) {
+            return gpuPostProcess_.ShaderResourceView();
+        }
+        return srv;
+    };
+
     if (preferGpuPreview) {
         if (scene_.mode == SceneMode::Flame
             && displayedPreviewBackend_ == PreviewBackend::GpuFlame
             && gpuFlameRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuFlameRenderer_.ShaderResourceView()), available);
+            ImGui::Image(reinterpret_cast<ImTextureID>(applyPostProcessIfEnabled(gpuFlameRenderer_.ShaderResourceView())), available);
             hovered = ImGui::IsItemHovered();
         } else if (displayedPreviewBackend_ == PreviewBackend::GpuDof
             && gpuDofRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuDofRenderer_.ShaderResourceView()), available);
+            ImGui::Image(reinterpret_cast<ImTextureID>(applyPostProcessIfEnabled(gpuDofRenderer_.ShaderResourceView())), available);
             hovered = ImGui::IsItemHovered();
         } else if (displayedPreviewBackend_ == PreviewBackend::GpuDenoised
             && gpuDenoiser_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuDenoiser_.ShaderResourceView()), available);
+            ImGui::Image(reinterpret_cast<ImTextureID>(applyPostProcessIfEnabled(gpuDenoiser_.ShaderResourceView())), available);
             hovered = ImGui::IsItemHovered();
         } else if (scene_.mode == SceneMode::Path
             && displayedPreviewBackend_ == PreviewBackend::GpuPath
             && gpuPathRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuPathRenderer_.ShaderResourceView()), available);
+            ImGui::Image(reinterpret_cast<ImTextureID>(applyPostProcessIfEnabled(gpuPathRenderer_.ShaderResourceView())), available);
             hovered = ImGui::IsItemHovered();
         } else if ((scene_.mode == SceneMode::Flame || scene_.mode == SceneMode::Hybrid)
             && displayedPreviewBackend_ == PreviewBackend::GpuHybrid

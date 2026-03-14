@@ -306,6 +306,94 @@ Vec2 ApplyVariation(const VariationType variation, const Vec2& point) {
             point.y + 0.8 * point.x * (diff - sinr * kPi)
         };
     }
+    case VariationType::Mobius: {
+        const double re_a = 1.0, im_a = 0.0;
+        const double re_b = 0.5, im_b = 0.5;
+        const double re_c = -0.5, im_c = 0.5;
+        const double re_d = 1.0, im_d = 0.0;
+        const double re_num = (re_a * point.x - im_a * point.y + re_b);
+        const double im_num = (re_a * point.y + im_a * point.x + im_b);
+        const double re_den = (re_c * point.x - im_c * point.y + re_d);
+        const double im_den = (re_c * point.y + im_c * point.x + im_d);
+        const double denom = SafeSignedDenominator(re_den * re_den + im_den * im_den);
+        return {
+            (re_num * re_den + im_num * im_den) / denom,
+            (im_num * re_den - re_num * im_den) / denom
+        };
+    }
+    case VariationType::Supershape: {
+        const double m = 6.0;
+        const double n1 = 1.0, n2 = 1.0, n3 = 1.0;
+        const double a = 1.0, b = 1.0;
+        const double mAngle = m * angle / 4.0;
+        const double t1 = std::pow(std::abs(std::cos(mAngle) / a), n2);
+        const double t2 = std::pow(std::abs(std::sin(mAngle) / b), n3);
+        const double rSuper = std::pow(std::max(1.0e-9, t1 + t2), -1.0 / n1);
+        return {rSuper * std::cos(angle), rSuper * std::sin(angle)};
+    }
+    case VariationType::Conic: {
+        const double eccentricity = 0.8;
+        const double r_conic = eccentricity / SafeSignedDenominator(1.0 + eccentricity * std::cos(angle));
+        return {r_conic * std::cos(angle), r_conic * std::sin(angle)};
+    }
+    case VariationType::Astroid: {
+        const double n = 3.0;
+        const double cosA = std::cos(angle);
+        const double sinA = std::sin(angle);
+        return {
+            std::copysign(std::pow(std::abs(cosA), 2.0 / n), cosA),
+            std::copysign(std::pow(std::abs(sinA), 2.0 / n), sinA)
+        };
+    }
+    case VariationType::Lissajous: {
+        const double freqA = 3.0, freqB = 2.0;
+        const double phaseA = 0.0, phaseB = kPi / 2.0;
+        const double t = angle;
+        return {
+            std::sin(freqA * t + phaseA) * radius,
+            std::sin(freqB * t + phaseB) * radius
+        };
+    }
+    case VariationType::Vortex: {
+        const double strength = 2.0;
+        const double decay = 0.5;
+        const double twist = strength * std::exp(-radius * decay);
+        const double newAngle = angle + twist;
+        return {radius * std::cos(newAngle), radius * std::sin(newAngle)};
+    }
+    case VariationType::Kaleidoscope: {
+        const double segments = 8.0;
+        const double segAngle = 2.0 * kPi / segments;
+        double a = std::fmod(angle + kPi, segAngle);
+        if (a > segAngle * 0.5) a = segAngle - a;
+        a -= segAngle * 0.5;
+        return {radius * std::cos(a), radius * std::sin(a)};
+    }
+    case VariationType::Droste: {
+        const double logR = std::log(std::max(1.0e-9, radius));
+        const double factor = 1.2;
+        const double newAngle = angle + logR * factor;
+        const double newRadius = std::exp(logR - std::floor(logR));
+        return {newRadius * std::cos(newAngle), newRadius * std::sin(newAngle)};
+    }
+    case VariationType::GoldenSpiral: {
+        const double phi = (1.0 + std::sqrt(5.0)) / 2.0;
+        const double logPhi = std::log(phi);
+        const double spiralR = std::exp(logPhi * angle / (2.0 * kPi));
+        const double blend = radius / (radius + 1.0);
+        const double r2 = radius * (1.0 - blend) + spiralR * blend;
+        return {r2 * std::cos(angle), r2 * std::sin(angle)};
+    }
+    case VariationType::Interference: {
+        const double freq1 = 5.0, freq2 = 7.0;
+        const double wave1 = std::sin(freq1 * point.x) * std::cos(freq2 * point.y);
+        const double wave2 = std::cos(freq1 * point.y) * std::sin(freq2 * point.x);
+        const double interference = (wave1 + wave2) * 0.5;
+        return {
+            point.x + interference * 0.3,
+            point.y + interference * 0.3
+        };
+    }
     case VariationType::Count:
     default:
         return point;
