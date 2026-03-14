@@ -2428,7 +2428,8 @@ void AppWindow::DrawViewportPanel() {
             || displayedPreviewBackend_ == PreviewBackend::GpuDof
             || displayedPreviewBackend_ == PreviewBackend::GpuDenoised
             || displayedPreviewBackend_ == PreviewBackend::GpuPath
-            || displayedPreviewBackend_ == PreviewBackend::GpuHybrid);
+            || displayedPreviewBackend_ == PreviewBackend::GpuHybrid
+            || displayedPreviewBackend_ == PreviewBackend::GpuPostProcessed);
 
     const ImVec2 imageMin = ImGui::GetCursorScreenPos();
     const ImVec2 imageMax(imageMin.x + available.x, imageMin.y + available.y);

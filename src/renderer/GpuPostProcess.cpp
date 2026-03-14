@@ -391,7 +391,7 @@ bool GpuPostProcess::Render(
             ID3D11Resource* resource = nullptr;
             bloomSrvs_[i]->GetResource(&resource);
             ID3D11Texture2D* tex = nullptr;
-            resource->QueryInterface(&tex);
+            resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&tex));
             D3D11_TEXTURE2D_DESC desc {};
             tex->GetDesc(&desc);
             tex->Release();

@@ -357,7 +357,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                     }
                 } else if (useGpuPostProcessPreview) {
                     if (renderScene.gridVisible) {
-                        if (!denoiserRendererReady || !gpuDenoiser_.Render(
+                        if (!EnsureGpuDenoiserInitialized() || !gpuDenoiser_.Render(
                             renderScene,
                             targetWidth,
                             targetHeight,
@@ -366,6 +366,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                             gpuFlameRenderer_.DepthShaderResourceView(),
                             nullptr,
                             nullptr)) {
+                            setDirectGpuPreview(PreviewBackend::GpuFlame, displayedIterations);
                             return;
                         }
                         renderGpuPostProcessPreview(gpuDenoiser_.ShaderResourceView(), PreviewBackend::GpuDenoised, displayedIterations);
@@ -389,6 +390,10 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                 statusText_ = L"GPU DOF preview failed: " + Utf8ToWide(gpuDofRenderer_.LastError());
             } else if (useGpuDofPreview) {
                 statusText_ = L"GPU DOF preview failed; falling back to CPU preview.";
+            } else if (useGpuPostProcessPreview && !gpuPostProcess_.LastError().empty()) {
+                statusText_ = L"GPU post-process preview failed: " + Utf8ToWide(gpuPostProcess_.LastError());
+            } else if (useGpuPostProcessPreview && !gpuPostProcess_.LastError().empty()) {
+                statusText_ = L"GPU post-process preview failed: " + Utf8ToWide(gpuPostProcess_.LastError());
             }
         } else if (renderScene.mode == SceneMode::Path) {
             const bool pathRendererReady = EnsureGpuPathRendererInitialized(gpuPathRenderer_, L"GPU path renderer");
@@ -451,6 +456,8 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                 statusText_ = L"GPU denoiser preview failed: " + Utf8ToWide(gpuDenoiser_.LastError());
             } else if (useGpuDofPreview && !gpuDofRenderer_.LastError().empty()) {
                 statusText_ = L"GPU DOF preview failed: " + Utf8ToWide(gpuDofRenderer_.LastError());
+            } else if (useGpuPostProcessPreview && !gpuPostProcess_.LastError().empty()) {
+                statusText_ = L"GPU post-process preview failed: " + Utf8ToWide(gpuPostProcess_.LastError());
             }
         } else {
             const bool flameRendererReady = EnsureGpuFlameRendererInitialized();
@@ -519,7 +526,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                         return;
                     }
                 } else if (useGpuPostProcessPreview) {
-                    if (!denoiserRendererReady || !gpuDenoiser_.Render(
+                    if (!EnsureGpuDenoiserInitialized() || !gpuDenoiser_.Render(
                         renderScene,
                         targetWidth,
                         targetHeight,
@@ -528,6 +535,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                         gpuFlameRenderer_.DepthShaderResourceView(),
                         gpuPathRenderer_.ShaderResourceView(),
                         gpuPathRenderer_.DepthShaderResourceView())) {
+                        setDirectGpuPreview(PreviewBackend::GpuHybrid, displayedIterations);
                         return;
                     }
                     renderGpuPostProcessPreview(gpuDenoiser_.ShaderResourceView(), PreviewBackend::GpuDenoised, displayedIterations);
@@ -547,6 +555,8 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
                 statusText_ = L"GPU DOF preview failed: " + Utf8ToWide(gpuDofRenderer_.LastError());
             } else if (useGpuDofPreview) {
                 statusText_ = L"GPU DOF preview failed; falling back to CPU preview.";
+            } else if (useGpuPostProcessPreview && !gpuPostProcess_.LastError().empty()) {
+                statusText_ = L"GPU post-process preview failed: " + Utf8ToWide(gpuPostProcess_.LastError());
             }
         }
     }
