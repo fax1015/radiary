@@ -47,13 +47,50 @@ set(radiary_sources
     third_party/imgui/misc/cpp/imgui_stdlib.cpp
 )
 
-if (WIN32 AND RADIARY_EMBED_FFMPEG AND EXISTS "${RADIARY_FFMPEG_EXE}")
-    file(TO_CMAKE_PATH "${RADIARY_FFMPEG_EXE}" RADIARY_FFMPEG_RESOURCE_PATH)
-    configure_file(
-        "${CMAKE_SOURCE_DIR}/src/app/RadiaryResources.rc.in"
-        "${CMAKE_BINARY_DIR}/generated/RadiaryResources.rc"
-        @ONLY)
-    list(APPEND radiary_sources "${CMAKE_BINARY_DIR}/generated/RadiaryResources.rc")
+if (WIN32)
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+
+    set(RADIARY_RESOURCE_LINES "")
+    set(RADIARY_APP_ICON_PNG "${CMAKE_SOURCE_DIR}/assets/ui/app-icon.png")
+    if (EXISTS "${RADIARY_APP_ICON_PNG}")
+        find_program(RADIARY_POWERSHELL_EXECUTABLE NAMES pwsh powershell REQUIRED)
+        set(RADIARY_APP_ICON_ICO "${CMAKE_BINARY_DIR}/generated/RadiaryAppIcon.ico")
+        execute_process(
+            COMMAND
+                "${RADIARY_POWERSHELL_EXECUTABLE}"
+                -NoProfile
+                -ExecutionPolicy Bypass
+                -File "${CMAKE_SOURCE_DIR}/cmake/ConvertPngToIco.ps1"
+                -InputPath "${RADIARY_APP_ICON_PNG}"
+                -OutputPath "${RADIARY_APP_ICON_ICO}"
+            RESULT_VARIABLE RADIARY_ICON_RESULT
+            OUTPUT_VARIABLE RADIARY_ICON_STDOUT
+            ERROR_VARIABLE RADIARY_ICON_STDERR)
+        if (NOT RADIARY_ICON_RESULT EQUAL 0)
+            message(FATAL_ERROR
+                "Failed to convert ${RADIARY_APP_ICON_PNG} to .ico\n"
+                "stdout:\n${RADIARY_ICON_STDOUT}\n"
+                "stderr:\n${RADIARY_ICON_STDERR}")
+        endif()
+
+        file(TO_CMAKE_PATH "${RADIARY_APP_ICON_ICO}" RADIARY_APP_ICON_RESOURCE_PATH)
+        string(APPEND RADIARY_RESOURCE_LINES
+            "IDI_RADIARY_APP_ICON ICON \"${RADIARY_APP_ICON_RESOURCE_PATH}\"\n")
+    endif()
+
+    if (RADIARY_EMBED_FFMPEG AND EXISTS "${RADIARY_FFMPEG_EXE}")
+        file(TO_CMAKE_PATH "${RADIARY_FFMPEG_EXE}" RADIARY_FFMPEG_RESOURCE_PATH)
+        string(APPEND RADIARY_RESOURCE_LINES
+            "IDR_RADIARY_FFMPEG RCDATA \"${RADIARY_FFMPEG_RESOURCE_PATH}\"\n")
+    endif()
+
+    if (NOT RADIARY_RESOURCE_LINES STREQUAL "")
+        configure_file(
+            "${CMAKE_SOURCE_DIR}/src/app/RadiaryResources.rc.in"
+            "${CMAKE_BINARY_DIR}/generated/RadiaryResources.rc"
+            @ONLY)
+        list(APPEND radiary_sources "${CMAKE_BINARY_DIR}/generated/RadiaryResources.rc")
+    endif()
 endif()
 
 add_executable(Radiary WIN32 ${radiary_sources})
@@ -146,6 +183,10 @@ if (WIN32)
     set(CPACK_NSIS_INSTALLED_ICON_NAME "Radiary.exe")
     set(CPACK_NSIS_MUI_FINISHPAGE_RUN "Radiary.exe")
     set(CPACK_NSIS_MANIFEST_DPI_AWARE ON)
+    if (DEFINED RADIARY_APP_ICON_ICO AND EXISTS "${RADIARY_APP_ICON_ICO}")
+        set(CPACK_NSIS_MUI_ICON "${RADIARY_APP_ICON_ICO}")
+        set(CPACK_NSIS_MUI_UNIICON "${RADIARY_APP_ICON_ICO}")
+    endif()
 endif()
 
 configure_file(

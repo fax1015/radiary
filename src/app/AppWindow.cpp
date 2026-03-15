@@ -141,6 +141,20 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = instance_;
+    windowClass.hIcon = static_cast<HICON>(LoadImageW(
+        instance_,
+        MAKEINTRESOURCEW(IDI_RADIARY_APP_ICON),
+        IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON),
+        GetSystemMetrics(SM_CYICON),
+        LR_DEFAULTCOLOR));
+    windowClass.hIconSm = static_cast<HICON>(LoadImageW(
+        instance_,
+        MAKEINTRESOURCEW(IDI_RADIARY_APP_ICON),
+        IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON),
+        GetSystemMetrics(SM_CYSMICON),
+        LR_DEFAULTCOLOR));
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     windowClass.hbrBackground = CreateSolidBrush(RGB(10, 10, 13));
     windowClass.lpszClassName = L"RadiaryImGuiWindow";
