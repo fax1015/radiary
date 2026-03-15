@@ -20,6 +20,7 @@ public:
         bool renderGrid = true;
         bool transparentBackground = false;
         bool interactive = false;
+        bool preserveFlameState = false;
         std::function<bool()> shouldAbort;
     };
 

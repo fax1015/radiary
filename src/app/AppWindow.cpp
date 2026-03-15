@@ -156,7 +156,7 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
         GetSystemMetrics(SM_CYSMICON),
         LR_DEFAULTCOLOR));
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    windowClass.hbrBackground = CreateSolidBrush(RGB(10, 10, 13));
+    windowClass.hbrBackground = nullptr;
     windowClass.lpszClassName = L"RadiaryImGuiWindow";
     RegisterClassExW(&windowClass);
 
@@ -314,12 +314,13 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     lastFrame_ = std::chrono::steady_clock::now();
     StartRenderThread();
 
-    updateLoading(1.0f, "Done");
-    loadingComplete_ = true;
-    KillTimer(window_, kStartupAnimationTimerId);
     RenderFrame();
     bootstrapUiFramePending_ = false;
     viewportDirty_ = true;
+    updateLoading(1.0f, "Done");
+    loadingComplete_ = true;
+    KillTimer(window_, kStartupAnimationTimerId);
+    ValidateRect(window_, nullptr);
     return true;
 }
 
@@ -563,10 +564,7 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
 
     switch (message) {
     case WM_ERASEBKGND:
-        if (!loadingComplete_) {
-            return 1;
-        }
-        break;
+        return 1;
     case WM_PAINT:
         if (!loadingComplete_) {
             PAINTSTRUCT ps;
@@ -639,7 +637,21 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
             EndPaint(window_, &ps);
             return 0;
         }
-        break;
+        if (exportInProgress_) {
+            PAINTSTRUCT ps;
+            BeginPaint(window_, &ps);
+            EndPaint(window_, &ps);
+            PresentBlockingOverlay();
+            return 0;
+        }
+        {
+            // Once D3D is active, the swapchain owns the client area. Swallow
+            // paint requests so Windows doesn't flash a background brush over it.
+            PAINTSTRUCT ps;
+            BeginPaint(window_, &ps);
+            EndPaint(window_, &ps);
+            return 0;
+        }
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED) {
             return 0;
@@ -647,6 +659,12 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
         resizeWidth_ = static_cast<UINT>(LOWORD(lParam));
         resizeHeight_ = static_cast<UINT>(HIWORD(lParam));
         viewportDirty_ = true;
+        if (!loadingComplete_) {
+            InvalidateRect(window_, nullptr, FALSE);
+            UpdateWindow(window_);
+        } else if (exportInProgress_) {
+            PresentBlockingOverlay();
+        }
         return 0;
     case WM_SYSCOMMAND:
         if ((wParam & 0xFFF0) == SC_KEYMENU) {
@@ -655,16 +673,29 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
         break;
     case WM_ENTERSIZEMOVE:
         inSizeMove_ = true;
-        SetTimer(window_, kLiveResizeTimerId, kLiveResizeTimerIntervalMs, nullptr);
+        if (loadingComplete_) {
+            SetTimer(window_, kLiveResizeTimerId, kLiveResizeTimerIntervalMs, nullptr);
+        }
         return 0;
     case WM_EXITSIZEMOVE:
         inSizeMove_ = false;
         KillTimer(window_, kLiveResizeTimerId);
-        RenderTick();
+        if (exportInProgress_) {
+            PresentBlockingOverlay();
+        } else if (loadingComplete_) {
+            RenderTick();
+        } else {
+            InvalidateRect(window_, nullptr, FALSE);
+            UpdateWindow(window_);
+        }
         return 0;
     case WM_TIMER:
         if (wParam == kLiveResizeTimerId && inSizeMove_) {
-            RenderTick();
+            if (exportInProgress_) {
+                PresentBlockingOverlay();
+            } else if (loadingComplete_) {
+                RenderTick();
+            }
             return 0;
         }
         if (wParam == kStartupAnimationTimerId && !loadingComplete_) {
@@ -696,6 +727,14 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
 
 
 bool AppWindow::RenderTick() {
+    if (!loadingComplete_) {
+        return false;
+    }
+
+    if (exportInProgress_) {
+        return PresentBlockingOverlay();
+    }
+
     if (!ApplyPendingGraphicsDeviceChange()) {
         return false;
     }
@@ -725,6 +764,18 @@ void AppWindow::PumpPendingMessages() {
 
 
 bool AppWindow::PresentBlockingOverlay() {
+    if (presentingBlockingOverlay_) {
+        return running_;
+    }
+
+    presentingBlockingOverlay_ = true;
+    struct OverlayPresentGuard {
+        bool& flag;
+        ~OverlayPresentGuard() {
+            flag = false;
+        }
+    } guard {presentingBlockingOverlay_};
+
     PumpPendingMessages();
     if (!running_ || window_ == nullptr) {
         return false;

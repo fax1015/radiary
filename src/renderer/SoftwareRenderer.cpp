@@ -950,7 +950,9 @@ void RenderPerspectiveGrid(
 
 }  // namespace
 
-void SoftwareRenderer::InvalidateAccumulation() {}
+void SoftwareRenderer::InvalidateAccumulation() {
+    flameEngine_.ResetTemporalState();
+}
 
 void SoftwareRenderer::Clear(std::vector<std::uint32_t>& pixels, const int width, const int height, const Color& color) {
     pixels.assign(static_cast<std::size_t>(width * height), ToBgra(color));
@@ -1798,7 +1800,7 @@ bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
 
     if (options.renderFlame && scene.mode != SceneMode::Path) {
         std::vector<FlamePixel> flamePixels;
-        if (!flameEngine_.Render(scene, width, height, flamePixels, options.shouldAbort)) {
+        if (!flameEngine_.Render(scene, width, height, flamePixels, options.shouldAbort, options.preserveFlameState)) {
             return false;
         }
         for (int y = 0; y < height; ++y) {

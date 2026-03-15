@@ -141,12 +141,14 @@ private:
     bool exportRequestPending_ = false;
     bool exportInProgress_ = false;
     bool exportCancelRequested_ = false;
+    bool presentingBlockingOverlay_ = false;
     bool showStatusOverlay_ = true;
     bool presentVsync_ = true;
     bool adaptiveInteractivePreview_ = true;
     bool exportHideGrid_ = true;
     bool exportTransparentBackground_ = false;
     bool exportUseGpu_ = false;
+    bool exportStableFlameSampling_ = true;
     bool usingWarpDevice_ = false;
     bool gpuFlamePreviewEnabled_ = true;
     float toolbarScrollStep_ = 48.0f;
@@ -367,9 +369,14 @@ private:
     bool ExportImageSequence(const std::filesystem::path& path, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, bool useGpu, ExportFormat format, int startFrame, int endFrame);
     bool ExportAviVideo(const std::filesystem::path& path, int width, int height, std::uint32_t iterations, bool hideGrid, bool useGpu, int startFrame, int endFrame);
     bool ExportFfmpegVideo(const std::filesystem::path& path, int width, int height, std::uint32_t iterations, bool hideGrid, bool useGpu, int startFrame, int endFrame, ExportFormat format);
-    bool RenderSceneToPixels(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, bool useGpu, std::vector<std::uint32_t>& pixels);
-    bool RenderSceneToPixelsCpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels) const;
-    bool RenderSceneToPixelsGpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels);
+    struct ExportRenderState {
+        bool preserveTemporalFlameState = false;
+        bool resetTemporalFlameState = false;
+        SoftwareRenderer* cpuRenderer = nullptr;
+    };
+    bool RenderSceneToPixels(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, bool useGpu, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr);
+    bool RenderSceneToPixelsCpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr) const;
+    bool RenderSceneToPixelsGpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr);
     bool ReadbackGpuTexture(ID3D11Texture2D* texture, std::vector<std::uint32_t>& pixels) const;
     bool ReadbackGpuDepthTexture(ID3D11Texture2D* texture, std::vector<float>& depthBuffer) const;
     void DrawLoadingLogo(HDC hdc, int clientWidth, int clientHeight, int barY) const;

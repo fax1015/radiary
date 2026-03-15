@@ -18,6 +18,8 @@ using namespace radiary;
 
 namespace {
 
+constexpr std::uint32_t kExportStablePostProcessSeed = 0x5EED1234u;
+
 std::wstring Utf8ToWideFilename(const std::string& value) {
     if (value.empty()) {
         return {};
@@ -235,10 +237,11 @@ bool AppWindow::RenderSceneToPixels(
     const bool transparentBackground,
     const bool hideGrid,
     const bool useGpu,
-    std::vector<std::uint32_t>& pixels) {
+    std::vector<std::uint32_t>& pixels,
+    const ExportRenderState* renderState) {
     return useGpu
-        ? RenderSceneToPixelsGpu(sourceScene, width, height, iterations, transparentBackground, hideGrid, pixels)
-        : RenderSceneToPixelsCpu(sourceScene, width, height, iterations, transparentBackground, hideGrid, pixels);
+        ? RenderSceneToPixelsGpu(sourceScene, width, height, iterations, transparentBackground, hideGrid, pixels, renderState)
+        : RenderSceneToPixelsCpu(sourceScene, width, height, iterations, transparentBackground, hideGrid, pixels, renderState);
 }
 
 namespace {
@@ -256,17 +259,25 @@ bool AppWindow::RenderSceneToPixelsCpu(
     const std::uint32_t iterations,
     const bool transparentBackground,
     const bool hideGrid,
-    std::vector<std::uint32_t>& pixels) const {
+    std::vector<std::uint32_t>& pixels,
+    const ExportRenderState* renderState) const {
     const int previewWidth = std::max(0, uploadedViewportWidth_);
     const int previewHeight = std::max(0, uploadedViewportHeight_);
     Scene exportScene = PrepareSceneForExport(BuildRenderableScene(sourceScene), previewWidth, previewHeight, width, height, hideGrid);
     exportScene.previewIterations = std::max<std::uint32_t>(iterations, 1u);
-    SoftwareRenderer exportRenderer;
+    SoftwareRenderer localRenderer;
+    SoftwareRenderer& exportRenderer = renderState != nullptr && renderState->cpuRenderer != nullptr
+        ? *renderState->cpuRenderer
+        : localRenderer;
+    if (renderState != nullptr && renderState->resetTemporalFlameState) {
+        exportRenderer.InvalidateAccumulation();
+    }
     SoftwareRenderer::RenderOptions renderOptions;
     renderOptions.renderFlame = true;
     renderOptions.renderPaths = true;
     renderOptions.renderGrid = !hideGrid;
     renderOptions.transparentBackground = transparentBackground;
+    renderOptions.preserveFlameState = renderState != nullptr && renderState->preserveTemporalFlameState;
     exportRenderer.RenderViewport(exportScene, std::max(1, width), std::max(1, height), pixels, renderOptions);
     return !pixels.empty();
 }
@@ -388,7 +399,8 @@ bool AppWindow::RenderSceneToPixelsGpu(
     const std::uint32_t iterations,
     const bool transparentBackground,
     const bool hideGrid,
-    std::vector<std::uint32_t>& pixels) {
+    std::vector<std::uint32_t>& pixels,
+    const ExportRenderState* renderState) {
     pixels.clear();
     const auto invalidateViewportPreview = [&]() {
         viewportDirty_ = true;
@@ -431,20 +443,32 @@ bool AppWindow::RenderSceneToPixelsGpu(
             return false;
         }
         const std::uint32_t targetIterations = ResolveGpuExportFlameIterations(scene);
-        do {
-            if (exportCancelRequested_) {
-                return false;
-            }
-            if (!pumpExportOverlay()) {
-                return false;
-            }
-            if (!gpuFlameRenderer_.Render(scene, exportWidth, exportHeight, targetIterations, transparent)) {
-                return false;
-            }
-            if (!pumpExportOverlay()) {
-                return false;
-            }
-        } while (gpuFlameRenderer_.AccumulatedIterations() < targetIterations);
+        const bool preserveTemporalFlameState =
+            renderState != nullptr
+            && renderState->preserveTemporalFlameState;
+        const bool resetTemporalFlameState =
+            renderState != nullptr
+            && renderState->resetTemporalFlameState;
+        if (exportCancelRequested_) {
+            return false;
+        }
+        if (!pumpExportOverlay()) {
+            return false;
+        }
+        if (!gpuFlameRenderer_.Render(
+                scene,
+                exportWidth,
+                exportHeight,
+                targetIterations,
+                transparent,
+                true,
+                preserveTemporalFlameState,
+                resetTemporalFlameState)) {
+            return false;
+        }
+        if (!pumpExportOverlay()) {
+            return false;
+        }
         return true;
     };
 
@@ -542,7 +566,7 @@ bool AppWindow::RenderSceneToPixelsGpu(
 
     auto applyPostProcessAndReadback = [&](ID3D11ShaderResourceView* srv, ID3D11Texture2D* fallbackTexture, std::vector<std::uint32_t>& output) -> bool {
         if (exportScene.postProcess.enabled && srv != nullptr && EnsureGpuPostProcessInitialized()) {
-            if (gpuPostProcess_.Render(exportScene, exportWidth, exportHeight, srv)) {
+            if (gpuPostProcess_.Render(exportScene, exportWidth, exportHeight, srv, kExportStablePostProcessSeed)) {
                 return ReadbackGpuTexture(gpuPostProcess_.OutputTexture(), output);
             }
         }
@@ -733,6 +757,7 @@ bool AppWindow::ExportImageSequence(
         return false;
     }
     bool useGpuRender = useGpu;
+    SoftwareRenderer cpuSequenceRenderer;
     for (int frame = startFrame; frame <= endFrame; ++frame) {
         const int frameIndex = frame - startFrame;
         if (!UpdateExportProgress(
@@ -744,12 +769,17 @@ bool AppWindow::ExportImageSequence(
         Scene frameScene = EvaluateSceneAtFrame(scene_, static_cast<double>(frame));
         frameScene.timelineFrame = static_cast<double>(frame);
         frameScene.timelineSeconds = TimelineSecondsForFrame(frameScene, frameScene.timelineFrame);
+        const ExportRenderState renderState {
+            exportStableFlameSampling_ && frameCount > 1,
+            exportStableFlameSampling_ && frameIndex == 0,
+            &cpuSequenceRenderer
+        };
         std::vector<std::uint32_t> pixels;
-        if (useGpuRender && !RenderSceneToPixels(frameScene, width, height, iterations, transparentBackground, hideGrid, true, pixels)) {
+        if (useGpuRender && !RenderSceneToPixels(frameScene, width, height, iterations, transparentBackground, hideGrid, true, pixels, &renderState)) {
             useGpuRender = false;
             statusText_ = L"GPU export unavailable, falling back to CPU";
         }
-        if (!useGpuRender && !RenderSceneToPixels(frameScene, width, height, iterations, transparentBackground, hideGrid, false, pixels)) {
+        if (!useGpuRender && !RenderSceneToPixels(frameScene, width, height, iterations, transparentBackground, hideGrid, false, pixels, &renderState)) {
             statusText_ = L"Export failed";
             return false;
         }
@@ -865,6 +895,7 @@ bool AppWindow::ExportAviVideo(
     std::vector<std::uint32_t> chunkOffsets;
     chunkOffsets.reserve(static_cast<std::size_t>(frameCount));
     bool useGpuRender = useGpu;
+    SoftwareRenderer cpuSequenceRenderer;
     for (int frame = startFrame; frame <= endFrame; ++frame) {
         const int frameIndex = frame - startFrame;
         if (!UpdateExportProgress(
@@ -877,12 +908,17 @@ bool AppWindow::ExportAviVideo(
         Scene frameScene = EvaluateSceneAtFrame(scene_, static_cast<double>(frame));
         frameScene.timelineFrame = static_cast<double>(frame);
         frameScene.timelineSeconds = TimelineSecondsForFrame(frameScene, frameScene.timelineFrame);
+        const ExportRenderState renderState {
+            exportStableFlameSampling_ && frameCount > 1,
+            exportStableFlameSampling_ && frameIndex == 0,
+            &cpuSequenceRenderer
+        };
         std::vector<std::uint32_t> pixels;
-        if (useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, true, pixels)) {
+        if (useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, true, pixels, &renderState)) {
             useGpuRender = false;
             statusText_ = L"GPU export unavailable, falling back to CPU";
         }
-        if (!useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, false, pixels)) {
+        if (!useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, false, pixels, &renderState)) {
             statusText_ = L"Export failed";
             return false;
         }
@@ -1043,6 +1079,7 @@ bool AppWindow::ExportFfmpegVideo(
     }
 
     bool useGpuRender = useGpu;
+    SoftwareRenderer cpuSequenceRenderer;
     for (int frame = startFrame; frame <= endFrame; ++frame) {
         const int frameIndex = frame - startFrame;
         if (!UpdateExportProgress(
@@ -1059,12 +1096,17 @@ bool AppWindow::ExportFfmpegVideo(
         Scene frameScene = EvaluateSceneAtFrame(scene_, static_cast<double>(frame));
         frameScene.timelineFrame = static_cast<double>(frame);
         frameScene.timelineSeconds = TimelineSecondsForFrame(frameScene, frameScene.timelineFrame);
+        const ExportRenderState renderState {
+            exportStableFlameSampling_ && frameCount > 1,
+            exportStableFlameSampling_ && frameIndex == 0,
+            &cpuSequenceRenderer
+        };
         std::vector<std::uint32_t> pixels;
-        if (useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, true, pixels)) {
+        if (useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, true, pixels, &renderState)) {
             useGpuRender = false;
             statusText_ = L"GPU export unavailable, falling back to CPU";
         }
-        if (!useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, false, pixels)) {
+        if (!useGpuRender && !RenderSceneToPixels(frameScene, exportWidth, exportHeight, iterations, false, hideGrid, false, pixels, &renderState)) {
             DWORD exitCode = 1u;
             finishFfmpegProcess(true, &exitCode);
             statusText_ = L"Export failed";

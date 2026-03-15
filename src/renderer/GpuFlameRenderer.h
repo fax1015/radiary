@@ -17,7 +17,15 @@ public:
     bool Initialize(ID3D11Device* device, ID3D11DeviceContext* deviceContext);
     void Shutdown();
 
-    bool Render(const Scene& scene, int width, int height, std::uint32_t previewIterations, bool transparentBackground = false);
+    bool Render(
+        const Scene& scene,
+        int width,
+        int height,
+        std::uint32_t previewIterations,
+        bool transparentBackground = false,
+        bool clearAccumulationForFrame = false,
+        bool preserveTemporalState = false,
+        bool resetTemporalState = false);
     void ResetAccumulation();
 
     ID3D11ShaderResourceView* ShaderResourceView() const { return outputSrv_; }
@@ -74,12 +82,22 @@ private:
         float totalWeight = 1.0f;
         std::uint32_t transparentBackground = 0;
         std::uint32_t randomSeedOffset = 0;
+        std::uint32_t preserveOrbitState = 0;
         float farDepth = 24.0f;
-        float padding[3] {};
+        float padding[2] {};
+    };
+
+    struct OrbitStateGpu {
+        float samplePoint[3] {};
+        float colorIndex = 0.5f;
+        std::uint32_t rngState = 0;
+        std::uint32_t burnInRemaining = 0;
+        std::uint32_t initialized = 0;
+        std::uint32_t padding = 0;
     };
 
     bool CreateShaders();
-    bool EnsureResources(int width, int height, std::size_t transformCount);
+    bool EnsureResources(int width, int height, std::size_t transformCount, std::size_t orbitThreadCount);
     void ReleaseTextures();
     void ReleaseBuffers();
     std::uint64_t ComputeSceneSignature(const Scene& scene) const;
@@ -102,6 +120,8 @@ private:
 
     ID3D11Buffer* accumulationBuffer_ = nullptr;
     ID3D11UnorderedAccessView* accumulationUav_ = nullptr;
+    ID3D11Buffer* orbitStateBuffer_ = nullptr;
+    ID3D11UnorderedAccessView* orbitStateUav_ = nullptr;
     ID3D11Texture2D* outputTexture_ = nullptr;
     ID3D11UnorderedAccessView* outputUav_ = nullptr;
     ID3D11ShaderResourceView* outputSrv_ = nullptr;
@@ -112,9 +132,12 @@ private:
     int outputWidth_ = 0;
     int outputHeight_ = 0;
     std::size_t transformCapacity_ = 0;
+    std::size_t orbitStateCapacity_ = 0;
     std::uint64_t sceneSignature_ = 0;
     std::uint64_t accumulatedIterations_ = 0;
     bool accumulationValid_ = false;
+    bool temporalStateValid_ = false;
+    std::size_t temporalThreadCount_ = 0;
     std::string lastError_;
 };
 

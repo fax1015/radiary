@@ -64,7 +64,9 @@ cbuffer RenderParams : register(b0)
     float TotalWeight;
     uint TransparentBackground;
     uint RandomSeedOffset;
+    uint PreserveOrbitState;
     float FarDepth;
+    float Padding[2];
 };
 
 struct TransformGpu
@@ -87,8 +89,18 @@ struct TransformGpu
 StructuredBuffer<TransformGpu> Transforms : register(t0);
 StructuredBuffer<uint4> Palette : register(t1);
 RWByteAddressBuffer FlameAccum : register(u0);
-RWTexture2D<float4> FlameOutput : register(u1);
-RWTexture2D<float> FlameDepthOutput : register(u2);
+struct OrbitState
+{
+    float3 SamplePoint;
+    float ColorIndex;
+    uint RngState;
+    uint BurnInRemaining;
+    uint Initialized;
+    uint Padding;
+};
+RWStructuredBuffer<OrbitState> OrbitStates : register(u1);
+RWTexture2D<float4> FlameOutput : register(u2);
+RWTexture2D<float> FlameDepthOutput : register(u3);
 
 static const float kPi = 3.14159265358979323846;
 static const uint kBurnInIterations = 24u;
@@ -630,11 +642,19 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (threadIndex >= TotalThreadCount || TransformCount == 0)
         return;
 
-    uint rng = (threadIndex * 747796405u + 2891336453u) ^ (RandomSeedOffset * 1664525u + 1013904223u);
-    rng = max(rng, 1u);
-    float3 samplePoint = float3(RandomFloat(rng) * 2.0 - 1.0, RandomFloat(rng) * 2.0 - 1.0, (RandomFloat(rng) * 2.0 - 1.0) * 0.35);
-    float colorIndex = 0.5;
-    uint burnInRemaining = kBurnInIterations;
+    OrbitState state = OrbitStates[threadIndex];
+    uint rng = state.RngState;
+    float3 samplePoint = state.SamplePoint;
+    float colorIndex = state.ColorIndex;
+    uint burnInRemaining = state.BurnInRemaining;
+    if (PreserveOrbitState == 0u || state.Initialized == 0u)
+    {
+        rng = (threadIndex * 747796405u + 2891336453u) ^ (RandomSeedOffset * 1664525u + 1013904223u);
+        rng = max(rng, 1u);
+        samplePoint = float3(RandomFloat(rng) * 2.0 - 1.0, RandomFloat(rng) * 2.0 - 1.0, (RandomFloat(rng) * 2.0 - 1.0) * 0.35);
+        colorIndex = 0.5;
+        burnInRemaining = kBurnInIterations;
+    }
     uint iterationsPerThread = max(1u, (PreviewIterations + TotalThreadCount - 1u) / TotalThreadCount);
     float yawCos = cos(Yaw);
     float yawSin = sin(Yaw);
@@ -962,6 +982,16 @@ R"(
                 localDepth);
         }
     }
+
+    if (PreserveOrbitState != 0u)
+    {
+        state.SamplePoint = samplePoint;
+        state.ColorIndex = colorIndex;
+        state.RngState = max(rng, 1u);
+        state.BurnInRemaining = burnInRemaining;
+        state.Initialized = 1u;
+        OrbitStates[threadIndex] = state;
+    }
 }
 
 )"
@@ -1110,6 +1140,8 @@ void GpuFlameRenderer::ResetAccumulation() {
     accumulationValid_ = false;
     accumulatedIterations_ = 0;
     sceneSignature_ = 0;
+    temporalStateValid_ = false;
+    temporalThreadCount_ = 0;
 }
 
 void GpuFlameRenderer::Shutdown() {
@@ -1123,7 +1155,15 @@ void GpuFlameRenderer::Shutdown() {
     if (device_) { device_->Release(); device_ = nullptr; }
 }
 
-bool GpuFlameRenderer::Render(const Scene& scene, const int width, const int height, const std::uint32_t previewIterations, const bool transparentBackground) {
+bool GpuFlameRenderer::Render(
+    const Scene& scene,
+    const int width,
+    const int height,
+    const std::uint32_t previewIterations,
+    const bool transparentBackground,
+    const bool clearAccumulationForFrame,
+    const bool preserveTemporalState,
+    const bool resetTemporalState) {
     if (device_ == nullptr || deviceContext_ == nullptr || accumulateShader_ == nullptr || toneMapShader_ == nullptr) {
         if (lastError_.empty()) {
             SetError("GPU flame renderer is not initialized.");
@@ -1134,17 +1174,45 @@ bool GpuFlameRenderer::Render(const Scene& scene, const int width, const int hei
         SetError("Viewport size is invalid for GPU preview.");
         return false;
     }
-    if (!EnsureResources(width, height, scene.transforms.size())) {
+    const std::uint32_t targetIterations = std::max<std::uint32_t>(previewIterations, 1u);
+    const std::uint64_t remainingIterations = clearAccumulationForFrame
+        ? static_cast<std::uint64_t>(targetIterations)
+        : (accumulatedIterations_ >= targetIterations ? 0u : static_cast<std::uint64_t>(targetIterations) - accumulatedIterations_);
+    const std::uint32_t progressiveBudget = std::clamp(targetIterations / 3u, kMinProgressiveBatchIterations, kMaxProgressiveBatchIterations);
+    const std::uint32_t dispatchIterations = remainingIterations == 0u
+        ? 0u
+        : static_cast<std::uint32_t>(clearAccumulationForFrame ? remainingIterations : std::min<std::uint64_t>(remainingIterations, progressiveBudget));
+    const std::uint32_t totalThreads = dispatchIterations == 0u
+        ? 0u
+        : std::clamp(
+            (dispatchIterations + kGpuFlameTargetOrbitIterations - 1u) / kGpuFlameTargetOrbitIterations,
+            kMinOrbitThreadCount,
+            kMaxOrbitThreadCount);
+    if (!EnsureResources(width, height, scene.transforms.size(), totalThreads)) {
         return false;
     }
 
     const std::uint64_t sceneSignature = ComputeSceneSignature(scene);
-    if (!accumulationValid_ || sceneSignature_ != sceneSignature) {
+    const bool resetAccumulation = clearAccumulationForFrame || !accumulationValid_ || sceneSignature_ != sceneSignature;
+    if (resetAccumulation) {
         const std::uint32_t clearAccum[4] = {0u, 0u, 0u, 0u};
         deviceContext_->ClearUnorderedAccessViewUint(accumulationUav_, clearAccum);
         accumulationValid_ = true;
         accumulatedIterations_ = 0;
         sceneSignature_ = sceneSignature;
+    }
+    if (clearAccumulationForFrame) {
+        const bool resetOrbitStates =
+            !preserveTemporalState
+            || resetTemporalState
+            || !temporalStateValid_
+            || temporalThreadCount_ != totalThreads;
+        if (resetOrbitStates && orbitStateUav_ != nullptr) {
+            const std::uint32_t clearState[4] = {0u, 0u, 0u, 0u};
+            deviceContext_->ClearUnorderedAccessViewUint(orbitStateUav_, clearState);
+        }
+        temporalStateValid_ = preserveTemporalState && totalThreads > 0u;
+        temporalThreadCount_ = totalThreads;
     }
 
     std::vector<TransformGpu> transforms(scene.transforms.size());
@@ -1200,17 +1268,6 @@ bool GpuFlameRenderer::Render(const Scene& scene, const int width, const int hei
     std::memcpy(mapped.pData, paletteEntries.data(), sizeof(paletteEntries));
     deviceContext_->Unmap(paletteBuffer_, 0);
 
-    const std::uint32_t targetIterations = std::max<std::uint32_t>(previewIterations, 1u);
-    const std::uint64_t remainingIterations = accumulatedIterations_ >= targetIterations ? 0u : static_cast<std::uint64_t>(targetIterations) - accumulatedIterations_;
-    const std::uint32_t progressiveBudget = std::clamp(targetIterations / 3u, kMinProgressiveBatchIterations, kMaxProgressiveBatchIterations);
-    const std::uint32_t dispatchIterations =
-        remainingIterations == 0u ? 0u : static_cast<std::uint32_t>(std::min<std::uint64_t>(remainingIterations, progressiveBudget));
-    const std::uint32_t totalThreads = dispatchIterations == 0u
-        ? 0u
-        : std::clamp(
-            (dispatchIterations + kGpuFlameTargetOrbitIterations - 1u) / kGpuFlameTargetOrbitIterations,
-            kMinOrbitThreadCount,
-            kMaxOrbitThreadCount);
     RenderParams params;
     params.width = static_cast<std::uint32_t>(width);
     params.height = static_cast<std::uint32_t>(height);
@@ -1240,6 +1297,7 @@ bool GpuFlameRenderer::Render(const Scene& scene, const int width, const int hei
     params.totalWeight = std::max(cumulativeWeight, 0.01f);
     params.transparentBackground = transparentBackground ? 1u : 0u;
     params.randomSeedOffset = static_cast<std::uint32_t>(accumulatedIterations_ & 0xFFFFFFFFu);
+    params.preserveOrbitState = clearAccumulationForFrame && preserveTemporalState ? 1u : 0u;
     params.farDepth = std::max(kFlameDepthNear + 1.0f, static_cast<float>(scene.camera.distance) + kFlameDepthRangePadding);
 
     result = deviceContext_->Map(paramsBuffer_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
@@ -1253,28 +1311,28 @@ bool GpuFlameRenderer::Render(const Scene& scene, const int width, const int hei
     ID3D11Buffer* constantBuffers[] = {paramsBuffer_};
     ID3D11ShaderResourceView* accumulateSrvs[] = {transforms.empty() ? nullptr : transformSrv_, paletteSrv_};
     if (dispatchIterations > 0u) {
-        ID3D11UnorderedAccessView* accumulateUavs[] = {accumulationUav_};
+        ID3D11UnorderedAccessView* accumulateUavs[] = {accumulationUav_, orbitStateUav_};
         deviceContext_->CSSetConstantBuffers(0, 1, constantBuffers);
         deviceContext_->CSSetShaderResources(0, 2, accumulateSrvs);
-        deviceContext_->CSSetUnorderedAccessViews(0, 1, accumulateUavs, nullptr);
+        deviceContext_->CSSetUnorderedAccessViews(0, 2, accumulateUavs, nullptr);
         deviceContext_->CSSetShader(accumulateShader_, nullptr, 0);
         deviceContext_->Dispatch((totalThreads + 127u) / 128u, 1u, 1u);
         accumulatedIterations_ += dispatchIterations;
     }
 
     ID3D11ShaderResourceView* nullSrvs[2] = {nullptr, nullptr};
-    ID3D11UnorderedAccessView* nullUavs[3] = {nullptr, nullptr, nullptr};
+    ID3D11UnorderedAccessView* nullUavs[4] = {nullptr, nullptr, nullptr, nullptr};
     deviceContext_->CSSetShaderResources(0, 2, nullSrvs);
-    deviceContext_->CSSetUnorderedAccessViews(0, 1, nullUavs, nullptr);
+    deviceContext_->CSSetUnorderedAccessViews(0, 2, nullUavs, nullptr);
 
-    ID3D11UnorderedAccessView* toneMapUavs[] = {accumulationUav_, outputUav_, depthUav_};
+    ID3D11UnorderedAccessView* toneMapUavs[] = {accumulationUav_, nullptr, outputUav_, depthUav_};
     deviceContext_->CSSetConstantBuffers(0, 1, constantBuffers);
-    deviceContext_->CSSetUnorderedAccessViews(0, 3, toneMapUavs, nullptr);
+    deviceContext_->CSSetUnorderedAccessViews(0, 4, toneMapUavs, nullptr);
     deviceContext_->CSSetShader(toneMapShader_, nullptr, 0);
     deviceContext_->Dispatch((static_cast<std::uint32_t>(width) + 7u) / 8u, (static_cast<std::uint32_t>(height) + 7u) / 8u, 1u);
 
     deviceContext_->CSSetShader(nullptr, nullptr, 0);
-    deviceContext_->CSSetUnorderedAccessViews(0, 3, nullUavs, nullptr);
+    deviceContext_->CSSetUnorderedAccessViews(0, 4, nullUavs, nullptr);
     lastError_.clear();
     return true;
 }
@@ -1375,7 +1433,7 @@ std::uint64_t GpuFlameRenderer::ComputeSceneSignature(const Scene& scene) const 
     return signature;
 }
 
-bool GpuFlameRenderer::EnsureResources(const int width, const int height, const std::size_t transformCount) {
+bool GpuFlameRenderer::EnsureResources(const int width, const int height, const std::size_t transformCount, const std::size_t orbitThreadCount) {
     if (transformCount > transformCapacity_) {
         if (transformSrv_) { transformSrv_->Release(); transformSrv_ = nullptr; }
         if (transformBuffer_) { transformBuffer_->Release(); transformBuffer_ = nullptr; }
@@ -1430,6 +1488,37 @@ bool GpuFlameRenderer::EnsureResources(const int width, const int height, const 
             SetError("CreateShaderResourceView(paletteBuffer)", result);
             return false;
         }
+    }
+
+    if (orbitThreadCount > orbitStateCapacity_) {
+        if (orbitStateUav_) { orbitStateUav_->Release(); orbitStateUav_ = nullptr; }
+        if (orbitStateBuffer_) { orbitStateBuffer_->Release(); orbitStateBuffer_ = nullptr; }
+
+        D3D11_BUFFER_DESC orbitDesc {};
+        orbitDesc.ByteWidth = static_cast<UINT>(sizeof(OrbitStateGpu) * orbitThreadCount);
+        orbitDesc.Usage = D3D11_USAGE_DEFAULT;
+        orbitDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+        orbitDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        orbitDesc.StructureByteStride = sizeof(OrbitStateGpu);
+        HRESULT result = device_->CreateBuffer(&orbitDesc, nullptr, &orbitStateBuffer_);
+        if (FAILED(result)) {
+            SetError("CreateBuffer(orbitStateBuffer)", result);
+            return false;
+        }
+
+        D3D11_UNORDERED_ACCESS_VIEW_DESC orbitUavDesc {};
+        orbitUavDesc.Format = DXGI_FORMAT_UNKNOWN;
+        orbitUavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+        orbitUavDesc.Buffer.FirstElement = 0;
+        orbitUavDesc.Buffer.NumElements = static_cast<UINT>(orbitThreadCount);
+        result = device_->CreateUnorderedAccessView(orbitStateBuffer_, &orbitUavDesc, &orbitStateUav_);
+        if (FAILED(result)) {
+            SetError("CreateUnorderedAccessView(orbitStateBuffer)", result);
+            return false;
+        }
+        orbitStateCapacity_ = orbitThreadCount;
+        temporalStateValid_ = false;
+        temporalThreadCount_ = 0;
     }
 
     if (outputTexture_ != nullptr && outputWidth_ == width && outputHeight_ == height) {
@@ -1564,9 +1653,12 @@ void GpuFlameRenderer::ReleaseTextures() {
 void GpuFlameRenderer::ReleaseBuffers() {
     if (paletteSrv_) { paletteSrv_->Release(); paletteSrv_ = nullptr; }
     if (paletteBuffer_) { paletteBuffer_->Release(); paletteBuffer_ = nullptr; }
+    if (orbitStateUav_) { orbitStateUav_->Release(); orbitStateUav_ = nullptr; }
+    if (orbitStateBuffer_) { orbitStateBuffer_->Release(); orbitStateBuffer_ = nullptr; }
     if (transformSrv_) { transformSrv_->Release(); transformSrv_ = nullptr; }
     if (transformBuffer_) { transformBuffer_->Release(); transformBuffer_ = nullptr; }
     transformCapacity_ = 0;
+    orbitStateCapacity_ = 0;
 }
 
 ID3DBlob* GpuFlameRenderer::CompileShader(const char* source, const char* entryPoint, const char* target, std::string& error) {

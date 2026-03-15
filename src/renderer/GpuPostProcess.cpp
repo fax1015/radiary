@@ -301,7 +301,8 @@ bool GpuPostProcess::Render(
     const Scene& scene,
     const int width,
     const int height,
-    ID3D11ShaderResourceView* inputSrv) {
+    ID3D11ShaderResourceView* inputSrv,
+    const std::optional<std::uint32_t> randomSeedOverride) {
 
     if (!IsReady()) {
         if (lastError_.empty()) SetError("GPU post-process renderer is not initialized.");
@@ -315,7 +316,9 @@ bool GpuPostProcess::Render(
         return false;
     }
 
-    ++frameCounter_;
+    if (!randomSeedOverride.has_value()) {
+        ++frameCounter_;
+    }
     const PostProcessSettings& pp = scene.postProcess;
 
     ID3D11Buffer* constantBuffers[] = {paramsBuffer_};
@@ -432,7 +435,7 @@ bool GpuPostProcess::Render(
         params.filmGrain = static_cast<float>(pp.filmGrain);
         params.colorTemperature = static_cast<float>(pp.colorTemperature);
         params.saturationBoost = static_cast<float>(pp.saturationBoost);
-        params.randomSeed = frameCounter_ * 1664525u + 1013904223u;
+        params.randomSeed = randomSeedOverride.value_or(frameCounter_ * 1664525u + 1013904223u);
 
         D3D11_MAPPED_SUBRESOURCE mapped {};
         HRESULT result = deviceContext_->Map(paramsBuffer_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);

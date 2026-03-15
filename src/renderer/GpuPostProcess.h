@@ -2,6 +2,7 @@
 
 #include <d3d11.h>
 
+#include <optional>
 #include <string>
 
 #include "core/Scene.h"
@@ -19,7 +20,8 @@ public:
         const Scene& scene,
         int width,
         int height,
-        ID3D11ShaderResourceView* inputSrv);
+        ID3D11ShaderResourceView* inputSrv,
+        std::optional<std::uint32_t> randomSeedOverride = std::nullopt);
 
     ID3D11ShaderResourceView* ShaderResourceView() const { return outputSrv_; }
     ID3D11Texture2D* OutputTexture() const { return outputTexture_; }

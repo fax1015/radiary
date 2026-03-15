@@ -466,6 +466,7 @@ void AppWindow::DrawSettingsPanel() {
         constexpr bool kDefaultGpuViewportPreview = true;
         constexpr bool kDefaultShowStatusOverlay = true;
         constexpr bool kDefaultExportHideGrid = true;
+        constexpr bool kDefaultExportStableFlameSampling = true;
         const Scene defaultScene = CreateDefaultScene();
         static const char* kExportFormatLabels[] = {"PNG Image", "JPG Image", "PNG Sequence", "JPG Sequence", "AVI Video", "MP4 Video", "MOV Video"};
 
@@ -585,6 +586,11 @@ void AppWindow::DrawSettingsPanel() {
         if (ImGui::Checkbox("Use GPU for export by default", &exportUseGpu_)) {
             MarkViewportDirty();
         }
+        if (ImGui::Checkbox("Stable flame sampling for export", &exportStableFlameSampling_)
+            || ResetValueOnDoubleClick(exportStableFlameSampling_, kDefaultExportStableFlameSampling)) {
+            MarkViewportDirty();
+        }
+        ImGui::TextDisabled("Keeps flame particles temporally anchored across exported frames.");
         if (fullWidthScalar(
                 "New scene end frame",
                 "##new_scene_end_frame",

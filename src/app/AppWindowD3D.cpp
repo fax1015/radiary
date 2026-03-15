@@ -479,6 +479,7 @@ void AppWindow::LoadUserSettings() {
     TryParseBoolValue(values, "export_hide_grid", exportHideGrid_);
     TryParseBoolValue(values, "export_transparent_background", exportTransparentBackground_);
     TryParseBoolValue(values, "export_use_gpu", exportUseGpu_);
+    TryParseBoolValue(values, "export_stable_flame_sampling", exportStableFlameSampling_);
     TryParseBoolValue(values, "grid_visible", scene_.gridVisible);
 
     TryParseUintValue(values, "interactive_preview_iterations", interactivePreviewIterations_);
@@ -566,6 +567,7 @@ void AppWindow::SaveUserSettings() const {
     stream << "export_hide_grid=" << (exportHideGrid_ ? 1 : 0) << "\n";
     stream << "export_transparent_background=" << (exportTransparentBackground_ ? 1 : 0) << "\n";
     stream << "export_use_gpu=" << (exportUseGpu_ ? 1 : 0) << "\n";
+    stream << "export_stable_flame_sampling=" << (exportStableFlameSampling_ ? 1 : 0) << "\n";
     stream << "export_format=" << static_cast<int>(exportFormat_) << "\n";
     stream << "export_width=" << exportWidth_ << "\n";
     stream << "export_height=" << exportHeight_ << "\n";
@@ -724,6 +726,7 @@ void AppWindow::ApplyStyle() const {
     style.WindowRounding = 10.0f;
     style.ChildRounding = 8.0f;
     style.FrameRounding = 8.0f;
+    style.PopupRounding = 8.0f;
     style.GrabRounding = 8.0f;
     style.TabRounding = 5.0f;
     style.WindowBorderSize = 1.0f;

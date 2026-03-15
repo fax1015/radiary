@@ -172,7 +172,22 @@ Vec2 IFSEngine::ApplyAffine(const TransformLayer& layer, const Vec2& point) {
     };
 }
 
-bool IFSEngine::Render(const Scene& scene, const int width, const int height, std::vector<FlamePixel>& output, const std::function<bool()>& shouldAbort) {
+void IFSEngine::ResetTemporalState() {
+    temporalGenerator_ = std::mt19937 {};
+    temporalPoint_ = {};
+    temporalColorIndex_ = 0.5;
+    temporalBurnInRemaining_ = 0;
+    temporalTransformCount_ = 0;
+    temporalStateValid_ = false;
+}
+
+bool IFSEngine::Render(
+    const Scene& scene,
+    const int width,
+    const int height,
+    std::vector<FlamePixel>& output,
+    const std::function<bool()>& shouldAbort,
+    const bool preserveTemporalState) {
     output.assign(static_cast<std::size_t>(width * height), {});
     if (scene.transforms.empty() || width <= 0 || height <= 0) {
         return true;
@@ -184,21 +199,36 @@ bool IFSEngine::Render(const Scene& scene, const int width, const int height, st
         weights.push_back(std::max(0.01, layer.weight));
     }
 
-    std::mt19937 generator(0xC0FFEEu + static_cast<unsigned>(scene.transforms.size() * 17));
     std::discrete_distribution<std::size_t> chooseTransform(weights.begin(), weights.end());
     std::uniform_real_distribution<double> start(-1.0, 1.0);
+    std::mt19937 frameGenerator(0xC0FFEEu + static_cast<unsigned>(scene.transforms.size() * 17));
+    std::mt19937& generator = preserveTemporalState ? temporalGenerator_ : frameGenerator;
 
     const std::vector<Color> palette = BuildGradientPalette(scene.gradientStops, 256);
     const auto resetOrbit = [&]() {
         return Vec3 {start(generator), start(generator), start(generator) * 0.35};
     };
-    Vec3 point = resetOrbit();
+    Vec3 point {};
     double colorIndex = 0.5;
     // Flame points live in the same camera space as path geometry.
     // zoom2D belongs in projection, not in flame-local world scaling.
     const double flameWorldScale = kFlameWorldScale;
     const double farDepth = std::max(1.15, scene.camera.distance + 24.0);
     std::uint32_t burnInRemaining = kFlameBurnInIterations;
+    const bool reuseTemporalState =
+        preserveTemporalState
+        && temporalStateValid_
+        && temporalTransformCount_ == scene.transforms.size();
+    if (preserveTemporalState && !reuseTemporalState) {
+        temporalGenerator_.seed(0xC0FFEEu + static_cast<unsigned>(scene.transforms.size() * 17));
+    }
+    if (reuseTemporalState) {
+        point = temporalPoint_;
+        colorIndex = temporalColorIndex_;
+        burnInRemaining = temporalBurnInRemaining_;
+    } else {
+        point = resetOrbit();
+    }
     std::uint32_t stableIterations = 0;
     const std::uint64_t maxAttempts = static_cast<std::uint64_t>(scene.previewIterations + kFlameBurnInIterations)
         * static_cast<std::uint64_t>(kFlameRetryMultiplier);
@@ -421,6 +451,14 @@ bool IFSEngine::Render(const Scene& scene, const int width, const int height, st
             pixel.blue += static_cast<float>(sampleColor.b * weight);
             pixel.depth += static_cast<float>(normalizedDepth * weight);
         }
+    }
+
+    if (preserveTemporalState) {
+        temporalPoint_ = point;
+        temporalColorIndex_ = colorIndex;
+        temporalBurnInRemaining_ = burnInRemaining;
+        temporalTransformCount_ = scene.transforms.size();
+        temporalStateValid_ = true;
     }
 
     return true;
