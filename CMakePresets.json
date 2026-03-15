@@ -45,6 +45,16 @@
       "generators": [
         "ZIP"
       ]
+    },
+    {
+      "name": "vs-release-installer",
+      "configurePreset": "vs-release",
+      "configurations": [
+        "Release"
+      ],
+      "generators": [
+        "NSIS"
+      ]
     }
   ]
 }
