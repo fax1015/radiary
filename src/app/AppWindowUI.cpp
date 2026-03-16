@@ -2057,6 +2057,7 @@ void AppWindow::DrawTimelinePanel() {
         ImGui::SetNextItemWidth(-FLT_MIN);
     };
     const auto drawPreviewFieldLabel = [&](const char* label) {
+        ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", label);
     };
     const auto beginPreviewGrid = [&](const char* id) {
@@ -2072,9 +2073,6 @@ void AppWindow::DrawTimelinePanel() {
             || ResetValueOnDoubleClick(interactivePreviewIterations_, static_cast<std::uint32_t>(60000))) {
             MarkViewportDirty();
         }
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Used while navigating the viewport.");
-        ImGui::PopTextWrapPos();
 
         ImGui::TableNextColumn();
         drawPreviewFieldLabel("Render Iterations");
@@ -2089,6 +2087,9 @@ void AppWindow::DrawTimelinePanel() {
 
         ImGui::EndTable();
     }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Used while navigating the viewport.");
+    ImGui::PopTextWrapPos();
 
     ImGui::SeparatorText("Viewport");
     if (beginPreviewGrid("##preview_viewport_grid")) {
@@ -2109,13 +2110,8 @@ void AppWindow::DrawTimelinePanel() {
         }
         CaptureWidgetUndo(beforeBackground, backgroundChanged);
 
-        const Scene beforeDofEnabled = scene_;
-        bool dofEnabledChanged = ImGui::Checkbox("Depth of Field", &scene_.depthOfField.enabled);
-        dofEnabledChanged = ResetValueOnDoubleClick(scene_.depthOfField.enabled, defaultScene.depthOfField.enabled) || dofEnabledChanged;
-        if (dofEnabledChanged) {
-            viewportDirty_ = true;
-        }
-        CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
+        ImGui::TableNextColumn(); // Empty column for background to span full width
+        ImGui::TableNextRow();
 
         ImGui::TableNextColumn();
         const Scene beforeDenoiserEnabled = scene_;
@@ -2125,6 +2121,27 @@ void AppWindow::DrawTimelinePanel() {
             viewportDirty_ = true;
         }
         CaptureWidgetUndo(beforeDenoiserEnabled, denoiserEnabledChanged);
+
+        ImGui::TableNextColumn();
+        const Scene beforeDofEnabled = scene_;
+        bool dofEnabledChanged = ImGui::Checkbox("Depth of Field", &scene_.depthOfField.enabled);
+        dofEnabledChanged = ResetValueOnDoubleClick(scene_.depthOfField.enabled, defaultScene.depthOfField.enabled) || dofEnabledChanged;
+        if (dofEnabledChanged) {
+            viewportDirty_ = true;
+        }
+        CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
+
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        {
+            const Scene beforePostProcessEnabled = scene_;
+            bool postProcessEnabledChanged = ImGui::Checkbox("Post-Processing", &scene_.postProcess.enabled);
+            postProcessEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.enabled, defaultScene.postProcess.enabled) || postProcessEnabledChanged;
+            if (postProcessEnabledChanged) {
+                viewportDirty_ = true;
+            }
+            CaptureWidgetUndo(beforePostProcessEnabled, postProcessEnabledChanged);
+        }
 
         ImGui::EndTable();
     }
@@ -2196,15 +2213,6 @@ void AppWindow::DrawTimelinePanel() {
 
             ImGui::EndTable();
         }
-    }
-    {
-        const Scene beforePostProcessEnabled = scene_;
-        bool postProcessEnabledChanged = ImGui::Checkbox("Post-Processing", &scene_.postProcess.enabled);
-        postProcessEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.enabled, defaultScene.postProcess.enabled) || postProcessEnabledChanged;
-        if (postProcessEnabledChanged) {
-            viewportDirty_ = true;
-        }
-        CaptureWidgetUndo(beforePostProcessEnabled, postProcessEnabledChanged);
     }
 
     if (scene_.postProcess.enabled) {
@@ -2340,6 +2348,7 @@ void AppWindow::DrawTimelinePanel() {
         previewBackend = "GPU Denoised";
         break;
     }
+    ImGui::Separator();
     ImGui::TextDisabled(
         "Preview %dx%d | Iter %u/%u | %s | FPS %.1f",
         previewWidth,
