@@ -24,6 +24,7 @@ cmake-build-*/
 
 # Temporary files
 temp/
+RENDERING_REFACTOR_PLAN.md
 
 # IDE
 .vs/
