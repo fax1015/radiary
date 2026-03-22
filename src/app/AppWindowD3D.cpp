@@ -237,13 +237,11 @@ bool AppWindow::EnsureGpuFlameRendererInitialized() {
         return true;
     }
     if (device_ == nullptr || deviceContext_ == nullptr) {
-        statusText_ = L"GPU flame unavailable: D3D11 device/context is not ready.";
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(L"GPU flame", false, {});
         return false;
     }
     if (!gpuFlameRenderer_.Initialize(device_.Get(), deviceContext_.Get())) {
-        if (!gpuFlameRenderer_.LastError().empty()) {
-            statusText_ = L"GPU flame unavailable: " + Utf8ToWide(gpuFlameRenderer_.LastError());
-        }
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(L"GPU flame", true, gpuFlameRenderer_.LastError());
         return false;
     }
     return true;
@@ -254,13 +252,11 @@ bool AppWindow::EnsureGpuPathRendererInitialized(GpuPathRenderer& renderer, cons
         return true;
     }
     if (device_ == nullptr || deviceContext_ == nullptr) {
-        statusText_ = std::wstring(label) + L" unavailable: D3D11 device/context is not ready.";
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(label, false, {});
         return false;
     }
     if (!renderer.Initialize(device_.Get(), deviceContext_.Get())) {
-        if (!renderer.LastError().empty()) {
-            statusText_ = std::wstring(label) + L" unavailable: " + Utf8ToWide(renderer.LastError());
-        }
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(label, true, renderer.LastError());
         return false;
     }
     return true;
@@ -271,13 +267,11 @@ bool AppWindow::EnsureGpuDofRendererInitialized() {
         return true;
     }
     if (device_ == nullptr || deviceContext_ == nullptr) {
-        statusText_ = L"GPU DOF unavailable: D3D11 device/context is not ready.";
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(L"GPU DOF", false, {});
         return false;
     }
     if (!gpuDofRenderer_.Initialize(device_.Get(), deviceContext_.Get())) {
-        if (!gpuDofRenderer_.LastError().empty()) {
-            statusText_ = L"GPU DOF unavailable: " + Utf8ToWide(gpuDofRenderer_.LastError());
-        }
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(L"GPU DOF", true, gpuDofRenderer_.LastError());
         return false;
     }
     return true;
@@ -288,13 +282,11 @@ bool AppWindow::EnsureGpuDenoiserInitialized() {
         return true;
     }
     if (device_ == nullptr || deviceContext_ == nullptr) {
-        statusText_ = L"GPU Denoiser unavailable: D3D11 device/context is not ready.";
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(L"GPU Denoiser", false, {});
         return false;
     }
     if (!gpuDenoiser_.Initialize(device_.Get(), deviceContext_.Get())) {
-        if (!gpuDenoiser_.LastError().empty()) {
-            statusText_ = L"GPU Denoiser unavailable: " + Utf8ToWide(gpuDenoiser_.LastError());
-        }
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(L"GPU Denoiser", true, gpuDenoiser_.LastError());
         return false;
     }
     return true;
@@ -305,13 +297,11 @@ bool AppWindow::EnsureGpuPostProcessInitialized() {
         return true;
     }
     if (device_ == nullptr || deviceContext_ == nullptr) {
-        statusText_ = L"GPU Post-Process unavailable: D3D11 device/context is not ready.";
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(L"GPU Post-Process", false, {});
         return false;
     }
     if (!gpuPostProcess_.Initialize(device_.Get(), deviceContext_.Get())) {
-        if (!gpuPostProcess_.LastError().empty()) {
-            statusText_ = L"GPU Post-Process unavailable: " + Utf8ToWide(gpuPostProcess_.LastError());
-        }
+        statusText_ = BuildGpuRendererUnavailableStatusMessage(L"GPU Post-Process", true, gpuPostProcess_.LastError());
         return false;
     }
     return true;
@@ -367,7 +357,7 @@ bool AppWindow::ApplyPendingGraphicsDeviceChange() {
     ImGui_ImplWin32_Init(window_);
     ImGui_ImplDX11_Init(device_.Get(), deviceContext_.Get());
     CreateAppLogoTexture();
-    viewportDirty_ = true;
+    MarkViewportDirty(PreviewResetReason::DeviceChanged);
     resizeWidth_ = 0;
     resizeHeight_ = 0;
     statusText_ = L"Switched GPU to " + renderAdapterName_;

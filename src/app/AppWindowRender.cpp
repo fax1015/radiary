@@ -35,23 +35,206 @@ std::uint32_t ViewportPreviewIterations(
     return previewIterations;
 }
 
+bool CameraStateChanged(const CameraState& a, const CameraState& b) {
+    return a.yaw != b.yaw
+        || a.pitch != b.pitch
+        || a.distance != b.distance
+        || a.panX != b.panX
+        || a.panY != b.panY
+        || a.zoom2D != b.zoom2D
+        || a.frameWidth != b.frameWidth
+        || a.frameHeight != b.frameHeight;
+}
+
 }  // namespace
 
 namespace radiary {
-void AppWindow::MarkViewportDirty() {
+void AppWindow::MarkViewportDirty(const PreviewResetReason reason) {
     viewportDirty_ = true;
+    previewProgress_.dirty = true;
+    previewProgress_.pendingResetReason = reason;
+    previewProgress_.phase = PreviewProgressPhase::Dirty;
+    previewProgress_.displayedIterations = 0;
+    previewProgress_.temporalStateValid.reset();
 }
 
-AppWindow::PreviewBackend AppWindow::DetermineCpuPreviewBackend(const SceneMode mode) {
+AppWindow::PreviewResetReason AppWindow::DeterminePreviewResetReason(const Scene& before, const Scene& after) {
+    if (before.mode != after.mode) {
+        return PreviewResetReason::ModeChanged;
+    }
+    if (before.previewIterations != after.previewIterations) {
+        return PreviewResetReason::IterationChanged;
+    }
+    if (CameraStateChanged(before.camera, after.camera)) {
+        return PreviewResetReason::CameraChanged;
+    }
+    return PreviewResetReason::SceneChanged;
+}
+
+AppWindow::PreviewRenderContent AppWindow::PreviewContentForMode(const SceneMode mode) {
     switch (mode) {
     case SceneMode::Flame:
-        return PreviewBackend::CpuFlame;
+        return PreviewRenderContent::Flame;
     case SceneMode::Path:
-        return PreviewBackend::CpuPath;
+        return PreviewRenderContent::Path;
     case SceneMode::Hybrid:
     default:
-        return PreviewBackend::CpuHybrid;
+        return PreviewRenderContent::Hybrid;
     }
+}
+
+AppWindow::PreviewPresentationState AppWindow::MakePreviewPresentationState(
+    const PreviewRenderDevice device,
+    const PreviewRenderContent content,
+    const PreviewRenderStage stage) {
+    return PreviewPresentationState {
+        .device = device,
+        .content = content,
+        .stage = stage,
+    };
+}
+
+AppWindow::PreviewPresentationState AppWindow::WithPreviewPresentationStage(
+    PreviewPresentationState state,
+    const PreviewRenderStage stage) {
+    state.stage = stage;
+    return state;
+}
+
+bool AppWindow::IsGpuPreviewPresentationState(const PreviewPresentationState& state) {
+    return state.device == PreviewRenderDevice::Gpu;
+}
+
+bool AppWindow::IsPreviewPresentationStageAtLeast(
+    const PreviewPresentationState& state,
+    const PreviewRenderStage stage) {
+    if (!IsGpuPreviewPresentationState(state)) {
+        return false;
+    }
+    return static_cast<int>(state.stage) >= static_cast<int>(stage);
+}
+
+const char* AppWindow::PreviewRenderDeviceLabel(const PreviewRenderDevice device) {
+    switch (device) {
+    case PreviewRenderDevice::Cpu:
+        return "CPU";
+    case PreviewRenderDevice::Gpu:
+    default:
+        return "GPU";
+    }
+}
+
+const char* AppWindow::PreviewRenderContentLabel(const PreviewRenderContent content) {
+    switch (content) {
+    case PreviewRenderContent::Flame:
+        return "Flame";
+    case PreviewRenderContent::Path:
+        return "Path";
+    case PreviewRenderContent::Hybrid:
+    default:
+        return "Hybrid";
+    }
+}
+
+const char* AppWindow::PreviewRenderStageLabel(const PreviewRenderStage stage) {
+    switch (stage) {
+    case PreviewRenderStage::Base:
+        return "Base";
+    case PreviewRenderStage::Composited:
+        return "Composited";
+    case PreviewRenderStage::Denoised:
+        return "Denoised";
+    case PreviewRenderStage::DepthOfField:
+        return "DOF";
+    case PreviewRenderStage::PostProcessed:
+    default:
+        return "Post";
+    }
+}
+
+const char* AppWindow::PreviewProgressPhaseLabel(const PreviewProgressPhase phase) {
+    switch (phase) {
+    case PreviewProgressPhase::Dirty:
+        return "Dirty";
+    case PreviewProgressPhase::Queued:
+        return "Queued";
+    case PreviewProgressPhase::Accumulating:
+        return "Accumulating";
+    case PreviewProgressPhase::Complete:
+    default:
+        return "Complete";
+    }
+}
+
+const char* AppWindow::PreviewResetReasonLabel(const PreviewResetReason reason) {
+    switch (reason) {
+    case PreviewResetReason::None:
+        return "None";
+    case PreviewResetReason::SceneChanged:
+        return "Scene";
+    case PreviewResetReason::CameraChanged:
+        return "Camera";
+    case PreviewResetReason::ModeChanged:
+        return "Mode";
+    case PreviewResetReason::IterationChanged:
+        return "Iterations";
+    case PreviewResetReason::ViewportResized:
+        return "Resize";
+    case PreviewResetReason::DeviceChanged:
+    default:
+        return "Device";
+    }
+}
+
+std::wstring AppWindow::DescribePreviewPresentationState(const PreviewPresentationState& state) {
+    std::wstring description = Utf8ToWide(PreviewRenderDeviceLabel(state.device));
+    description += L" ";
+    description += Utf8ToWide(PreviewRenderContentLabel(state.content));
+    description += L" ";
+    description += Utf8ToWide(PreviewRenderStageLabel(state.stage));
+    return description;
+}
+
+AppWindow::PreviewRenderStage AppWindow::DetermineResolvedRenderStage(
+    const bool useDenoiser,
+    const bool useDof,
+    const bool usePostProcess) {
+    if (usePostProcess) {
+        return PreviewRenderStage::PostProcessed;
+    }
+    if (useDof) {
+        return PreviewRenderStage::DepthOfField;
+    }
+    if (useDenoiser) {
+        return PreviewRenderStage::Denoised;
+    }
+    return PreviewRenderStage::Base;
+}
+
+std::wstring AppWindow::BuildGpuRendererUnavailableStatusMessage(
+    const wchar_t* label,
+    const bool deviceReady,
+    const std::string& lastError) {
+    if (!deviceReady) {
+        return std::wstring(label) + L" unavailable: D3D11 device/context is not ready.";
+    }
+    if (!lastError.empty()) {
+        return std::wstring(label) + L" unavailable: " + Utf8ToWide(lastError);
+    }
+    return std::wstring(label) + L" unavailable.";
+}
+
+std::wstring AppWindow::BuildGpuFallbackStatusMessage(
+    const PreviewPresentationState& failedState,
+    const std::wstring& failureStatus) {
+    if (!failureStatus.empty()) {
+        return failureStatus + L" Falling back to CPU.";
+    }
+    return DescribePreviewPresentationState(failedState) + L" export unavailable, falling back to CPU.";
+}
+
+AppWindow::PreviewPresentationState AppWindow::DetermineCpuPreviewState(const SceneMode mode) {
+    return MakePreviewPresentationState(PreviewRenderDevice::Cpu, PreviewContentForMode(mode));
 }
 
 Scene AppWindow::EvaluateSceneAtTimelineFrame(const double frame) const {
@@ -109,18 +292,19 @@ AppWindow::ViewportRenderRequest AppWindow::BuildViewportRenderRequest(
         adaptiveInteractivePreview_,
         interactivePreviewIterations_);
     request.scene.previewIterations = request.previewIterations;
-    request.cpuPreviewBackend = DetermineCpuPreviewBackend(request.scene.mode);
+    request.cpuPreviewState = DetermineCpuPreviewState(request.scene.mode);
     return request;
 }
 
 AppWindow::ViewportRenderSetup AppWindow::DetermineViewportRenderSetup(const ViewportRenderRequest& request) const {
     ViewportRenderSetup setup;
+    const GpuFlameRenderer::StatusSnapshot gpuFlameStatus = gpuFlameRenderer_.GetStatusSnapshot();
     setup.now = std::chrono::steady_clock::now();
     setup.sizeChanged = uploadedViewportWidth_ != request.width || uploadedViewportHeight_ != request.height;
     setup.gpuAccumulationIncomplete =
         request.useGpuViewportPreview
         && request.scene.mode != SceneMode::Path
-        && gpuFlameRenderer_.AccumulatedIterations() < request.previewIterations;
+        && gpuFlameStatus.accumulatedIterations < request.previewIterations;
 
     ImGuiIO& io = ImGui::GetIO();
     ImGuiContext& imgui = *ImGui::GetCurrentContext();
@@ -156,22 +340,22 @@ AppWindow::ViewportRenderSetup AppWindow::DetermineViewportRenderSetup(const Vie
         request.useGpuDofPreview
         && setup.allowGpuResolvePasses
         && !setup.gpuAccumulationIncomplete
-        && (displayedPreviewBackend_ != PreviewBackend::GpuDof && displayedPreviewBackend_ != PreviewBackend::GpuDenoised && displayedPreviewBackend_ != PreviewBackend::GpuPostProcessed);
+        && !IsPreviewPresentationStageAtLeast(previewProgress_.presentation, PreviewRenderStage::DepthOfField);
     setup.needsGpuDenoiserResolve =
         request.useGpuDenoiserPreview
         && setup.allowGpuResolvePasses
         && !setup.gpuAccumulationIncomplete
-        && (displayedPreviewBackend_ != PreviewBackend::GpuDenoised && displayedPreviewBackend_ != PreviewBackend::GpuPostProcessed);
+        && !IsPreviewPresentationStageAtLeast(previewProgress_.presentation, PreviewRenderStage::Denoised);
     setup.needsGpuPostProcessResolve =
         request.useGpuPostProcessPreview
         && setup.allowGpuResolvePasses
         && !setup.gpuAccumulationIncomplete
-        && displayedPreviewBackend_ != PreviewBackend::GpuPostProcessed;
+        && !IsPreviewPresentationStageAtLeast(previewProgress_.presentation, PreviewRenderStage::PostProcessed);
     return setup;
 }
 
 bool AppWindow::ShouldSkipViewportRender(const ViewportRenderSetup& setup) const {
-    return ((!viewportDirty_
+    return ((!IsViewportDirty()
             && !setup.sizeChanged
             && !setup.gpuAccumulationIncomplete
             && !setup.needsGpuDofResolve
@@ -184,15 +368,15 @@ bool AppWindow::ShouldSkipViewportRender(const ViewportRenderSetup& setup) const
 bool AppWindow::SetDirectGpuPreview(
     const int width,
     const int height,
-    const PreviewBackend backend,
+    const PreviewPresentationState state,
     const std::uint32_t displayedIterations,
     const std::chrono::steady_clock::time_point dispatchTime) {
     uploadedViewportWidth_ = width;
     uploadedViewportHeight_ = height;
-    displayedPreviewIterations_ = displayedIterations;
-    displayedPreviewBackend_ = backend;
     lastGpuPreviewDispatchAt_ = dispatchTime;
-    viewportDirty_ = false;
+    const auto snapshot = gpuFlameRenderer_.GetStatusSnapshot();
+    SyncGpuPreviewProgress(state, previewProgress_.targetIterations, snapshot);
+    ApplyPresentedPreviewState(state, displayedIterations, previewProgress_.pendingResetReason, snapshot.temporalStateValid);
     RecordPreviewUpdate();
     return true;
 }
@@ -232,10 +416,10 @@ bool AppWindow::RenderGpuPostProcessPreview(
     const ViewportRenderRequest& request,
     const ViewportRenderSetup& setup,
     ID3D11ShaderResourceView* sourceColor,
-    const PreviewBackend baseBackend,
+    const PreviewPresentationState baseState,
     const std::uint32_t displayedIterations) {
     if (!request.useGpuPostProcessPreview || !setup.allowGpuResolvePasses || sourceColor == nullptr) {
-        return SetDirectGpuPreview(request.width, request.height, baseBackend, displayedIterations, setup.now);
+        return SetDirectGpuPreview(request.width, request.height, baseState, displayedIterations, setup.now);
     }
     GpuPassOutput resolvedFrame;
     bool postProcessed = false;
@@ -251,7 +435,7 @@ bool AppWindow::RenderGpuPostProcessPreview(
     return SetDirectGpuPreview(
         request.width,
         request.height,
-        postProcessed ? PreviewBackend::GpuPostProcessed : baseBackend,
+        postProcessed ? WithPreviewPresentationStage(baseState, PreviewRenderStage::PostProcessed) : baseState,
         displayedIterations,
         setup.now);
 }
@@ -269,7 +453,7 @@ bool AppWindow::RenderGpuDofPreview(
         request,
         setup,
         dofOutput.colorSrv,
-        PreviewBackend::GpuDof,
+        MakePreviewPresentationState(PreviewRenderDevice::Gpu, PreviewContentForMode(request.scene.mode), PreviewRenderStage::DepthOfField),
         displayedIterations);
 }
 
@@ -404,9 +588,9 @@ AppWindow::GpuPreviewPipeline AppWindow::BuildGpuPreviewPipeline(
     const ViewportRenderSetup& setup,
     const GpuFrameInputs& baseInputs,
     ID3D11ShaderResourceView* directSourceColor,
-    const PreviewBackend directBackend,
-    const PreviewBackend composedBackend,
-    const PreviewBackend compositeFailureBackend,
+    const PreviewPresentationState directState,
+    const PreviewPresentationState composedState,
+    const PreviewPresentationState compositeFailureState,
     const std::uint32_t displayedIterations,
     const bool useCompositeFinalize,
     const bool requireCompletedAccumulation) {
@@ -423,9 +607,9 @@ AppWindow::GpuPreviewPipeline AppWindow::BuildGpuPreviewPipeline(
     GpuPreviewPipeline pipeline;
     pipeline.baseInputs = baseInputs;
     pipeline.directSourceColor = directSourceColor;
-    pipeline.directBackend = directBackend;
-    pipeline.composedBackend = composedBackend;
-    pipeline.compositeFailureBackend = compositeFailureBackend;
+    pipeline.directState = directState;
+    pipeline.composedState = composedState;
+    pipeline.compositeFailureState = compositeFailureState;
     pipeline.displayedIterations = displayedIterations;
     pipeline.applyDenoiser =
         request.useGpuDenoiserPreview
@@ -478,6 +662,21 @@ std::wstring AppWindow::BuildGpuFailureStatusMessage(
     if (useGpuPostProcess && !gpuPostProcess_.LastError().empty()) {
         return std::wstring(L"GPU post-process ") + contextLabel + L" failed: " + Utf8ToWide(gpuPostProcess_.LastError());
     }
+    if (useGpuPostProcess) {
+        return std::wstring(L"GPU post-process ") + contextLabel + L" failed.";
+    }
+    if (useGpuDenoiser) {
+        return std::wstring(L"GPU denoiser ") + contextLabel + L" failed.";
+    }
+    if (checks.path) {
+        return std::wstring(L"GPU path ") + contextLabel + L" failed.";
+    }
+    if (checks.grid) {
+        return std::wstring(L"GPU grid ") + contextLabel + L" failed.";
+    }
+    if (checks.flame) {
+        return std::wstring(L"GPU flame ") + contextLabel + L" failed.";
+    }
     return {};
 }
 
@@ -493,25 +692,30 @@ void AppWindow::PopulateGpuPreviewBaseFrameResult(
 
     if (mode == SceneMode::Path) {
         result.directSourceColor = gpuPathRenderer_.ShaderResourceView();
-        result.directBackend = PreviewBackend::GpuPath;
-        result.composedBackend = PreviewBackend::GpuPath;
-        result.compositeFailureBackend = PreviewBackend::GpuPath;
+        result.directState = MakePreviewPresentationState(PreviewRenderDevice::Gpu, PreviewRenderContent::Path);
+        result.composedState = result.directState;
+        result.compositeFailureState = result.directState;
         return;
     }
 
     result.directSourceColor = gpuFlameRenderer_.ShaderResourceView();
-    result.composedBackend = PreviewBackend::GpuDenoised;
+    result.composedState = MakePreviewPresentationState(
+        PreviewRenderDevice::Gpu,
+        PreviewContentForMode(mode),
+        PreviewRenderStage::Composited);
     result.requireCompletedAccumulation = true;
 
     if (mode == SceneMode::Flame) {
-        result.directBackend = includeSeparateGridLayer ? PreviewBackend::GpuHybrid : PreviewBackend::GpuFlame;
-        result.compositeFailureBackend = PreviewBackend::GpuFlame;
+        result.directState = MakePreviewPresentationState(
+            PreviewRenderDevice::Gpu,
+            includeSeparateGridLayer ? PreviewRenderContent::Hybrid : PreviewRenderContent::Flame);
+        result.compositeFailureState = MakePreviewPresentationState(PreviewRenderDevice::Gpu, PreviewRenderContent::Flame);
         result.useCompositeFinalize = includeSeparateGridLayer;
         return;
     }
 
-    result.directBackend = PreviewBackend::GpuHybrid;
-    result.compositeFailureBackend = PreviewBackend::GpuHybrid;
+    result.directState = MakePreviewPresentationState(PreviewRenderDevice::Gpu, PreviewRenderContent::Hybrid);
+    result.compositeFailureState = result.directState;
     result.useCompositeFinalize = true;
 }
 
@@ -690,7 +894,15 @@ bool AppWindow::TryRenderGpuEffectChain(
         return RenderGpuDofPreview(request, setup, effectState.inputs, displayedIterations);
     }
 
-    return SetDirectGpuPreview(request.width, request.height, PreviewBackend::GpuDenoised, displayedIterations, setup.now);
+    return SetDirectGpuPreview(
+        request.width,
+        request.height,
+        MakePreviewPresentationState(
+            PreviewRenderDevice::Gpu,
+            PreviewContentForMode(request.scene.mode),
+            PreviewRenderStage::Denoised),
+        displayedIterations,
+        setup.now);
 }
 
 bool AppWindow::ExecuteGpuPreviewPipeline(
@@ -719,9 +931,9 @@ bool AppWindow::ExecuteGpuPreviewPipeline(
         setup,
         pipeline.directSourceColor,
         pipeline.useCompositeFinalize ? &pipeline.baseInputs : nullptr,
-        pipeline.directBackend,
-        pipeline.composedBackend,
-        pipeline.compositeFailureBackend,
+        pipeline.directState,
+        pipeline.composedState,
+        pipeline.compositeFailureState,
         pipeline.displayedIterations);
 }
 
@@ -746,12 +958,12 @@ bool AppWindow::FinalizeGpuPreviewStage(
     const ViewportRenderSetup& setup,
     ID3D11ShaderResourceView* directSourceColor,
     const GpuFrameInputs* compositeInputs,
-    const PreviewBackend directBackend,
-    const PreviewBackend composedBackend,
-    const PreviewBackend compositeFailureBackend,
+    const PreviewPresentationState directState,
+    const PreviewPresentationState composedState,
+    const PreviewPresentationState compositeFailureState,
     const std::uint32_t displayedIterations) {
     if (!request.useGpuPostProcessPreview || !setup.allowGpuResolvePasses) {
-        return SetDirectGpuPreview(request.width, request.height, directBackend, displayedIterations, setup.now);
+        return SetDirectGpuPreview(request.width, request.height, directState, displayedIterations, setup.now);
     }
 
     if (compositeInputs != nullptr) {
@@ -759,21 +971,21 @@ bool AppWindow::FinalizeGpuPreviewStage(
                 request,
                 setup,
                 *compositeInputs,
-                composedBackend,
+                composedState,
                 displayedIterations)) {
-            return SetDirectGpuPreview(request.width, request.height, compositeFailureBackend, displayedIterations, setup.now);
+            return SetDirectGpuPreview(request.width, request.height, compositeFailureState, displayedIterations, setup.now);
         }
         return true;
     }
 
-    return RenderGpuPostProcessPreview(request, setup, directSourceColor, directBackend, displayedIterations);
+    return RenderGpuPostProcessPreview(request, setup, directSourceColor, directState, displayedIterations);
 }
 
 bool AppWindow::RenderGpuCompositePreview(
     const ViewportRenderRequest& request,
     const ViewportRenderSetup& setup,
     const GpuFrameInputs& inputs,
-    const PreviewBackend composedBackend,
+    const PreviewPresentationState composedState,
     const std::uint32_t displayedIterations) {
     GpuPassOutput composedOutput;
     if (!RunGpuCompositePass(request.width, request.height, inputs, composedOutput)) {
@@ -783,7 +995,7 @@ bool AppWindow::RenderGpuCompositePreview(
         request,
         setup,
         composedOutput.colorSrv,
-        composedBackend,
+        composedState,
         displayedIterations);
 }
 
@@ -826,9 +1038,9 @@ bool AppWindow::ExecuteGpuPreviewBaseFrameResult(
         setup,
         result.baseInputs,
         result.directSourceColor,
-        result.directBackend,
-        result.composedBackend,
-        result.compositeFailureBackend,
+        result.directState,
+        result.composedState,
+        result.compositeFailureState,
         result.displayedIterations,
         result.useCompositeFinalize,
         result.requireCompletedAccumulation);
@@ -866,37 +1078,35 @@ void AppWindow::ExecuteViewportRenderRequest(
 }
 
 bool AppWindow::QueueCpuViewportPreview(const ViewportRenderRequest& request) {
-    if (!viewportDirty_) {
+    if (!IsViewportDirty()) {
         std::lock_guard<std::mutex> lock(renderMutex_);
         const bool sameRequestPending =
             renderRequestPending_
             && pendingRenderWidth_ == request.width
             && pendingRenderHeight_ == request.height
             && pendingRenderPreviewIterations_ == request.previewIterations
-            && pendingRenderBackend_ == request.cpuPreviewBackend;
+            && pendingRenderState_ == request.cpuPreviewState;
         if (sameRequestPending) {
             return true;
         }
     }
 
     QueueViewportRender(request.width, request.height, request.interactive);
-    displayedPreviewIterations_ = request.previewIterations;
-    displayedPreviewBackend_ = request.cpuPreviewBackend;
-    viewportDirty_ = false;
+    UpdatePreviewTargetIterations(request.previewIterations);
+    QueuePreviewPresentation(request.cpuPreviewState);
     return true;
 }
 
 bool AppWindow::PresentViewportPixels(
     const int width,
     const int height,
-    const PreviewBackend backend,
+    const PreviewPresentationState state,
     const std::uint32_t displayedIterations) {
     if (!EnsureViewportTexture(width, height)) {
         return false;
     }
 
-    displayedPreviewIterations_ = displayedIterations;
-    displayedPreviewBackend_ = backend;
+    ApplyPresentedPreviewState(state, displayedIterations, previewProgress_.pendingResetReason);
     D3D11_BOX box {};
     box.left = 0;
     box.top = 0;
@@ -916,11 +1126,10 @@ bool AppWindow::RenderCpuViewportPreview(const ViewportRenderRequest& request) {
     if (!PresentViewportPixels(
             request.width,
             request.height,
-            request.cpuPreviewBackend,
+            request.cpuPreviewState,
             request.scene.previewIterations)) {
         return false;
     }
-    viewportDirty_ = false;
     return true;
 }
 
@@ -933,7 +1142,7 @@ void AppWindow::QueueViewportRender(const int width, const int height, const boo
         pendingRenderWidth_ = request.width;
         pendingRenderHeight_ = request.height;
         pendingRenderPreviewIterations_ = request.previewIterations;
-        pendingRenderBackend_ = request.cpuPreviewBackend;
+        pendingRenderState_ = request.cpuPreviewState;
         ++pendingRenderGeneration_;
         renderRequestPending_ = true;
     }
@@ -951,11 +1160,73 @@ void AppWindow::RecordPreviewUpdate() {
     lastPreviewUpdate_ = now;
 }
 
+bool AppWindow::IsViewportDirty() const {
+    return viewportDirty_ || previewProgress_.dirty;
+}
+
+void AppWindow::UpdatePreviewTargetIterations(const std::uint32_t targetIterations) {
+    previewProgress_.targetIterations = targetIterations;
+}
+
+void AppWindow::QueuePreviewPresentation(const PreviewPresentationState state) {
+    previewProgress_.presentation = state;
+    previewProgress_.displayedIterations = 0;
+    previewProgress_.dirty = false;
+    previewProgress_.phase = PreviewProgressPhase::Queued;
+    previewProgress_.temporalStateValid.reset();
+    viewportDirty_ = false;
+}
+
+void AppWindow::ApplyPresentedPreviewState(
+    const PreviewPresentationState state,
+    const std::uint32_t displayedIterations,
+    const std::optional<PreviewResetReason> appliedResetReason,
+    const std::optional<bool> temporalStateValid,
+    const std::optional<PreviewProgressPhase> phase) {
+    previewProgress_.presentation = state;
+    previewProgress_.displayedIterations = displayedIterations;
+    previewProgress_.dirty = false;
+    if (appliedResetReason.has_value() && *appliedResetReason != PreviewResetReason::None) {
+        previewProgress_.appliedResetReason = *appliedResetReason;
+        previewProgress_.pendingResetReason = PreviewResetReason::None;
+    }
+    if (temporalStateValid.has_value()) {
+        previewProgress_.temporalStateValid = *temporalStateValid;
+    } else if (!IsGpuPreviewPresentationState(state)) {
+        previewProgress_.temporalStateValid.reset();
+    }
+    if (phase.has_value()) {
+        previewProgress_.phase = *phase;
+    } else if (previewProgress_.targetIterations > 0 && displayedIterations < previewProgress_.targetIterations) {
+        previewProgress_.phase = PreviewProgressPhase::Accumulating;
+    } else {
+        previewProgress_.phase = PreviewProgressPhase::Complete;
+    }
+    viewportDirty_ = false;
+}
+
+void AppWindow::SyncGpuPreviewProgress(
+    const PreviewPresentationState state,
+    const std::uint32_t targetIterations,
+    const GpuFlameRenderer::StatusSnapshot& snapshot) {
+    previewProgress_.presentation = state;
+    previewProgress_.targetIterations = targetIterations;
+    previewProgress_.displayedIterations = static_cast<std::uint32_t>(std::min<std::uint64_t>(snapshot.accumulatedIterations, targetIterations));
+    previewProgress_.temporalStateValid = snapshot.temporalStateValid;
+    if (!snapshot.accumulationValid) {
+        previewProgress_.phase = PreviewProgressPhase::Dirty;
+    } else if (previewProgress_.displayedIterations < targetIterations) {
+        previewProgress_.phase = PreviewProgressPhase::Accumulating;
+    } else {
+        previewProgress_.phase = PreviewProgressPhase::Complete;
+    }
+}
+
 void AppWindow::ConsumeCompletedRender() {
     int width = 0;
     int height = 0;
     std::uint32_t previewIterations = 0;
-    PreviewBackend previewBackend = PreviewBackend::CpuHybrid;
+    PreviewPresentationState previewState = {};
 
     {
         std::lock_guard<std::mutex> lock(renderMutex_);
@@ -966,12 +1237,12 @@ void AppWindow::ConsumeCompletedRender() {
         width = completedRenderWidth_;
         height = completedRenderHeight_;
         previewIterations = completedRenderPreviewIterations_;
-        previewBackend = completedRenderBackend_;
+        previewState = completedRenderState_;
         consumedRenderGeneration_ = completedRenderGeneration_;
         viewportPixels_ = std::move(completedRenderPixels_);
     }
 
-    if (PresentViewportPixels(width, height, previewBackend, previewIterations)) {
+    if (PresentViewportPixels(width, height, previewState, previewIterations)) {
         viewportDirty_ = false;
     }
 }
@@ -1000,7 +1271,7 @@ void AppWindow::RenderThreadMain() {
         int width = 0;
         int height = 0;
         std::uint32_t previewIterations = 0;
-        PreviewBackend previewBackend = PreviewBackend::CpuHybrid;
+        PreviewPresentationState previewState = {};
         std::uint64_t generation = 0;
 
         {
@@ -1014,7 +1285,7 @@ void AppWindow::RenderThreadMain() {
             width = pendingRenderWidth_;
             height = pendingRenderHeight_;
             previewIterations = pendingRenderPreviewIterations_;
-            previewBackend = pendingRenderBackend_;
+            previewState = pendingRenderState_;
             generation = pendingRenderGeneration_;
             renderRequestPending_ = false;
             renderInProgress_ = true;
@@ -1039,7 +1310,7 @@ void AppWindow::RenderThreadMain() {
             completedRenderWidth_ = width;
             completedRenderHeight_ = height;
             completedRenderPreviewIterations_ = previewIterations;
-            completedRenderBackend_ = previewBackend;
+            completedRenderState_ = previewState;
             completedRenderGeneration_ = generation;
         }
     }
@@ -1047,6 +1318,7 @@ void AppWindow::RenderThreadMain() {
 
 void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
     ViewportRenderRequest request = BuildViewportRenderRequest(width, height, interactivePreview_, gpuFlamePreviewEnabled_);
+    UpdatePreviewTargetIterations(request.previewIterations);
     const ViewportRenderSetup setup = DetermineViewportRenderSetup(request);
     if (ShouldSkipViewportRender(setup)) {
         return;
@@ -1072,7 +1344,7 @@ void AppWindow::HandleViewportInteraction(const bool hovered) {
     if (uiCapturingMouse) {
         if (interactivePreview_) {
             interactivePreview_ = false;
-            viewportDirty_ = true;
+            MarkViewportDirty(PreviewResetReason::IterationChanged);
         }
         viewportInteractionCaptured_ = false;
         return;
@@ -1080,7 +1352,7 @@ void AppWindow::HandleViewportInteraction(const bool hovered) {
     const bool interacting = hovered && (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right) || io.MouseWheel != 0.0f);
     if (interactivePreview_ != interacting) {
         interactivePreview_ = interacting;
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::IterationChanged);
     }
     if (!interacting) {
         viewportInteractionCaptured_ = false;
@@ -1102,14 +1374,14 @@ void AppWindow::HandleViewportInteraction(const bool hovered) {
         scene_.camera.yaw += io.MouseDelta.x * 0.01;
         scene_.camera.pitch = std::clamp(scene_.camera.pitch + io.MouseDelta.y * 0.01, -1.45, 1.45);
         AutoKeyCurrentFrame();
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::CameraChanged);
     }
     if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
         captureViewportUndo();
         scene_.camera.panX += io.MouseDelta.x;
         scene_.camera.panY += io.MouseDelta.y;
         AutoKeyCurrentFrame();
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::CameraChanged);
     }
     if (io.MouseWheel != 0.0f) {
         captureViewportUndo();
@@ -1119,9 +1391,9 @@ void AppWindow::HandleViewportInteraction(const bool hovered) {
         scene_.camera.zoom2D = std::max(kMinCameraZoom, scene_.camera.zoom2D * zoomFactor);
         scene_.camera.distance = std::max(kMinCameraDistance, scene_.camera.distance * (io.MouseWheel > 0.0f ? 0.94 : 1.06));
         AutoKeyCurrentFrame();
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::CameraChanged);
     }
-    if (viewportDirty_) {
+    if (IsViewportDirty()) {
         SyncCurrentKeyframeFromScene();
     }
 }

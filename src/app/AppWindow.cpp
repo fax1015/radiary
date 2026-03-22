@@ -325,7 +325,7 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
 
     RenderFrame();
     bootstrapUiFramePending_ = false;
-    viewportDirty_ = true;
+    MarkViewportDirty();
     updateLoading(1.0f, "Done");
     loadingComplete_ = true;
     KillTimer(window_, kStartupAnimationTimerId);
@@ -667,7 +667,7 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
         }
         resizeWidth_ = static_cast<UINT>(LOWORD(lParam));
         resizeHeight_ = static_cast<UINT>(HIWORD(lParam));
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::ViewportResized);
         if (!loadingComplete_) {
             InvalidateRect(window_, nullptr, FALSE);
             UpdateWindow(window_);

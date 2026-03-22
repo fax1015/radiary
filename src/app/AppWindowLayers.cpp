@@ -52,7 +52,7 @@ void AppWindow::ResetScene(Scene scene) {
     layerRenameBuffer_.clear();
     EnsureSelectionIsValid();
     ClearPendingUndoCapture();
-    viewportDirty_ = true;
+    MarkViewportDirty(PreviewResetReason::SceneChanged);
 }
 
 void AppWindow::HandleShortcuts() {
@@ -172,7 +172,7 @@ void AppWindow::Undo() {
     renamingLayerIndex_ = -1;
     focusLayerRename_ = false;
     layerRenameBuffer_.clear();
-    viewportDirty_ = true;
+    MarkViewportDirty(PreviewResetReason::SceneChanged);
     statusText_ = L"Undo";
 }
 
@@ -195,7 +195,7 @@ void AppWindow::Redo() {
     renamingLayerIndex_ = -1;
     focusLayerRename_ = false;
     layerRenameBuffer_.clear();
-    viewportDirty_ = true;
+    MarkViewportDirty(PreviewResetReason::SceneChanged);
     statusText_ = L"Redo";
 }
 
@@ -484,7 +484,7 @@ bool AppWindow::RemoveSelectedLayers() {
         inspectorTarget_ = InspectorTarget::PathLayer;
     }
     NormalizeLayerSelections();
-    viewportDirty_ = true;
+    MarkViewportDirty(PreviewResetReason::SceneChanged);
     statusText_ = removedCount > 1 ? L"Layers removed" : L"Layer removed";
     return true;
 }
@@ -555,7 +555,7 @@ void AppWindow::PasteCopiedLayer() {
         const int insertIndex = InsertLayerCopy(scene_.paths, scene_.selectedPath, std::move(path));
         AdjustKeyframeOwnerIndicesForInsertedLayer(InspectorTarget::PathLayer, insertIndex);
         SelectSingleLayer(InspectorTarget::PathLayer, insertIndex);
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::SceneChanged);
         statusText_ = L"Path layer pasted";
         return;
     }
@@ -566,7 +566,7 @@ void AppWindow::PasteCopiedLayer() {
     const int insertIndex = InsertLayerCopy(scene_.transforms, scene_.selectedTransform, std::move(layer));
     AdjustKeyframeOwnerIndicesForInsertedLayer(InspectorTarget::FlameLayer, insertIndex);
     SelectSingleLayer(InspectorTarget::FlameLayer, insertIndex);
-    viewportDirty_ = true;
+    MarkViewportDirty(PreviewResetReason::SceneChanged);
     statusText_ = L"Layer pasted";
 }
 
@@ -586,7 +586,7 @@ void AppWindow::DuplicateSelectedLayer() {
         const int insertIndex = InsertLayerCopy(scene_.paths, scene_.selectedPath, std::move(path));
         AdjustKeyframeOwnerIndicesForInsertedLayer(InspectorTarget::PathLayer, insertIndex);
         SelectSingleLayer(InspectorTarget::PathLayer, insertIndex);
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::SceneChanged);
         statusText_ = L"Path layer duplicated";
         return;
     }
@@ -601,7 +601,7 @@ void AppWindow::DuplicateSelectedLayer() {
     const int insertIndex = InsertLayerCopy(scene_.transforms, scene_.selectedTransform, std::move(layer));
     AdjustKeyframeOwnerIndicesForInsertedLayer(InspectorTarget::FlameLayer, insertIndex);
     SelectSingleLayer(InspectorTarget::FlameLayer, insertIndex);
-    viewportDirty_ = true;
+    MarkViewportDirty(PreviewResetReason::SceneChanged);
     statusText_ = L"Layer duplicated";
 }
 
@@ -687,7 +687,7 @@ void AppWindow::RefreshTimelinePose() {
         scene_.timelineSeconds = TimelineSecondsForFrame(scene_, scene_.timelineFrame);
         scene_.keyframes = evaluated.keyframes;
     }
-    viewportDirty_ = true;
+    MarkViewportDirty(PreviewResetReason::SceneChanged);
 }
 
 void AppWindow::AutoKeyCurrentFrame() {

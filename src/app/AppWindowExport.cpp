@@ -391,7 +391,7 @@ bool AppWindow::ReadbackGpuDepthTexture(ID3D11Texture2D* texture, std::vector<fl
 }
 
 void AppWindow::InvalidateExportViewportPreview() {
-    viewportDirty_ = true;
+    MarkViewportDirty(PreviewResetReason::SceneChanged);
     uploadedViewportWidth_ = 0;
     uploadedViewportHeight_ = 0;
 }
@@ -411,10 +411,11 @@ AppWindow::GpuExportRenderPlan AppWindow::BuildGpuExportRenderPlan(
     plan.height = std::max(1, height);
     plan.transparentBackground = transparentBackground;
     plan.exportGrid = !hideGrid && plan.scene.gridVisible;
-    plan.usesEffectPipeline =
-        plan.scene.denoiser.enabled
-        || plan.scene.depthOfField.enabled
-        || plan.scene.postProcess.enabled;
+    plan.content = PreviewContentForMode(plan.scene.mode);
+    plan.outputStage = DetermineResolvedRenderStage(
+        plan.scene.denoiser.enabled,
+        plan.scene.depthOfField.enabled,
+        plan.scene.postProcess.enabled);
     plan.renderState = renderState;
     return plan;
 }
@@ -663,7 +664,7 @@ bool AppWindow::ExecuteGpuExportBaseFrameResult(
     const GpuExportRenderPlan& plan,
     const GpuExportBaseFrameResult& result,
     std::vector<std::uint32_t>& pixels) {
-    if (plan.usesEffectPipeline) {
+    if (plan.outputStage != PreviewRenderStage::Base) {
         return ReadGpuExportEffectPixels(
             plan.scene,
             plan.width,
@@ -735,15 +736,28 @@ bool AppWindow::RenderExportSceneWithGpuFallback(
     if (useGpuRender && !RenderSceneToPixels(renderScene, width, height, iterations, transparentBackground, hideGrid, true, pixels, renderState)) {
         const std::wstring gpuFailureStatus = statusText_;
         useGpuRender = false;
-        statusText_ = gpuFailureStatus.empty()
-            ? L"GPU export unavailable, falling back to CPU"
-            : gpuFailureStatus + L" Falling back to CPU.";
+        const PreviewPresentationState exportState = MakePreviewPresentationState(
+            PreviewRenderDevice::Gpu,
+            PreviewContentForMode(renderScene.mode),
+            DetermineResolvedRenderStage(
+                renderScene.denoiser.enabled,
+                renderScene.depthOfField.enabled,
+                renderScene.postProcess.enabled));
+        statusText_ = BuildGpuFallbackStatusMessage(exportState, gpuFailureStatus);
     }
     if (!useGpuRender && !RenderSceneToPixels(renderScene, width, height, iterations, transparentBackground, hideGrid, false, pixels, renderState)) {
         statusText_ = L"Export failed";
         return false;
     }
     return true;
+}
+
+std::wstring AppWindow::BuildExportInterruptedStatus() const {
+    return exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+}
+
+void AppWindow::SetExportInterruptedStatus() {
+    statusText_ = BuildExportInterruptedStatus();
 }
 
 bool AppWindow::RenderAnimatedExportFrame(
@@ -787,7 +801,7 @@ bool AppWindow::ExportViewportImage(
     const ExportFormat format) {
     exportProgressTitle_ = L"Exporting image";
     if (!UpdateExportProgress(0.08f, L"Rendering " + path.filename().wstring())) {
-        statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+        SetExportInterruptedStatus();
         return false;
     }
     const Scene exportScene = EvaluateSceneAtTimelineFrame(scene_.timelineFrame);
@@ -805,7 +819,7 @@ bool AppWindow::ExportViewportImage(
         return false;
     }
     if (!UpdateExportProgress(0.78f, L"Writing " + path.filename().wstring())) {
-        statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+        SetExportInterruptedStatus();
         return false;
     }
     const int exportWidth = std::max(1, width);
@@ -835,7 +849,7 @@ bool AppWindow::ExportImageSequence(
     const int frameCount = std::max(1, endFrame - startFrame + 1);
     exportProgressTitle_ = L"Exporting image sequence";
     if (!UpdateExportProgress(0.0f, L"Preparing " + std::to_wstring(frameCount) + L" frames")) {
-        statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+        SetExportInterruptedStatus();
         return false;
     }
     bool useGpuRender = useGpu;
@@ -845,7 +859,7 @@ bool AppWindow::ExportImageSequence(
         if (!UpdateExportProgress(
                 static_cast<float>(frameIndex) / static_cast<float>(frameCount),
                 L"Rendering frame " + std::to_wstring(frame) + L" of " + std::to_wstring(endFrame))) {
-            statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+            SetExportInterruptedStatus();
             return false;
         }
         std::vector<std::uint32_t> pixels;
@@ -872,7 +886,7 @@ bool AppWindow::ExportImageSequence(
         if (!UpdateExportProgress(
                 static_cast<float>(frameIndex + 1) / static_cast<float>(frameCount),
                 L"Saved frame " + std::to_wstring(frame) + L" of " + std::to_wstring(endFrame))) {
-            statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+            SetExportInterruptedStatus();
             return false;
         }
     }
@@ -907,7 +921,7 @@ bool AppWindow::ExportAviVideo(
     const std::uint32_t scale = 1000u;
     exportProgressTitle_ = L"Exporting video";
     if (!UpdateExportProgress(0.0f, L"Preparing AVI stream")) {
-        statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+        SetExportInterruptedStatus();
         return false;
     }
 
@@ -981,7 +995,7 @@ bool AppWindow::ExportAviVideo(
         if (!UpdateExportProgress(
                 static_cast<float>(frameIndex) / static_cast<float>(frameCount),
                 L"Rendering frame " + std::to_wstring(frame) + L" of " + std::to_wstring(endFrame))) {
-            statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+            SetExportInterruptedStatus();
             return false;
         }
         chunkOffsets.push_back(static_cast<std::uint32_t>(stream.tellp()) - moviListOffsetBase);
@@ -1006,7 +1020,7 @@ bool AppWindow::ExportAviVideo(
         if (!UpdateExportProgress(
                 static_cast<float>(frameIndex + 1) / static_cast<float>(frameCount),
                 L"Wrote frame " + std::to_wstring(frame) + L" of " + std::to_wstring(endFrame))) {
-            statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+            SetExportInterruptedStatus();
             return false;
         }
     }
@@ -1150,7 +1164,7 @@ bool AppWindow::ExportFfmpegVideo(
     if (!UpdateExportProgress(0.0f, L"Streaming frames to FFmpeg")) {
         DWORD exitCode = 1u;
         finishFfmpegProcess(true, &exitCode);
-        statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+        SetExportInterruptedStatus();
         std::error_code cleanupError;
         std::filesystem::remove(path, cleanupError);
         return false;
@@ -1165,7 +1179,7 @@ bool AppWindow::ExportFfmpegVideo(
                 L"Rendering frame " + std::to_wstring(frame) + L" of " + std::to_wstring(endFrame))) {
             DWORD exitCode = 1u;
             finishFfmpegProcess(true, &exitCode);
-            statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+            SetExportInterruptedStatus();
             std::error_code cleanupError;
             std::filesystem::remove(path, cleanupError);
             ffmpegErrorDetail();
@@ -1208,7 +1222,7 @@ bool AppWindow::ExportFfmpegVideo(
                 L"Encoded frame " + std::to_wstring(frame) + L" of " + std::to_wstring(endFrame))) {
             DWORD exitCode = 1u;
             finishFfmpegProcess(true, &exitCode);
-            statusText_ = exportCancelRequested_ ? L"Export cancelled" : L"Export failed";
+            SetExportInterruptedStatus();
             std::error_code cleanupError;
             std::filesystem::remove(path, cleanupError);
             ffmpegErrorDetail();

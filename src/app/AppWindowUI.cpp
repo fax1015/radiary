@@ -382,7 +382,7 @@ void AppWindow::DrawToolbar() {
     if (DrawActionButton("##toggle_playback", scene_.animatePath ? "Pause" : "Play", scene_.animatePath ? IconGlyph::Pause : IconGlyph::Play, ActionTone::Accent, scene_.animatePath)) {
         PushUndoState(scene_);
         scene_.animatePath = !scene_.animatePath;
-        viewportDirty_ = true;
+        MarkViewportDirty();
     }
 
     drawDivider();
@@ -391,7 +391,7 @@ void AppWindow::DrawToolbar() {
     if (DrawActionButton("##toggle_grid", "Grid", IconGlyph::Grid, ActionTone::Accent, scene_.gridVisible)) {
         PushUndoState(scene_);
         scene_.gridVisible = !scene_.gridVisible;
-        viewportDirty_ = true;
+        MarkViewportDirty();
     }
     ImGui::SameLine();
 
@@ -402,7 +402,7 @@ void AppWindow::DrawToolbar() {
     const bool modeChanged = ComboWithMaterialArrow("##mode", &modeIndex, modes, IM_ARRAYSIZE(modes));
     if (modeChanged) {
         scene_.mode = static_cast<SceneMode>(modeIndex);
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::ModeChanged);
     }
     CaptureWidgetUndo(beforeMode, modeChanged);
 
@@ -497,14 +497,14 @@ void AppWindow::DrawSettingsPanel() {
 
         ImGui::SeparatorText("Rendering");
         if (ImGui::Checkbox("GPU viewport preview", &gpuFlamePreviewEnabled_) || ResetValueOnDoubleClick(gpuFlamePreviewEnabled_, kDefaultGpuViewportPreview)) {
-            viewportDirty_ = true;
+            MarkViewportDirty(PreviewResetReason::DeviceChanged);
         }
         if (gpuFlamePreviewEnabled_) {
             std::string gpuBackendSummary = "Flame ";
             gpuBackendSummary += gpuFlameRenderer_.IsReady() ? "D3D11 compute" : "lazy";
             gpuBackendSummary += " | Path ";
             gpuBackendSummary += gpuPathRenderer_.IsReady() ? "D3D11 raster" : "lazy";
-            ImGui::TextDisabled("Viewport backend: %s", gpuBackendSummary.c_str());
+            ImGui::TextDisabled("Viewport GPU path: %s", gpuBackendSummary.c_str());
             if (!gpuFlameRenderer_.LastError().empty()) {
                 ImGui::TextWrapped("Flame GPU status: %s", gpuFlameRenderer_.LastError().c_str());
             }
@@ -512,7 +512,7 @@ void AppWindow::DrawSettingsPanel() {
                 ImGui::TextWrapped("Path GPU status: %s", gpuPathRenderer_.LastError().c_str());
             }
         } else {
-            ImGui::TextDisabled("Viewport backend: CPU software renderer");
+            ImGui::TextDisabled("Viewport path: CPU software renderer");
         }
 
         ImGui::SeparatorText("Hardware");
@@ -581,7 +581,7 @@ void AppWindow::DrawSettingsPanel() {
         bool graphicsChanged = ImGui::Checkbox("Show viewport grid", &scene_.gridVisible);
         graphicsChanged = ResetValueOnDoubleClick(scene_.gridVisible, defaultScene.gridVisible) || graphicsChanged;
         if (graphicsChanged) {
-            viewportDirty_ = true;
+            MarkViewportDirty(DeterminePreviewResetReason(beforeGraphics, scene_));
         }
         CaptureWidgetUndo(beforeGraphics, graphicsChanged);
         if (ImGui::Checkbox("Show status overlay", &showStatusOverlay_) || ResetValueOnDoubleClick(showStatusOverlay_, kDefaultShowStatusOverlay)) {
@@ -866,7 +866,7 @@ void AppWindow::DrawLayersPanel() {
         layer.visible = true;
         scene_.transforms.push_back(layer);
         SelectSingleLayer(InspectorTarget::FlameLayer, static_cast<int>(scene_.transforms.size()) - 1);
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::SceneChanged);
     }
     ImGui::SameLine();
     if (DrawActionButton("##add_path_layer", "Add Path", IconGlyph::Add, ActionTone::Accent, false, true, 112.0f)) {
@@ -880,7 +880,7 @@ void AppWindow::DrawLayersPanel() {
         path.visible = true;
         scene_.paths.push_back(path);
         SelectSingleLayer(InspectorTarget::PathLayer, static_cast<int>(scene_.paths.size()) - 1);
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::SceneChanged);
     }
     ImGui::SameLine();
     const bool canRemoveLayer = CanRemoveSelectedLayers();
@@ -954,7 +954,7 @@ void AppWindow::DrawLayersPanel() {
             if (togglePressed) {
                 PushUndoState(scene_);
                 visible = !visible;
-                viewportDirty_ = true;
+                MarkViewportDirty(PreviewResetReason::SceneChanged);
                 statusText_ = visible ? L"Layer shown" : L"Layer hidden";
             }
             ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -1016,7 +1016,7 @@ void AppWindow::DrawInspectorPanel() {
     const auto captureEdit = [&](const Scene& before, const bool changed) {
         if (changed) {
             AutoKeyCurrentFrame();
-            viewportDirty_ = true;
+            MarkViewportDirty(DeterminePreviewResetReason(before, scene_));
         }
         CaptureWidgetUndo(before, changed);
     };
@@ -1097,7 +1097,7 @@ void AppWindow::DrawInspectorPanel() {
         const bool previous = value;
         if (ImGui::Checkbox("Visible", &value)) {
             PushUndoState(scene_);
-            viewportDirty_ = true;
+            MarkViewportDirty(PreviewResetReason::SceneChanged);
             statusText_ = value ? L"Layer shown" : L"Layer hidden";
             return previous != value;
         }
@@ -1146,7 +1146,7 @@ void AppWindow::DrawInspectorPanel() {
             const std::string currentName = path.name;
             path = proceduralReference.paths[templateIndex];
             path.name = currentName;
-            viewportDirty_ = true;
+            MarkViewportDirty(PreviewResetReason::SceneChanged);
         }
         ImGui::SameLine();
         if (ImGui::Button("Procedural Finish")) {
@@ -1161,7 +1161,7 @@ void AppWindow::DrawInspectorPanel() {
             path.segment = templatePath.segment;
             path.fractalDisplacement = templatePath.fractalDisplacement;
             path.material = templatePath.material;
-            viewportDirty_ = true;
+            MarkViewportDirty(PreviewResetReason::SceneChanged);
         }
 
         if (ImGui::Button("Straight Path")) {
@@ -1172,7 +1172,7 @@ void AppWindow::DrawInspectorPanel() {
                 {1.9, 0.0, 0.0},
                 {5.6, 0.0, 0.0}
             };
-            viewportDirty_ = true;
+            MarkViewportDirty(PreviewResetReason::SceneChanged);
         }
         ImGui::SameLine();
         if (ImGui::Button("Random Path")) {
@@ -1243,14 +1243,14 @@ void AppWindow::DrawInspectorPanel() {
             path.material.primaryColor = {static_cast<std::uint8_t>(colorChannel(generator)), static_cast<std::uint8_t>(colorChannel(generator)), static_cast<std::uint8_t>(colorChannel(generator)), 255};
             path.material.accentColor = {static_cast<std::uint8_t>(colorChannel(generator)), static_cast<std::uint8_t>(colorChannel(generator)), static_cast<std::uint8_t>(colorChannel(generator)), 255};
             path.material.wireColor = {static_cast<std::uint8_t>(colorChannel(generator)), static_cast<std::uint8_t>(colorChannel(generator)), static_cast<std::uint8_t>(colorChannel(generator)), 255};
-            viewportDirty_ = true;
+            MarkViewportDirty(PreviewResetReason::SceneChanged);
         }
         ImGui::SameLine();
         if (ImGui::Button("Add Point")) {
             PushUndoState(scene_);
             const Vec3 last = path.controlPoints.empty() ? Vec3{} : path.controlPoints.back();
             path.controlPoints.push_back({last.x + 2.2, last.y * -0.75, last.z + 1.6});
-            viewportDirty_ = true;
+            MarkViewportDirty(PreviewResetReason::SceneChanged);
         }
 
         if (ImGui::CollapsingHeader("Control Points", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1271,7 +1271,7 @@ void AppWindow::DrawInspectorPanel() {
                     if (path.controlPoints.size() > 2 && ImGui::Button(("Delete##point" + std::to_string(pointIndex)).c_str())) {
                         PushUndoState(scene_);
                         path.controlPoints.erase(path.controlPoints.begin() + static_cast<std::ptrdiff_t>(pointIndex));
-                        viewportDirty_ = true;
+                        MarkViewportDirty(PreviewResetReason::SceneChanged);
                         ImGui::TreePop();
                         break;
                     }
@@ -1744,7 +1744,7 @@ void AppWindow::DrawTimelinePanel() {
     if (DrawActionButton("##timeline_play", scene_.animatePath ? "Pause" : "Play", scene_.animatePath ? IconGlyph::Pause : IconGlyph::Play, ActionTone::Accent, scene_.animatePath, true, 108.0f)) {
         PushUndoState(scene_);
         scene_.animatePath = !scene_.animatePath;
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::SceneChanged);
     }
     ImGui::SameLine();
     if (DrawActionButton("##timeline_prev_key", "", IconGlyph::PreviousKeyframe, ActionTone::Slate, false, previousKeyframeIndex >= 0, 0.0f, "Snap to previous keyframe")) {
@@ -1793,7 +1793,7 @@ void AppWindow::DrawTimelinePanel() {
         PushUndoState(scene_);
         scene_.camera = CameraState{};
         SyncCurrentKeyframeFromScene();
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::CameraChanged);
     }
 
     drawHeaderDivider();
@@ -1900,7 +1900,7 @@ void AppWindow::DrawTimelinePanel() {
     if (timelineChanged) {
         scene_.timelineFrame = Clamp(scene_.timelineFrame, static_cast<double>(scene_.timelineStartFrame), static_cast<double>(scene_.timelineEndFrame));
         scene_.timelineSeconds = TimelineSecondsForFrame(scene_, scene_.timelineFrame);
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::SceneChanged);
     }
     CaptureWidgetUndo(beforeTimeline, timelineChanged);
 
@@ -2098,7 +2098,7 @@ void AppWindow::DrawTimelinePanel() {
         const bool previewChanged = SliderScalarWithInput("##preview_render_iterations", ImGuiDataType_U32, &scene_.previewIterations, &minIterations, &maxIterations, "%u")
             || ResetValueOnDoubleClick(scene_.previewIterations, defaultScene.previewIterations);
         if (previewChanged) {
-            viewportDirty_ = true;
+            MarkViewportDirty(DeterminePreviewResetReason(beforePreview, scene_));
         }
         CaptureWidgetUndo(beforePreview, previewChanged);
 
@@ -2123,7 +2123,7 @@ void AppWindow::DrawTimelinePanel() {
             || ResetColorOnDoubleClick(backgroundColor, defaultScene.backgroundColor);
         if (backgroundChanged) {
             scene_.backgroundColor = ToColor(backgroundColor);
-            viewportDirty_ = true;
+            MarkViewportDirty(DeterminePreviewResetReason(beforeBackground, scene_));
         }
         CaptureWidgetUndo(beforeBackground, backgroundChanged);
 
@@ -2135,7 +2135,7 @@ void AppWindow::DrawTimelinePanel() {
         bool denoiserEnabledChanged = ImGui::Checkbox("Denoiser", &scene_.denoiser.enabled);
         denoiserEnabledChanged = ResetValueOnDoubleClick(scene_.denoiser.enabled, defaultScene.denoiser.enabled) || denoiserEnabledChanged;
         if (denoiserEnabledChanged) {
-            viewportDirty_ = true;
+            MarkViewportDirty(DeterminePreviewResetReason(beforeDenoiserEnabled, scene_));
         }
         CaptureWidgetUndo(beforeDenoiserEnabled, denoiserEnabledChanged);
 
@@ -2144,7 +2144,7 @@ void AppWindow::DrawTimelinePanel() {
         bool dofEnabledChanged = ImGui::Checkbox("Depth of Field", &scene_.depthOfField.enabled);
         dofEnabledChanged = ResetValueOnDoubleClick(scene_.depthOfField.enabled, defaultScene.depthOfField.enabled) || dofEnabledChanged;
         if (dofEnabledChanged) {
-            viewportDirty_ = true;
+            MarkViewportDirty(DeterminePreviewResetReason(beforeDofEnabled, scene_));
         }
         CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
 
@@ -2155,7 +2155,7 @@ void AppWindow::DrawTimelinePanel() {
             bool postProcessEnabledChanged = ImGui::Checkbox("Post-Processing", &scene_.postProcess.enabled);
             postProcessEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.enabled, defaultScene.postProcess.enabled) || postProcessEnabledChanged;
             if (postProcessEnabledChanged) {
-                viewportDirty_ = true;
+                MarkViewportDirty(DeterminePreviewResetReason(beforePostProcessEnabled, scene_));
             }
             CaptureWidgetUndo(beforePostProcessEnabled, postProcessEnabledChanged);
         }
@@ -2176,7 +2176,7 @@ void AppWindow::DrawTimelinePanel() {
             bool denoiseChanged = SliderScalarWithInput("##preview_denoiser_strength", ImGuiDataType_Double, &scene_.denoiser.strength, &denoiserStrengthMin, &denoiserStrengthMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.denoiser.strength, defaultScene.denoiser.strength);
             if (denoiseChanged) {
-                viewportDirty_ = true;
+                MarkViewportDirty(DeterminePreviewResetReason(beforeDenoise, scene_));
             }
             CaptureWidgetUndo(beforeDenoise, denoiseChanged);
 
@@ -2201,7 +2201,7 @@ void AppWindow::DrawTimelinePanel() {
             bool dofChanged = SliderScalarWithInput("##preview_dof_focus_depth", ImGuiDataType_Double, &scene_.depthOfField.focusDepth, &focusDepthMin, &focusDepthMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.depthOfField.focusDepth, defaultScene.depthOfField.focusDepth);
             if (dofChanged) {
-                viewportDirty_ = true;
+                MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
             }
             CaptureWidgetUndo(beforeDof, dofChanged);
 
@@ -2212,7 +2212,7 @@ void AppWindow::DrawTimelinePanel() {
             dofChanged = SliderScalarWithInput("##preview_dof_focus_range", ImGuiDataType_Double, &scene_.depthOfField.focusRange, &focusRangeMin, &focusRangeMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.depthOfField.focusRange, defaultScene.depthOfField.focusRange);
             if (dofChanged) {
-                viewportDirty_ = true;
+                MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
             }
             CaptureWidgetUndo(beforeDof, dofChanged);
 
@@ -2224,7 +2224,7 @@ void AppWindow::DrawTimelinePanel() {
             dofChanged = SliderScalarWithInput("##preview_dof_blur_strength", ImGuiDataType_Double, &scene_.depthOfField.blurStrength, &blurStrengthMin, &blurStrengthMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.depthOfField.blurStrength, defaultScene.depthOfField.blurStrength);
             if (dofChanged) {
-                viewportDirty_ = true;
+                MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
             }
             CaptureWidgetUndo(beforeDof, dofChanged);
 
@@ -2250,7 +2250,7 @@ void AppWindow::DrawTimelinePanel() {
             Scene beforePP = scene_;
             bool ppChanged = SliderScalarWithInput("##pp_bloom_intensity", ImGuiDataType_Double, &scene_.postProcess.bloomIntensity, &bloomIntensityMin, &bloomIntensityMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.postProcess.bloomIntensity, defaultScene.postProcess.bloomIntensity);
-            if (ppChanged) viewportDirty_ = true;
+            if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
             ImGui::TableNextColumn();
@@ -2259,7 +2259,7 @@ void AppWindow::DrawTimelinePanel() {
             beforePP = scene_;
             ppChanged = SliderScalarWithInput("##pp_bloom_threshold", ImGuiDataType_Double, &scene_.postProcess.bloomThreshold, &bloomThresholdMin, &bloomThresholdMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.postProcess.bloomThreshold, defaultScene.postProcess.bloomThreshold);
-            if (ppChanged) viewportDirty_ = true;
+            if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
             ImGui::TableNextRow();
@@ -2269,7 +2269,7 @@ void AppWindow::DrawTimelinePanel() {
             beforePP = scene_;
             ppChanged = SliderScalarWithInput("##pp_chromatic", ImGuiDataType_Double, &scene_.postProcess.chromaticAberration, &chromaticMin, &chromaticMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.postProcess.chromaticAberration, defaultScene.postProcess.chromaticAberration);
-            if (ppChanged) viewportDirty_ = true;
+            if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
             ImGui::TableNextColumn();
@@ -2278,7 +2278,7 @@ void AppWindow::DrawTimelinePanel() {
             beforePP = scene_;
             ppChanged = SliderScalarWithInput("##pp_vignette", ImGuiDataType_Double, &scene_.postProcess.vignetteIntensity, &vignetteIntensityMin, &vignetteIntensityMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.postProcess.vignetteIntensity, defaultScene.postProcess.vignetteIntensity);
-            if (ppChanged) viewportDirty_ = true;
+            if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
             ImGui::TableNextRow();
@@ -2288,7 +2288,7 @@ void AppWindow::DrawTimelinePanel() {
             beforePP = scene_;
             ppChanged = SliderScalarWithInput("##pp_vignette_round", ImGuiDataType_Double, &scene_.postProcess.vignetteRoundness, &vignetteRoundnessMin, &vignetteRoundnessMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.postProcess.vignetteRoundness, defaultScene.postProcess.vignetteRoundness);
-            if (ppChanged) viewportDirty_ = true;
+            if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
             ImGui::TableNextColumn();
@@ -2297,7 +2297,7 @@ void AppWindow::DrawTimelinePanel() {
             beforePP = scene_;
             ppChanged = SliderScalarWithInput("##pp_film_grain", ImGuiDataType_Double, &scene_.postProcess.filmGrain, &filmGrainMin, &filmGrainMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.postProcess.filmGrain, defaultScene.postProcess.filmGrain);
-            if (ppChanged) viewportDirty_ = true;
+            if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
             ImGui::TableNextRow();
@@ -2307,7 +2307,7 @@ void AppWindow::DrawTimelinePanel() {
             beforePP = scene_;
             ppChanged = SliderScalarWithInput("##pp_color_temp", ImGuiDataType_Double, &scene_.postProcess.colorTemperature, &colorTempMin, &colorTempMax, "%.0f K")
                 || ResetValueOnDoubleClick(scene_.postProcess.colorTemperature, defaultScene.postProcess.colorTemperature);
-            if (ppChanged) viewportDirty_ = true;
+            if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
             ImGui::TableNextColumn();
@@ -2316,7 +2316,7 @@ void AppWindow::DrawTimelinePanel() {
             beforePP = scene_;
             ppChanged = SliderScalarWithInput("##pp_saturation", ImGuiDataType_Double, &scene_.postProcess.saturationBoost, &saturationMin, &saturationMax, "%.2f")
                 || ResetValueOnDoubleClick(scene_.postProcess.saturationBoost, defaultScene.postProcess.saturationBoost);
-            if (ppChanged) viewportDirty_ = true;
+            if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
             ImGui::TableNextRow();
@@ -2325,7 +2325,7 @@ void AppWindow::DrawTimelinePanel() {
             beforePP = scene_;
             ppChanged = ImGui::Checkbox("##pp_aces", &scene_.postProcess.acesToneMap)
                 || ResetValueOnDoubleClick(scene_.postProcess.acesToneMap, defaultScene.postProcess.acesToneMap);
-            if (ppChanged) viewportDirty_ = true;
+            if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
             ImGui::EndTable();
@@ -2334,46 +2334,27 @@ void AppWindow::DrawTimelinePanel() {
 
     const int previewWidth = std::max(1, uploadedViewportWidth_);
     const int previewHeight = std::max(1, uploadedViewportHeight_);
-    const std::uint32_t targetPreviewIterations =
-        (interactivePreview_ && adaptiveInteractivePreview_)
-        ? std::min(scene_.previewIterations, interactivePreviewIterations_)
-        : scene_.previewIterations;
-    const char* previewBackend = "Preview";
-    switch (displayedPreviewBackend_) {
-    case PreviewBackend::CpuFlame:
-        previewBackend = "CPU Flame";
-        break;
-    case PreviewBackend::CpuPath:
-        previewBackend = "CPU Path";
-        break;
-    case PreviewBackend::CpuHybrid:
-        previewBackend = "CPU Hybrid";
-        break;
-    case PreviewBackend::GpuFlame:
-        previewBackend = "GPU Flame";
-        break;
-    case PreviewBackend::GpuDof:
-        previewBackend = "GPU DOF";
-        break;
-    case PreviewBackend::GpuPath:
-        previewBackend = "GPU Path";
-        break;
-    case PreviewBackend::GpuHybrid:
-        previewBackend = "GPU Flame + GPU Path";
-        break;
-    case PreviewBackend::GpuDenoised:
-        previewBackend = "GPU Denoised";
-        break;
-    }
+    const PreviewProgressState& preview = previewProgress_;
     ImGui::Separator();
     ImGui::TextDisabled(
-        "Preview %dx%d | Iter %u/%u | %s | FPS %.1f",
+        "Preview %dx%d | Iter %u/%u | %s %s %s | %s | FPS %.1f",
         previewWidth,
         previewHeight,
-        displayedPreviewIterations_,
-        targetPreviewIterations,
-        previewBackend,
+        preview.displayedIterations,
+        preview.targetIterations,
+        PreviewRenderDeviceLabel(preview.presentation.device),
+        PreviewRenderContentLabel(preview.presentation.content),
+        PreviewRenderStageLabel(preview.presentation.stage),
+        PreviewProgressPhaseLabel(preview.phase),
         previewFpsSmoothed_);
+    if (preview.pendingResetReason != PreviewResetReason::None) {
+        ImGui::TextDisabled("Reset pending: %s", PreviewResetReasonLabel(preview.pendingResetReason));
+    } else {
+        ImGui::TextDisabled("Reset applied: %s", PreviewResetReasonLabel(preview.appliedResetReason));
+    }
+    if (preview.temporalStateValid.has_value()) {
+        ImGui::TextDisabled("Temporal state: %s", *preview.temporalStateValid ? "valid" : "reset");
+    }
     ImGui::End();
 }
 
@@ -2397,7 +2378,7 @@ void AppWindow::DrawCameraPanel() {
     const auto captureCameraEdit = [&](const Scene& before, const bool changed) {
         if (changed) {
             AutoKeyCurrentFrame();
-            viewportDirty_ = true;
+            MarkViewportDirty(PreviewResetReason::CameraChanged);
         }
         CaptureWidgetUndo(before, changed);
     };
@@ -2518,7 +2499,7 @@ void AppWindow::DrawCameraPanel() {
         PushUndoState(scene_);
         scene_.camera = CameraState {};
         AutoKeyCurrentFrame();
-        viewportDirty_ = true;
+        MarkViewportDirty(PreviewResetReason::CameraChanged);
     }
     ImGui::SameLine();
     if (DrawActionButton("##camera_panel_export", "Open Export", IconGlyph::ExportImage, ActionTone::Accent, exportPanelOpen_, true, 146.0f)) {
@@ -2553,12 +2534,7 @@ void AppWindow::DrawViewportPanel() {
 
     const bool preferGpuPreview =
         gpuFlamePreviewEnabled_
-        && (displayedPreviewBackend_ == PreviewBackend::GpuFlame
-            || displayedPreviewBackend_ == PreviewBackend::GpuDof
-            || displayedPreviewBackend_ == PreviewBackend::GpuDenoised
-            || displayedPreviewBackend_ == PreviewBackend::GpuPath
-            || displayedPreviewBackend_ == PreviewBackend::GpuHybrid
-            || displayedPreviewBackend_ == PreviewBackend::GpuPostProcessed);
+        && IsGpuPreviewPresentationState(previewProgress_.presentation);
 
     const ImVec2 imageMin = ImGui::GetCursorScreenPos();
     const ImVec2 imageMax(imageMin.x + available.x, imageMin.y + available.y);
@@ -2589,30 +2565,31 @@ void AppWindow::DrawViewportPanel() {
     };
 
     if (preferGpuPreview) {
-        if (scene_.mode == SceneMode::Flame
-            && displayedPreviewBackend_ == PreviewBackend::GpuFlame
-            && gpuFlameRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuFlameRenderer_.ShaderResourceView()), available);
-            hovered = ImGui::IsItemHovered();
-        } else if (displayedPreviewBackend_ == PreviewBackend::GpuPostProcessed
+        if (previewProgress_.presentation.stage == PreviewRenderStage::PostProcessed
             && gpuPostProcess_.ShaderResourceView() != nullptr) {
             ImGui::Image(reinterpret_cast<ImTextureID>(gpuPostProcess_.ShaderResourceView()), available);
             hovered = ImGui::IsItemHovered();
-        } else if (displayedPreviewBackend_ == PreviewBackend::GpuDof
-            && gpuDofRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuDofRenderer_.ShaderResourceView()), available);
-            hovered = ImGui::IsItemHovered();
-        } else if (displayedPreviewBackend_ == PreviewBackend::GpuDenoised
+        } else if ((previewProgress_.presentation.stage == PreviewRenderStage::Composited
+                || previewProgress_.presentation.stage == PreviewRenderStage::Denoised)
             && gpuDenoiser_.ShaderResourceView() != nullptr) {
             ImGui::Image(reinterpret_cast<ImTextureID>(gpuDenoiser_.ShaderResourceView()), available);
             hovered = ImGui::IsItemHovered();
-        } else if (scene_.mode == SceneMode::Path
-            && displayedPreviewBackend_ == PreviewBackend::GpuPath
+        } else if (previewProgress_.presentation.stage == PreviewRenderStage::DepthOfField
+            && gpuDofRenderer_.ShaderResourceView() != nullptr) {
+            ImGui::Image(reinterpret_cast<ImTextureID>(gpuDofRenderer_.ShaderResourceView()), available);
+            hovered = ImGui::IsItemHovered();
+        } else if (previewProgress_.presentation.content == PreviewRenderContent::Flame
+            && previewProgress_.presentation.stage == PreviewRenderStage::Base
+            && gpuFlameRenderer_.ShaderResourceView() != nullptr) {
+            ImGui::Image(reinterpret_cast<ImTextureID>(gpuFlameRenderer_.ShaderResourceView()), available);
+            hovered = ImGui::IsItemHovered();
+        } else if (previewProgress_.presentation.content == PreviewRenderContent::Path
+            && previewProgress_.presentation.stage == PreviewRenderStage::Base
             && gpuPathRenderer_.ShaderResourceView() != nullptr) {
             ImGui::Image(reinterpret_cast<ImTextureID>(gpuPathRenderer_.ShaderResourceView()), available);
             hovered = ImGui::IsItemHovered();
-        } else if ((scene_.mode == SceneMode::Flame || scene_.mode == SceneMode::Hybrid)
-            && displayedPreviewBackend_ == PreviewBackend::GpuHybrid
+        } else if (previewProgress_.presentation.content == PreviewRenderContent::Hybrid
+            && previewProgress_.presentation.stage == PreviewRenderStage::Base
             && gpuFlameRenderer_.ShaderResourceView() != nullptr) {
             const bool hasGridLayer = scene_.gridVisible && gpuGridRenderer_.ShaderResourceView() != nullptr;
             if (hasGridLayer) {
@@ -2659,8 +2636,8 @@ void AppWindow::DrawViewportPanel() {
     }
 
     if (gpuFlamePreviewEnabled_ && available.x > 1.0f && available.y > 1.0f) {
-        const std::uint32_t targetIterations = scene_.previewIterations;
-        const std::uint32_t accumulated = displayedPreviewIterations_;
+        const std::uint32_t targetIterations = previewProgress_.targetIterations;
+        const std::uint32_t accumulated = previewProgress_.displayedIterations;
         if (targetIterations > 0 && accumulated < targetIterations) {
             const float progress = static_cast<float>(accumulated) / static_cast<float>(targetIterations);
             constexpr float barHeight = 2.0f;
@@ -2671,11 +2648,11 @@ void AppWindow::DrawViewportPanel() {
         }
     }
 
-    const bool viewportDirtyBeforeInteraction = viewportDirty_;
+    const bool viewportDirtyBeforeInteraction = IsViewportDirty();
     HandleViewportInteraction(allowViewportRender && hovered);
-    const bool viewportDirtiedByInteraction = viewportDirty_ && !viewportDirtyBeforeInteraction;
+    const bool viewportDirtiedByInteraction = IsViewportDirty() && !viewportDirtyBeforeInteraction;
 
-    if (allowViewportRender && viewportDirty_ && (!attemptedViewportRender || viewportDirtiedByInteraction)) {
+    if (allowViewportRender && IsViewportDirty() && (!attemptedViewportRender || viewportDirtiedByInteraction)) {
         RenderViewportIfNeeded(width, height);
     }
 

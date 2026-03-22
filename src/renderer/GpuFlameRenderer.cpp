@@ -87,7 +87,19 @@ void GpuFlameRenderer::ResetAccumulation() {
     accumulatedIterations_ = 0;
     sceneSignature_ = 0;
     temporalStateValid_ = false;
+    lastRenderResetAccumulation_ = false;
+    lastRenderResetTemporalState_ = false;
     temporalThreadCount_ = 0;
+}
+
+GpuFlameRenderer::StatusSnapshot GpuFlameRenderer::GetStatusSnapshot() const {
+    return GpuFlameRenderer::StatusSnapshot {
+        .accumulatedIterations = accumulatedIterations_,
+        .accumulationValid = accumulationValid_,
+        .temporalStateValid = temporalStateValid_,
+        .lastRenderResetAccumulation = lastRenderResetAccumulation_,
+        .lastRenderResetTemporalState = lastRenderResetTemporalState_,
+    };
 }
 
 void GpuFlameRenderer::Shutdown() {
@@ -140,6 +152,8 @@ bool GpuFlameRenderer::Render(
 
     const std::uint64_t sceneSignature = ComputeSceneSignature(scene);
     const bool resetAccumulation = clearAccumulationForFrame || !accumulationValid_ || sceneSignature_ != sceneSignature;
+    lastRenderResetAccumulation_ = resetAccumulation;
+    lastRenderResetTemporalState_ = false;
     if (resetAccumulation) {
         const std::uint32_t clearAccum[4] = {0u, 0u, 0u, 0u};
         deviceContext_->ClearUnorderedAccessViewUint(accumulationUav_, clearAccum);
@@ -153,12 +167,15 @@ bool GpuFlameRenderer::Render(
             || resetTemporalState
             || !temporalStateValid_
             || temporalThreadCount_ != totalThreads;
+        lastRenderResetTemporalState_ = resetOrbitStates;
         if (resetOrbitStates && orbitStateUav_ != nullptr) {
             const std::uint32_t clearState[4] = {0u, 0u, 0u, 0u};
             deviceContext_->ClearUnorderedAccessViewUint(orbitStateUav_, clearState);
         }
         temporalStateValid_ = preserveTemporalState && totalThreads > 0u;
         temporalThreadCount_ = totalThreads;
+    } else {
+        lastRenderResetTemporalState_ = false;
     }
 
     std::vector<TransformGpu> transforms(scene.transforms.size());

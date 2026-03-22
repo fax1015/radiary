@@ -12,6 +12,14 @@ namespace radiary {
 
 class GpuFlameRenderer {
 public:
+    struct StatusSnapshot {
+        std::uint64_t accumulatedIterations = 0;
+        bool accumulationValid = false;
+        bool temporalStateValid = false;
+        bool lastRenderResetAccumulation = false;
+        bool lastRenderResetTemporalState = false;
+    };
+
     ~GpuFlameRenderer();
 
     bool Initialize(ID3D11Device* device, ID3D11DeviceContext* deviceContext);
@@ -35,6 +43,7 @@ public:
     bool IsReady() const { return device_ != nullptr && accumulateShader_ != nullptr && toneMapShader_ != nullptr && paramsBuffer_ != nullptr; }
     const std::string& LastError() const { return lastError_; }
     std::uint64_t AccumulatedIterations() const { return accumulatedIterations_; }
+    StatusSnapshot GetStatusSnapshot() const;
 
 private:
     struct TransformGpu {
@@ -135,6 +144,8 @@ private:
     std::uint64_t accumulatedIterations_ = 0;
     bool accumulationValid_ = false;
     bool temporalStateValid_ = false;
+    bool lastRenderResetAccumulation_ = false;
+    bool lastRenderResetTemporalState_ = false;
     std::size_t temporalThreadCount_ = 0;
     std::string lastError_;
 };

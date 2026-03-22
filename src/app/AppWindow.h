@@ -64,16 +64,67 @@ private:
         Path
     };
 
-    enum class PreviewBackend {
-        CpuFlame,
-        CpuPath,
-        CpuHybrid,
-        GpuFlame,
-        GpuPath,
-        GpuHybrid,
-        GpuDof,
-        GpuDenoised,
-        GpuPostProcessed
+    enum class PreviewRenderDevice {
+        Cpu,
+        Gpu
+    };
+
+    enum class PreviewRenderContent {
+        Flame,
+        Path,
+        Hybrid
+    };
+
+    enum class PreviewRenderStage {
+        Base,
+        Composited,
+        Denoised,
+        DepthOfField,
+        PostProcessed
+    };
+
+    enum class PreviewResetReason {
+        None,
+        SceneChanged,
+        CameraChanged,
+        ModeChanged,
+        IterationChanged,
+        ViewportResized,
+        DeviceChanged
+    };
+
+    struct PreviewPresentationState {
+        PreviewRenderDevice device = PreviewRenderDevice::Cpu;
+        PreviewRenderContent content = PreviewRenderContent::Hybrid;
+        PreviewRenderStage stage = PreviewRenderStage::Base;
+
+        bool operator==(const PreviewPresentationState&) const = default;
+    };
+
+    enum class PreviewProgressPhase {
+        Dirty,
+        Queued,
+        Accumulating,
+        Complete
+    };
+
+    struct PreviewProgressState {
+        std::uint32_t targetIterations = 0;
+        std::uint32_t displayedIterations = 0;
+        PreviewPresentationState presentation {};
+        PreviewResetReason pendingResetReason = PreviewResetReason::SceneChanged;
+        PreviewResetReason appliedResetReason = PreviewResetReason::SceneChanged;
+        PreviewProgressPhase phase = PreviewProgressPhase::Dirty;
+        bool dirty = true;
+        std::optional<bool> temporalStateValid;
+
+        bool IsInProgress() const {
+            return phase == PreviewProgressPhase::Queued || phase == PreviewProgressPhase::Accumulating;
+        }
+
+        bool IsComplete() const {
+            return phase == PreviewProgressPhase::Complete;
+        }
     };
 
     enum class ExportFormat {
@@ -109,7 +160,7 @@ private:
         bool useGpuDofPreview = false;
         bool useGpuDenoiserPreview = false;
         bool useGpuPostProcessPreview = false;
-        PreviewBackend cpuPreviewBackend = PreviewBackend::CpuHybrid;
+        PreviewPresentationState cpuPreviewState {};
     };
 
     struct ViewportRenderSetup {
@@ -129,9 +180,9 @@ private:
     struct GpuPreviewPipeline {
         GpuFrameInputs baseInputs {};
         ID3D11ShaderResourceView* directSourceColor = nullptr;
-        PreviewBackend directBackend = PreviewBackend::GpuHybrid;
-        PreviewBackend composedBackend = PreviewBackend::GpuHybrid;
-        PreviewBackend compositeFailureBackend = PreviewBackend::GpuHybrid;
+        PreviewPresentationState directState {};
+        PreviewPresentationState composedState {};
+        PreviewPresentationState compositeFailureState {};
         std::uint32_t displayedIterations = 0;
         bool applyDenoiser = false;
         bool applyDof = false;
@@ -143,9 +194,9 @@ private:
         bool includeSeparateGridLayer = false;
         GpuFrameInputs baseInputs {};
         ID3D11ShaderResourceView* directSourceColor = nullptr;
-        PreviewBackend directBackend = PreviewBackend::GpuHybrid;
-        PreviewBackend composedBackend = PreviewBackend::GpuHybrid;
-        PreviewBackend compositeFailureBackend = PreviewBackend::GpuHybrid;
+        PreviewPresentationState directState {};
+        PreviewPresentationState composedState {};
+        PreviewPresentationState compositeFailureState {};
         std::uint32_t displayedIterations = 0;
         bool useCompositeFinalize = false;
         bool requireCompletedAccumulation = false;
@@ -307,7 +358,7 @@ private:
     int pendingRenderWidth_ = 0;
     int pendingRenderHeight_ = 0;
     std::uint32_t pendingRenderPreviewIterations_ = 0;
-    PreviewBackend pendingRenderBackend_ = PreviewBackend::CpuHybrid;
+    PreviewPresentationState pendingRenderState_ {};
     std::uint64_t pendingRenderGeneration_ = 0;
     bool renderRequestPending_ = false;
     bool renderThreadExit_ = false;
@@ -316,11 +367,10 @@ private:
     int completedRenderWidth_ = 0;
     int completedRenderHeight_ = 0;
     std::uint32_t completedRenderPreviewIterations_ = 0;
-    PreviewBackend completedRenderBackend_ = PreviewBackend::CpuHybrid;
+    PreviewPresentationState completedRenderState_ {};
     std::uint64_t completedRenderGeneration_ = 0;
     std::uint64_t consumedRenderGeneration_ = 0;
-    std::uint32_t displayedPreviewIterations_ = 0;
-    PreviewBackend displayedPreviewBackend_ = PreviewBackend::CpuHybrid;
+    PreviewProgressState previewProgress_ {};
     std::chrono::steady_clock::time_point lastGpuPreviewDispatchAt_ {};
     int selectedTimelineKeyframe_ = -1;
     bool timelineDraggingPlayhead_ = false;
@@ -378,15 +428,45 @@ private:
     void EnsureSelectionIsValid();
     void ResetScene(Scene scene);
     void LoadPreset(std::size_t index);
-    void MarkViewportDirty();
-    static PreviewBackend DetermineCpuPreviewBackend(SceneMode mode);
+    void MarkViewportDirty(PreviewResetReason reason = PreviewResetReason::SceneChanged);
+    static PreviewResetReason DeterminePreviewResetReason(const Scene& before, const Scene& after);
+    static PreviewRenderContent PreviewContentForMode(SceneMode mode);
+    static PreviewPresentationState MakePreviewPresentationState(
+        PreviewRenderDevice device,
+        PreviewRenderContent content,
+        PreviewRenderStage stage = PreviewRenderStage::Base);
+    static PreviewPresentationState WithPreviewPresentationStage(
+        PreviewPresentationState state,
+        PreviewRenderStage stage);
+    static bool IsGpuPreviewPresentationState(const PreviewPresentationState& state);
+    static bool IsPreviewPresentationStageAtLeast(
+        const PreviewPresentationState& state,
+        PreviewRenderStage stage);
+    static const char* PreviewRenderDeviceLabel(PreviewRenderDevice device);
+    static const char* PreviewRenderContentLabel(PreviewRenderContent content);
+    static const char* PreviewRenderStageLabel(PreviewRenderStage stage);
+    static const char* PreviewProgressPhaseLabel(PreviewProgressPhase phase);
+    static const char* PreviewResetReasonLabel(PreviewResetReason reason);
+    static std::wstring DescribePreviewPresentationState(const PreviewPresentationState& state);
+    static PreviewPresentationState DetermineCpuPreviewState(SceneMode mode);
+    static PreviewRenderStage DetermineResolvedRenderStage(
+        bool useDenoiser,
+        bool useDof,
+        bool usePostProcess);
+    static std::wstring BuildGpuRendererUnavailableStatusMessage(
+        const wchar_t* label,
+        bool deviceReady,
+        const std::string& lastError);
+    static std::wstring BuildGpuFallbackStatusMessage(
+        const PreviewPresentationState& failedState,
+        const std::wstring& failureStatus);
     Scene EvaluateSceneAtTimelineFrame(double frame) const;
     Scene BuildRenderableScene(const Scene& scene) const;
     Scene BuildExportRenderScene(const Scene& sourceScene, int width, int height, bool hideGrid) const;
     ViewportRenderRequest BuildViewportRenderRequest(int width, int height, bool interactive, bool useGpuViewportPreview) const;
     ViewportRenderSetup DetermineViewportRenderSetup(const ViewportRenderRequest& request) const;
     bool ShouldSkipViewportRender(const ViewportRenderSetup& setup) const;
-    bool SetDirectGpuPreview(int width, int height, PreviewBackend backend, std::uint32_t displayedIterations, std::chrono::steady_clock::time_point dispatchTime);
+    bool SetDirectGpuPreview(int width, int height, PreviewPresentationState state, std::uint32_t displayedIterations, std::chrono::steady_clock::time_point dispatchTime);
     bool ResolveGpuPostProcessOutput(
         const Scene& scene,
         int width,
@@ -399,7 +479,7 @@ private:
         const ViewportRenderRequest& request,
         const ViewportRenderSetup& setup,
         ID3D11ShaderResourceView* sourceColor,
-        PreviewBackend baseBackend,
+        PreviewPresentationState baseState,
         std::uint32_t displayedIterations);
     bool RenderGpuDofPreview(
         const ViewportRenderRequest& request,
@@ -437,9 +517,9 @@ private:
         const ViewportRenderSetup& setup,
         const GpuFrameInputs& baseInputs,
         ID3D11ShaderResourceView* directSourceColor,
-        PreviewBackend directBackend,
-        PreviewBackend composedBackend,
-        PreviewBackend compositeFailureBackend,
+        PreviewPresentationState directState,
+        PreviewPresentationState composedState,
+        PreviewPresentationState compositeFailureState,
         std::uint32_t displayedIterations,
         bool useCompositeFinalize,
         bool requireCompletedAccumulation);
@@ -509,15 +589,15 @@ private:
         const ViewportRenderSetup& setup,
         ID3D11ShaderResourceView* directSourceColor,
         const GpuFrameInputs* compositeInputs,
-        PreviewBackend directBackend,
-        PreviewBackend composedBackend,
-        PreviewBackend compositeFailureBackend,
+        PreviewPresentationState directState,
+        PreviewPresentationState composedState,
+        PreviewPresentationState compositeFailureState,
         std::uint32_t displayedIterations);
     bool RenderGpuCompositePreview(
         const ViewportRenderRequest& request,
         const ViewportRenderSetup& setup,
         const GpuFrameInputs& inputs,
-        PreviewBackend composedBackend,
+        PreviewPresentationState composedState,
         std::uint32_t displayedIterations);
     bool BuildGpuPreviewBaseFrameResult(
         const ViewportRenderRequest& request,
@@ -529,11 +609,24 @@ private:
     bool RenderGpuViewportPreview(const ViewportRenderRequest& request, const ViewportRenderSetup& setup);
     void ExecuteViewportRenderRequest(const ViewportRenderRequest& request, const ViewportRenderSetup& setup);
     bool QueueCpuViewportPreview(const ViewportRenderRequest& request);
-    bool PresentViewportPixels(int width, int height, PreviewBackend backend, std::uint32_t displayedIterations);
+    bool PresentViewportPixels(int width, int height, PreviewPresentationState state, std::uint32_t displayedIterations);
     bool RenderCpuViewportPreview(const ViewportRenderRequest& request);
     void QueueViewportRender(int width, int height, bool interactive);
     void ConsumeCompletedRender();
     void RecordPreviewUpdate();
+    bool IsViewportDirty() const;
+    void UpdatePreviewTargetIterations(std::uint32_t targetIterations);
+    void QueuePreviewPresentation(PreviewPresentationState state);
+    void ApplyPresentedPreviewState(
+        PreviewPresentationState state,
+        std::uint32_t displayedIterations,
+        std::optional<PreviewResetReason> appliedResetReason = std::nullopt,
+        std::optional<bool> temporalStateValid = std::nullopt,
+        std::optional<PreviewProgressPhase> phase = std::nullopt);
+    void SyncGpuPreviewProgress(
+        PreviewPresentationState state,
+        std::uint32_t targetIterations,
+        const GpuFlameRenderer::StatusSnapshot& snapshot);
     void StartRenderThread();
     void StopRenderThread();
     void RenderThreadMain();
@@ -605,7 +698,8 @@ private:
         int height = 0;
         bool transparentBackground = false;
         bool exportGrid = false;
-        bool usesEffectPipeline = false;
+        PreviewRenderContent content = PreviewRenderContent::Hybrid;
+        PreviewRenderStage outputStage = PreviewRenderStage::Base;
         const ExportRenderState* renderState = nullptr;
     };
     struct GpuExportBaseFrameResult {
@@ -639,6 +733,8 @@ private:
         bool& useGpuRender,
         std::vector<std::uint32_t>& pixels,
         const ExportRenderState* renderState = nullptr);
+    std::wstring BuildExportInterruptedStatus() const;
+    void SetExportInterruptedStatus();
     bool RenderAnimatedExportFrame(
         int frame,
         int frameIndex,

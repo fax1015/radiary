@@ -24,7 +24,6 @@ cmake-build-*/
 
 # Temporary files
 temp/
-RENDERING_REFACTOR_PLAN.md
 
 # IDE
 .vs/
@@ -39,4 +38,5 @@ Desktop.ini
 .DS_Store
 
 # Tools
+.cache/
 .tools/
