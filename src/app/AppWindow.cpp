@@ -356,7 +356,6 @@ int AppWindow::Run() {
     SaveUserSettings();
     StopRenderThread();
     ShutdownImGui();
-    CleanupViewportTexture();
     CleanupDeviceD3D();
     if (window_) {
         DestroyWindow(window_);

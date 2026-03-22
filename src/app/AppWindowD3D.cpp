@@ -137,6 +137,11 @@ bool TryParseBoolValue(const std::map<std::string, std::string>& values, const c
 
 namespace radiary {
 
+std::filesystem::path AppWindow::UserLayoutPath() {
+    const std::filesystem::path settingsPath = UserSettingsPath();
+    return settingsPath.parent_path() / "imgui-layout.ini";
+}
+
 bool AppWindow::CreateDeviceD3D() {
     IDXGIFactory1* factory = nullptr;
     IDXGIAdapter* selectedAdapter = nullptr;
@@ -229,6 +234,12 @@ bool AppWindow::CreateDeviceD3D() {
     if (factory) { factory->Release(); }
 
     CreateRenderTarget();
+    if (!renderBackend_) {
+        renderBackend_.reset(CreateD3D11RenderBackend());
+    }
+    if (renderBackend_) {
+        renderBackend_->Initialize(device_.Get(), deviceContext_.Get());
+    }
     return true;
 }
 
@@ -348,7 +359,6 @@ bool AppWindow::ApplyPendingGraphicsDeviceChange() {
     graphicsDeviceChangePending_ = false;
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
-    CleanupViewportTexture();
     CleanupDeviceD3D();
     if (!CreateDeviceD3D()) {
         statusText_ = L"GPU switch failed";
@@ -365,6 +375,9 @@ bool AppWindow::ApplyPendingGraphicsDeviceChange() {
 }
 
 void AppWindow::CleanupDeviceD3D() {
+    if (renderBackend_) {
+        renderBackend_->Shutdown();
+    }
     CleanupAppLogoTexture();
     gpuPostProcess_.Shutdown();
     gpuDenoiser_.Shutdown();
@@ -388,46 +401,12 @@ void AppWindow::CleanupRenderTarget() {
     mainRenderTargetView_.Reset();
 }
 
-void AppWindow::CleanupViewportTexture() {
-    viewportSrv_.Reset();
-    viewportTexture_.Reset();
-    uploadedViewportWidth_ = 0;
-    uploadedViewportHeight_ = 0;
+int AppWindow::UploadedViewportWidth() const {
+    return renderBackend_ ? renderBackend_->PresentedPreviewWidth() : 0;
 }
 
-bool AppWindow::EnsureViewportTexture(const int width, const int height) {
-    if (viewportTexture_ && uploadedViewportWidth_ == width && uploadedViewportHeight_ == height) {
-        return true;
-    }
-
-    CleanupViewportTexture();
-
-    D3D11_TEXTURE2D_DESC desc {};
-    desc.Width = static_cast<UINT>(width);
-    desc.Height = static_cast<UINT>(height);
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-    if (FAILED(device_->CreateTexture2D(&desc, nullptr, viewportTexture_.GetAddressOf()))) {
-        return false;
-    }
-
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc {};
-    srvDesc.Format = desc.Format;
-    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srvDesc.Texture2D.MipLevels = 1;
-    if (FAILED(device_->CreateShaderResourceView(viewportTexture_.Get(), &srvDesc, viewportSrv_.GetAddressOf()))) {
-        CleanupViewportTexture();
-        return false;
-    }
-
-    uploadedViewportWidth_ = width;
-    uploadedViewportHeight_ = height;
-    return true;
+int AppWindow::UploadedViewportHeight() const {
+    return renderBackend_ ? renderBackend_->PresentedPreviewHeight() : 0;
 }
 
 void AppWindow::LoadPresets() {
@@ -453,6 +432,7 @@ void AppWindow::LoadPresets() {
 }
 
 void AppWindow::LoadUserSettings() {
+    defaultLayoutBuilt_ = std::filesystem::exists(UserLayoutPath());
     const std::map<std::string, std::string> values = LoadKeyValueFile(UserSettingsPath());
     if (values.empty()) {
         return;
@@ -526,8 +506,14 @@ void AppWindow::LoadUserSettings() {
 
 void AppWindow::SaveUserSettings() const {
     const std::filesystem::path settingsPath = UserSettingsPath();
+    const std::filesystem::path layoutPath = UserLayoutPath();
     std::error_code createError;
     std::filesystem::create_directories(settingsPath.parent_path(), createError);
+    std::filesystem::create_directories(layoutPath.parent_path(), createError);
+
+    if (ImGui::GetCurrentContext() != nullptr) {
+        ImGui::SaveIniSettingsToDisk(layoutPath.string().c_str());
+    }
 
     std::ofstream stream(settingsPath, std::ios::trunc);
     if (!stream) {
@@ -624,11 +610,17 @@ void AppWindow::SetupImGui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     io.ConfigDpiScaleFonts = true;
     io.ConfigDpiScaleViewports = true;
+
+    const std::filesystem::path layoutPath = UserLayoutPath();
+    if (std::filesystem::exists(layoutPath)) {
+        ImGui::LoadIniSettingsFromDisk(layoutPath.string().c_str());
+    }
 
     wchar_t modulePath[MAX_PATH] = L"";
     GetModuleFileNameW(nullptr, modulePath, MAX_PATH);

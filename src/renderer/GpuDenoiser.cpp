@@ -8,6 +8,7 @@
 
 #include "renderer/D3D11ResourceUtils.h"
 #include "renderer/D3D11ShaderUtils.h"
+#include "renderer/GpuPassParams.h"
 
 namespace radiary {
 
@@ -91,12 +92,14 @@ bool GpuDenoiser::Render(
         return false;
     }
 
-    Params params;
-    params.width = static_cast<std::uint32_t>(width);
-    params.height = static_cast<std::uint32_t>(height);
-    params.useGrid = inputs.HasGrid() ? 1u : 0u;
-    params.useFlame = inputs.HasFlame() ? 1u : 0u;
-    params.usePath = inputs.HasPath() ? 1u : 0u;
+    Params params {};
+    const GpuViewportParams viewport = MakeGpuViewportParams(width, height);
+    const GpuFrameLayerFlags layerFlags = MakeGpuFrameLayerFlags(inputs);
+    params.width = viewport.width;
+    params.height = viewport.height;
+    params.useGrid = layerFlags.useGrid;
+    params.useFlame = layerFlags.useFlame;
+    params.usePath = layerFlags.usePath;
     params.strength = static_cast<float>(std::clamp(scene.denoiser.strength, 0.0, 1.0));
     params.sigmaSpatial = 3.0f + params.strength * 4.0f;
     params.sigmaColor = 0.15f + params.strength * 0.25f;
@@ -126,12 +129,14 @@ bool GpuDenoiser::Compose(
         return false;
     }
 
-    Params params;
-    params.width = static_cast<std::uint32_t>(width);
-    params.height = static_cast<std::uint32_t>(height);
-    params.useGrid = inputs.HasGrid() ? 1u : 0u;
-    params.useFlame = inputs.HasFlame() ? 1u : 0u;
-    params.usePath = inputs.HasPath() ? 1u : 0u;
+    Params params {};
+    const GpuViewportParams viewport = MakeGpuViewportParams(width, height);
+    const GpuFrameLayerFlags layerFlags = MakeGpuFrameLayerFlags(inputs);
+    params.width = viewport.width;
+    params.height = viewport.height;
+    params.useGrid = layerFlags.useGrid;
+    params.useFlame = layerFlags.useFlame;
+    params.usePath = layerFlags.usePath;
     params.strength = 0.0f;
     params.sigmaSpatial = 1.0f;
     params.sigmaColor = 1.0f;

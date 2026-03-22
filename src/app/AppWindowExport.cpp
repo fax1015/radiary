@@ -280,120 +280,11 @@ bool AppWindow::RenderSceneToPixelsCpu(
     return !pixels.empty();
 }
 
-bool AppWindow::ReadbackGpuTexture(ID3D11Texture2D* texture, std::vector<std::uint32_t>& pixels) const {
-    pixels.clear();
-    if (!device_ || !deviceContext_ || texture == nullptr) {
-        return false;
-    }
-
-    D3D11_TEXTURE2D_DESC desc {};
-    texture->GetDesc(&desc);
-    if (desc.Width == 0 || desc.Height == 0) {
-        return false;
-    }
-
-    D3D11_TEXTURE2D_DESC stagingDesc = desc;
-    stagingDesc.BindFlags = 0;
-    stagingDesc.MiscFlags = 0;
-    stagingDesc.Usage = D3D11_USAGE_STAGING;
-    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> stagingTexture;
-    const HRESULT createResult = device_->CreateTexture2D(&stagingDesc, nullptr, stagingTexture.GetAddressOf());
-    if (FAILED(createResult) || !stagingTexture) {
-        return false;
-    }
-
-    bool success = false;
-    deviceContext_->CopyResource(stagingTexture.Get(), texture);
-
-    D3D11_MAPPED_SUBRESOURCE mapped {};
-    const HRESULT mapResult = deviceContext_->Map(stagingTexture.Get(), 0, D3D11_MAP_READ, 0, &mapped);
-    if (SUCCEEDED(mapResult)) {
-        pixels.resize(static_cast<std::size_t>(desc.Width) * static_cast<std::size_t>(desc.Height));
-        for (UINT y = 0; y < desc.Height; ++y) {
-            const BYTE* rowBytes = static_cast<const BYTE*>(mapped.pData) + static_cast<std::size_t>(y) * mapped.RowPitch;
-            for (UINT x = 0; x < desc.Width; ++x) {
-                const std::size_t pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(desc.Width) + static_cast<std::size_t>(x);
-                if (desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM) {
-                    const BYTE* rgba = rowBytes + static_cast<std::size_t>(x) * 4u;
-                    pixels[pixelIndex] = PackBgra(rgba[0], rgba[1], rgba[2], rgba[3]);
-                } else if (desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
-                    const std::uint16_t* rgba = reinterpret_cast<const std::uint16_t*>(rowBytes + static_cast<std::size_t>(x) * sizeof(std::uint16_t) * 4u);
-                    pixels[pixelIndex] = PackBgra(
-                        FloatToByte(HalfToFloat(rgba[0])),
-                        FloatToByte(HalfToFloat(rgba[1])),
-                        FloatToByte(HalfToFloat(rgba[2])),
-                        FloatToByte(HalfToFloat(rgba[3])));
-                } else if (desc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT) {
-                    const float* rgba = reinterpret_cast<const float*>(rowBytes + static_cast<std::size_t>(x) * sizeof(float) * 4u);
-                    pixels[pixelIndex] = PackBgra(
-                        FloatToByte(rgba[0]),
-                        FloatToByte(rgba[1]),
-                        FloatToByte(rgba[2]),
-                        FloatToByte(rgba[3]));
-                } else {
-                    pixels.clear();
-                    break;
-                }
-            }
-            if (pixels.empty()) {
-                break;
-            }
-        }
-        deviceContext_->Unmap(stagingTexture.Get(), 0);
-        success = !pixels.empty();
-    }
-
-    return success;
-}
-
-bool AppWindow::ReadbackGpuDepthTexture(ID3D11Texture2D* texture, std::vector<float>& depthBuffer) const {
-    depthBuffer.clear();
-    if (!device_ || !deviceContext_ || texture == nullptr) {
-        return false;
-    }
-
-    D3D11_TEXTURE2D_DESC desc {};
-    texture->GetDesc(&desc);
-    if (desc.Width == 0 || desc.Height == 0 || desc.Format != DXGI_FORMAT_R32_FLOAT) {
-        return false;
-    }
-
-    D3D11_TEXTURE2D_DESC stagingDesc = desc;
-    stagingDesc.BindFlags = 0;
-    stagingDesc.MiscFlags = 0;
-    stagingDesc.Usage = D3D11_USAGE_STAGING;
-    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> stagingTexture;
-    const HRESULT createResult = device_->CreateTexture2D(&stagingDesc, nullptr, stagingTexture.GetAddressOf());
-    if (FAILED(createResult) || !stagingTexture) {
-        return false;
-    }
-
-    deviceContext_->CopyResource(stagingTexture.Get(), texture);
-
-    D3D11_MAPPED_SUBRESOURCE mapped {};
-    const HRESULT mapResult = deviceContext_->Map(stagingTexture.Get(), 0, D3D11_MAP_READ, 0, &mapped);
-    if (FAILED(mapResult)) {
-        return false;
-    }
-
-    depthBuffer.resize(static_cast<std::size_t>(desc.Width) * static_cast<std::size_t>(desc.Height));
-    for (UINT y = 0; y < desc.Height; ++y) {
-        const float* row = reinterpret_cast<const float*>(static_cast<const BYTE*>(mapped.pData) + static_cast<std::size_t>(y) * mapped.RowPitch);
-        std::copy_n(row, desc.Width, depthBuffer.begin() + static_cast<std::size_t>(y) * static_cast<std::size_t>(desc.Width));
-    }
-
-    deviceContext_->Unmap(stagingTexture.Get(), 0);
-    return !depthBuffer.empty();
-}
-
 void AppWindow::InvalidateExportViewportPreview() {
     MarkViewportDirty(PreviewResetReason::SceneChanged);
-    uploadedViewportWidth_ = 0;
-    uploadedViewportHeight_ = 0;
+    if (renderBackend_) {
+        renderBackend_->ResetCpuPreviewSurface();
+    }
 }
 
 AppWindow::GpuExportRenderPlan AppWindow::BuildGpuExportRenderPlan(
@@ -557,7 +448,7 @@ bool AppWindow::ReadGpuExportBaseFramePixels(
     output.clear();
 
     if (inputs.HasGrid()) {
-        if (!ReadbackGpuTexture(gpuGridRenderer_.OutputTexture(), output)) {
+        if (!renderBackend_ || !renderBackend_->ReadbackColorTexture(gpuGridRenderer_.OutputTexture(), output)) {
             return false;
         }
     } else if (transparentBackground && (inputs.HasFlame() || inputs.HasPath())) {
@@ -568,7 +459,7 @@ bool AppWindow::ReadGpuExportBaseFramePixels(
 
     auto compositeLayer = [&](ID3D11Texture2D* texture) {
         std::vector<std::uint32_t> layerPixels;
-        if (!ReadbackGpuTexture(texture, layerPixels)) {
+        if (!renderBackend_ || !renderBackend_->ReadbackColorTexture(texture, layerPixels)) {
             return false;
         }
         if (output.empty()) {
@@ -605,7 +496,7 @@ bool AppWindow::ApplyGpuExportPostProcessAndReadback(
             kExportStablePostProcessSeed)) {
         return false;
     }
-    return ReadbackGpuTexture(resolvedFrame.colorTexture, output);
+    return renderBackend_ != nullptr && renderBackend_->ReadbackColorTexture(resolvedFrame.colorTexture, output);
 }
 
 bool AppWindow::ReadGpuExportEffectPixels(

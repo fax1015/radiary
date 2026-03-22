@@ -1,9 +1,8 @@
 #include "app/AppWindow.h"
 #include "app/CameraUtils.h"
+
 #include <algorithm>
 #include <cmath>
-#include <mutex>
-#include <thread>
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -35,17 +34,6 @@ std::uint32_t ViewportPreviewIterations(
     return previewIterations;
 }
 
-bool CameraStateChanged(const CameraState& a, const CameraState& b) {
-    return a.yaw != b.yaw
-        || a.pitch != b.pitch
-        || a.distance != b.distance
-        || a.panX != b.panX
-        || a.panY != b.panY
-        || a.zoom2D != b.zoom2D
-        || a.frameWidth != b.frameWidth
-        || a.frameHeight != b.frameHeight;
-}
-
 }  // namespace
 
 namespace radiary {
@@ -58,32 +46,15 @@ void AppWindow::MarkViewportDirty(const PreviewResetReason reason) {
     previewProgress_.temporalStateValid.reset();
 }
 
-AppWindow::PreviewResetReason AppWindow::DeterminePreviewResetReason(const Scene& before, const Scene& after) {
-    if (before.mode != after.mode) {
-        return PreviewResetReason::ModeChanged;
-    }
-    if (before.previewIterations != after.previewIterations) {
-        return PreviewResetReason::IterationChanged;
-    }
-    if (CameraStateChanged(before.camera, after.camera)) {
-        return PreviewResetReason::CameraChanged;
-    }
-    return PreviewResetReason::SceneChanged;
+radiary::PreviewResetReason AppWindow::DeterminePreviewResetReason(const Scene& before, const Scene& after) {
+    return ::radiary::DeterminePreviewResetReason(before, after);
 }
 
-AppWindow::PreviewRenderContent AppWindow::PreviewContentForMode(const SceneMode mode) {
-    switch (mode) {
-    case SceneMode::Flame:
-        return PreviewRenderContent::Flame;
-    case SceneMode::Path:
-        return PreviewRenderContent::Path;
-    case SceneMode::Hybrid:
-    default:
-        return PreviewRenderContent::Hybrid;
-    }
+radiary::PreviewRenderContent AppWindow::PreviewContentForMode(const SceneMode mode) {
+    return ::radiary::PreviewContentForMode(mode);
 }
 
-AppWindow::PreviewPresentationState AppWindow::MakePreviewPresentationState(
+PreviewPresentationState AppWindow::MakePreviewPresentationState(
     const PreviewRenderDevice device,
     const PreviewRenderContent content,
     const PreviewRenderStage stage) {
@@ -94,7 +65,7 @@ AppWindow::PreviewPresentationState AppWindow::MakePreviewPresentationState(
     };
 }
 
-AppWindow::PreviewPresentationState AppWindow::WithPreviewPresentationStage(
+PreviewPresentationState AppWindow::WithPreviewPresentationStage(
     PreviewPresentationState state,
     const PreviewRenderStage stage) {
     state.stage = stage;
@@ -195,20 +166,11 @@ std::wstring AppWindow::DescribePreviewPresentationState(const PreviewPresentati
     return description;
 }
 
-AppWindow::PreviewRenderStage AppWindow::DetermineResolvedRenderStage(
+radiary::PreviewRenderStage AppWindow::DetermineResolvedRenderStage(
     const bool useDenoiser,
     const bool useDof,
     const bool usePostProcess) {
-    if (usePostProcess) {
-        return PreviewRenderStage::PostProcessed;
-    }
-    if (useDof) {
-        return PreviewRenderStage::DepthOfField;
-    }
-    if (useDenoiser) {
-        return PreviewRenderStage::Denoised;
-    }
-    return PreviewRenderStage::Base;
+    return ::radiary::DetermineResolvedRenderStage(useDenoiser, useDof, usePostProcess);
 }
 
 std::wstring AppWindow::BuildGpuRendererUnavailableStatusMessage(
@@ -233,7 +195,7 @@ std::wstring AppWindow::BuildGpuFallbackStatusMessage(
     return DescribePreviewPresentationState(failedState) + L" export unavailable, falling back to CPU.";
 }
 
-AppWindow::PreviewPresentationState AppWindow::DetermineCpuPreviewState(const SceneMode mode) {
+PreviewPresentationState AppWindow::DetermineCpuPreviewState(const SceneMode mode) {
     return MakePreviewPresentationState(PreviewRenderDevice::Cpu, PreviewContentForMode(mode));
 }
 
@@ -266,8 +228,8 @@ Scene AppWindow::BuildRenderableScene(const Scene& scene) const {
 }
 
 Scene AppWindow::BuildExportRenderScene(const Scene& sourceScene, const int width, const int height, const bool hideGrid) const {
-    const int previewWidth = std::max(0, uploadedViewportWidth_);
-    const int previewHeight = std::max(0, uploadedViewportHeight_);
+    const int previewWidth = std::max(0, UploadedViewportWidth());
+    const int previewHeight = std::max(0, UploadedViewportHeight());
     return PrepareSceneForExport(BuildRenderableScene(sourceScene), previewWidth, previewHeight, width, height, hideGrid);
 }
 
@@ -300,7 +262,7 @@ AppWindow::ViewportRenderSetup AppWindow::DetermineViewportRenderSetup(const Vie
     ViewportRenderSetup setup;
     const GpuFlameRenderer::StatusSnapshot gpuFlameStatus = gpuFlameRenderer_.GetStatusSnapshot();
     setup.now = std::chrono::steady_clock::now();
-    setup.sizeChanged = uploadedViewportWidth_ != request.width || uploadedViewportHeight_ != request.height;
+    setup.sizeChanged = UploadedViewportWidth() != request.width || UploadedViewportHeight() != request.height;
     setup.gpuAccumulationIncomplete =
         request.useGpuViewportPreview
         && request.scene.mode != SceneMode::Path
@@ -332,8 +294,8 @@ AppWindow::ViewportRenderSetup AppWindow::DetermineViewportRenderSetup(const Vie
     setup.throttleGpuResize =
         request.useGpuViewportPreview
         && setup.resizeInteractionActive
-        && uploadedViewportWidth_ > 0
-        && uploadedViewportHeight_ > 0
+        && UploadedViewportWidth() > 0
+        && UploadedViewportHeight() > 0
         && (lastGpuPreviewDispatchAt_ != std::chrono::steady_clock::time_point {})
         && (setup.now - lastGpuPreviewDispatchAt_) < resizePreviewCadence;
     setup.needsGpuDofResolve =
@@ -371,8 +333,9 @@ bool AppWindow::SetDirectGpuPreview(
     const PreviewPresentationState state,
     const std::uint32_t displayedIterations,
     const std::chrono::steady_clock::time_point dispatchTime) {
-    uploadedViewportWidth_ = width;
-    uploadedViewportHeight_ = height;
+    if (renderBackend_) {
+        renderBackend_->SetPresentedPreviewSize(width, height);
+    }
     lastGpuPreviewDispatchAt_ = dispatchTime;
     const auto snapshot = gpuFlameRenderer_.GetStatusSnapshot();
     SyncGpuPreviewProgress(state, previewProgress_.targetIterations, snapshot);
@@ -1078,23 +1041,21 @@ void AppWindow::ExecuteViewportRenderRequest(
 }
 
 bool AppWindow::QueueCpuViewportPreview(const ViewportRenderRequest& request) {
-    if (!IsViewportDirty()) {
-        std::lock_guard<std::mutex> lock(renderMutex_);
-        const bool sameRequestPending =
-            renderRequestPending_
-            && pendingRenderWidth_ == request.width
-            && pendingRenderHeight_ == request.height
-            && pendingRenderPreviewIterations_ == request.previewIterations
-            && pendingRenderState_ == request.cpuPreviewState;
-        if (sameRequestPending) {
-            return true;
-        }
-    }
-
-    QueueViewportRender(request.width, request.height, request.interactive);
+    cpuPreviewWorker_.Enqueue(MakeCpuPreviewRequest(request));
     UpdatePreviewTargetIterations(request.previewIterations);
     QueuePreviewPresentation(request.cpuPreviewState);
     return true;
+}
+
+CpuPreviewWorker::Request AppWindow::MakeCpuPreviewRequest(const ViewportRenderRequest& request) {
+    CpuPreviewWorker::Request cpuRequest;
+    cpuRequest.scene = request.scene;
+    cpuRequest.width = request.width;
+    cpuRequest.height = request.height;
+    cpuRequest.previewIterations = request.previewIterations;
+    cpuRequest.interactive = request.interactive;
+    cpuRequest.presentation = request.cpuPreviewState;
+    return cpuRequest;
 }
 
 bool AppWindow::PresentViewportPixels(
@@ -1102,21 +1063,25 @@ bool AppWindow::PresentViewportPixels(
     const int height,
     const PreviewPresentationState state,
     const std::uint32_t displayedIterations) {
-    if (!EnsureViewportTexture(width, height)) {
+    if (!renderBackend_ || !renderBackend_->UploadCpuPreview(width, height, viewportPixels_)) {
         return false;
     }
 
     ApplyPresentedPreviewState(state, displayedIterations, previewProgress_.pendingResetReason);
-    D3D11_BOX box {};
-    box.left = 0;
-    box.top = 0;
-    box.front = 0;
-    box.right = static_cast<UINT>(width);
-    box.bottom = static_cast<UINT>(height);
-    box.back = 1;
-    deviceContext_->UpdateSubresource(viewportTexture_.Get(), 0, &box, viewportPixels_.data(), width * 4, 0);
     RecordPreviewUpdate();
     return true;
+}
+
+BackendPreviewSurfaceSet AppWindow::CollectPreviewSurfaces() const {
+    BackendPreviewSurfaceSet surfaces;
+    surfaces.cpu = renderBackend_ ? renderBackend_->CpuPreviewShaderResourceView() : nullptr;
+    surfaces.flame = gpuFlameRenderer_.ShaderResourceView();
+    surfaces.grid = gpuGridRenderer_.ShaderResourceView();
+    surfaces.path = gpuPathRenderer_.ShaderResourceView();
+    surfaces.denoised = gpuDenoiser_.ShaderResourceView();
+    surfaces.depthOfField = gpuDofRenderer_.ShaderResourceView();
+    surfaces.postProcessed = gpuPostProcess_.ShaderResourceView();
+    return surfaces;
 }
 
 bool AppWindow::RenderCpuViewportPreview(const ViewportRenderRequest& request) {
@@ -1131,22 +1096,6 @@ bool AppWindow::RenderCpuViewportPreview(const ViewportRenderRequest& request) {
         return false;
     }
     return true;
-}
-
-void AppWindow::QueueViewportRender(const int width, const int height, const bool interactive) {
-    ViewportRenderRequest request = BuildViewportRenderRequest(width, height, interactive, false);
-
-    {
-        std::lock_guard<std::mutex> lock(renderMutex_);
-        pendingRenderScene_ = std::move(request.scene);
-        pendingRenderWidth_ = request.width;
-        pendingRenderHeight_ = request.height;
-        pendingRenderPreviewIterations_ = request.previewIterations;
-        pendingRenderState_ = request.cpuPreviewState;
-        ++pendingRenderGeneration_;
-        renderRequestPending_ = true;
-    }
-    renderCv_.notify_one();
 }
 
 void AppWindow::RecordPreviewUpdate() {
@@ -1223,97 +1172,23 @@ void AppWindow::SyncGpuPreviewProgress(
 }
 
 void AppWindow::ConsumeCompletedRender() {
-    int width = 0;
-    int height = 0;
-    std::uint32_t previewIterations = 0;
-    PreviewPresentationState previewState = {};
-
-    {
-        std::lock_guard<std::mutex> lock(renderMutex_);
-        if (completedRenderGeneration_ == consumedRenderGeneration_ || completedRenderPixels_.empty()) {
-            return;
-        }
-
-        width = completedRenderWidth_;
-        height = completedRenderHeight_;
-        previewIterations = completedRenderPreviewIterations_;
-        previewState = completedRenderState_;
-        consumedRenderGeneration_ = completedRenderGeneration_;
-        viewportPixels_ = std::move(completedRenderPixels_);
+    std::optional<CpuPreviewWorker::CompletedFrame> completed = cpuPreviewWorker_.ConsumeCompletedFrame();
+    if (!completed.has_value()) {
+        return;
     }
 
-    if (PresentViewportPixels(width, height, previewState, previewIterations)) {
+    viewportPixels_ = std::move(completed->pixels);
+    if (PresentViewportPixels(completed->width, completed->height, completed->presentation, completed->previewIterations)) {
         viewportDirty_ = false;
     }
 }
 
 void AppWindow::StartRenderThread() {
-    renderThreadExit_ = false;
-    renderThread_ = std::thread(&AppWindow::RenderThreadMain, this);
+    cpuPreviewWorker_.Start();
 }
 
 void AppWindow::StopRenderThread() {
-    {
-        std::lock_guard<std::mutex> lock(renderMutex_);
-        renderThreadExit_ = true;
-    }
-    renderCv_.notify_one();
-    if (renderThread_.joinable()) {
-        renderThread_.join();
-    }
-}
-
-void AppWindow::RenderThreadMain() {
-    SoftwareRenderer workerRenderer;
-
-    for (;;) {
-        Scene renderScene;
-        int width = 0;
-        int height = 0;
-        std::uint32_t previewIterations = 0;
-        PreviewPresentationState previewState = {};
-        std::uint64_t generation = 0;
-
-        {
-            std::unique_lock<std::mutex> lock(renderMutex_);
-            renderCv_.wait(lock, [&]() { return renderThreadExit_ || renderRequestPending_; });
-            if (renderThreadExit_) {
-                return;
-            }
-
-            renderScene = std::move(pendingRenderScene_);
-            width = pendingRenderWidth_;
-            height = pendingRenderHeight_;
-            previewIterations = pendingRenderPreviewIterations_;
-            previewState = pendingRenderState_;
-            generation = pendingRenderGeneration_;
-            renderRequestPending_ = false;
-            renderInProgress_ = true;
-        }
-
-        std::vector<std::uint32_t> pixels;
-        SoftwareRenderer::RenderOptions options;
-        options.interactive = interactivePreview_;
-        options.shouldAbort = [this, generation]() {
-            std::lock_guard<std::mutex> lock(renderMutex_);
-            return renderThreadExit_ || pendingRenderGeneration_ > generation;
-        };
-        const bool renderCompleted = workerRenderer.RenderViewport(renderScene, width, height, pixels, options);
-
-        {
-            std::lock_guard<std::mutex> lock(renderMutex_);
-            renderInProgress_ = false;
-            if (!renderCompleted) {
-                continue;
-            }
-            completedRenderPixels_ = std::move(pixels);
-            completedRenderWidth_ = width;
-            completedRenderHeight_ = height;
-            completedRenderPreviewIterations_ = previewIterations;
-            completedRenderState_ = previewState;
-            completedRenderGeneration_ = generation;
-        }
-    }
+    cpuPreviewWorker_.Stop();
 }
 
 void AppWindow::RenderViewportIfNeeded(const int width, const int height) {

@@ -24,6 +24,9 @@ constexpr float kDefaultToolbarHeight = 52.0f;
 constexpr float kDefaultBottomPanelHeight = 196.0f;
 constexpr float kDefaultLeftPanelWidth = 463.0f;
 constexpr float kDefaultRightPanelWidth = 508.0f;
+constexpr float kWidePreviewGridMinWidth = 620.0f;
+constexpr float kWideCameraGridMinWidth = 620.0f;
+constexpr float kWideCameraActionsMinWidth = 340.0f;
 
 float SplitRatioForPixels(const float pixels, const float available) {
     if (available <= 1.0f) {
@@ -265,8 +268,8 @@ void AppWindow::BuildDefaultLayout() {
     ImGui::DockBuilderDockWindow("Layers", leftId);
     ImGui::DockBuilderDockWindow("Inspector", rightId);
     ImGui::DockBuilderDockWindow("Playback", bottomId);
-    ImGui::DockBuilderDockWindow("Preview", bottomId);
-    ImGui::DockBuilderDockWindow("Camera", bottomId);
+    ImGui::DockBuilderDockWindow("Camera", rightId);
+    ImGui::DockBuilderDockWindow("Preview", rightId);
     ImGui::DockBuilderDockWindow("Viewport", centerId);
 
     if (ImGuiDockNode* topNode = ImGui::DockBuilderGetNode(topId)) {
@@ -2066,6 +2069,8 @@ void AppWindow::DrawTimelinePanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::Begin("Preview", nullptr, ImGuiWindowFlags_NoCollapse);
     ImGui::PopStyleVar();
+    const int previewGridColumns = ImGui::GetContentRegionAvail().x >= kWidePreviewGridMinWidth ? 2 : 1;
+    const bool previewUseWideGrid = previewGridColumns > 1;
     const std::uint32_t minInteractiveIterations = 10000;
     const std::uint32_t maxInteractiveIterations = 2000000;
     const std::uint32_t minIterations = 20000;
@@ -2078,7 +2083,7 @@ void AppWindow::DrawTimelinePanel() {
         ImGui::TextDisabled("%s", label);
     };
     const auto beginPreviewGrid = [&](const char* id) {
-        return ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
+        return ImGui::BeginTable(id, previewGridColumns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
     };
 
     ImGui::SeparatorText("Iterations");
@@ -2127,8 +2132,10 @@ void AppWindow::DrawTimelinePanel() {
         }
         CaptureWidgetUndo(beforeBackground, backgroundChanged);
 
-        ImGui::TableNextColumn(); // Empty column for background to span full width
-        ImGui::TableNextRow();
+        if (previewUseWideGrid) {
+            ImGui::TableNextColumn();
+            ImGui::TableNextRow();
+        }
 
         ImGui::TableNextColumn();
         const Scene beforeDenoiserEnabled = scene_;
@@ -2148,7 +2155,9 @@ void AppWindow::DrawTimelinePanel() {
         }
         CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
 
-        ImGui::TableNextRow();
+        if (previewUseWideGrid) {
+            ImGui::TableNextRow();
+        }
         ImGui::TableNextColumn();
         {
             const Scene beforePostProcessEnabled = scene_;
@@ -2216,7 +2225,9 @@ void AppWindow::DrawTimelinePanel() {
             }
             CaptureWidgetUndo(beforeDof, dofChanged);
 
-            ImGui::TableNextRow();
+            if (previewUseWideGrid) {
+                ImGui::TableNextRow();
+            }
             ImGui::TableNextColumn();
             drawPreviewFieldLabel("DOF Blur Strength");
             setPreviewColumnItemWidth();
@@ -2262,7 +2273,9 @@ void AppWindow::DrawTimelinePanel() {
             if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
-            ImGui::TableNextRow();
+            if (previewUseWideGrid) {
+                ImGui::TableNextRow();
+            }
             ImGui::TableNextColumn();
             drawPreviewFieldLabel("Chromatic Aberration");
             setPreviewColumnItemWidth();
@@ -2281,7 +2294,9 @@ void AppWindow::DrawTimelinePanel() {
             if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
-            ImGui::TableNextRow();
+            if (previewUseWideGrid) {
+                ImGui::TableNextRow();
+            }
             ImGui::TableNextColumn();
             drawPreviewFieldLabel("Vignette Roundness");
             setPreviewColumnItemWidth();
@@ -2300,7 +2315,9 @@ void AppWindow::DrawTimelinePanel() {
             if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
-            ImGui::TableNextRow();
+            if (previewUseWideGrid) {
+                ImGui::TableNextRow();
+            }
             ImGui::TableNextColumn();
             drawPreviewFieldLabel("Color Temperature");
             setPreviewColumnItemWidth();
@@ -2319,7 +2336,9 @@ void AppWindow::DrawTimelinePanel() {
             if (ppChanged) MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
             CaptureWidgetUndo(beforePP, ppChanged);
 
-            ImGui::TableNextRow();
+            if (previewUseWideGrid) {
+                ImGui::TableNextRow();
+            }
             ImGui::TableNextColumn();
             drawPreviewFieldLabel("ACES Tone Mapping");
             beforePP = scene_;
@@ -2332,10 +2351,11 @@ void AppWindow::DrawTimelinePanel() {
         }
     }
 
-    const int previewWidth = std::max(1, uploadedViewportWidth_);
-    const int previewHeight = std::max(1, uploadedViewportHeight_);
+    const int previewWidth = std::max(1, UploadedViewportWidth());
+    const int previewHeight = std::max(1, UploadedViewportHeight());
     const PreviewProgressState& preview = previewProgress_;
     ImGui::Separator();
+    ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled(
         "Preview %dx%d | Iter %u/%u | %s %s %s | %s | FPS %.1f",
         previewWidth,
@@ -2355,6 +2375,7 @@ void AppWindow::DrawTimelinePanel() {
     if (preview.temporalStateValid.has_value()) {
         ImGui::TextDisabled("Temporal state: %s", *preview.temporalStateValid ? "valid" : "reset");
     }
+    ImGui::PopTextWrapPos();
     ImGui::End();
 }
 
@@ -2375,6 +2396,7 @@ void AppWindow::DrawCameraPanel() {
     const double yawMax = 3.14;
     const double pitchMin = -1.45;
     const double pitchMax = 1.45;
+    const bool useWideCameraGrid = ImGui::GetContentRegionAvail().x >= kWideCameraGridMinWidth;
     const auto captureCameraEdit = [&](const Scene& before, const bool changed) {
         if (changed) {
             AutoKeyCurrentFrame();
@@ -2383,13 +2405,17 @@ void AppWindow::DrawCameraPanel() {
         CaptureWidgetUndo(before, changed);
     };
     const auto beginFieldGrid = [&](const char* id) {
-        const float contentWidth = ImGui::GetContentRegionAvail().x;
-        const float labelWidth = std::clamp(contentWidth * 0.10f, 72.0f, 92.0f);
-        const float inputWidth = std::max(120.0f, (contentWidth - labelWidth * 2.0f) * 0.5f);
-        ImGui::Columns(4, id, false);
-        ImGui::SetColumnWidth(0, labelWidth);
-        ImGui::SetColumnWidth(1, inputWidth);
-        ImGui::SetColumnWidth(2, labelWidth);
+        if (useWideCameraGrid) {
+            const float contentWidth = ImGui::GetContentRegionAvail().x;
+            const float labelWidth = std::clamp(contentWidth * 0.10f, 72.0f, 92.0f);
+            const float inputWidth = std::max(120.0f, (contentWidth - labelWidth * 2.0f) * 0.5f);
+            ImGui::Columns(4, id, false);
+            ImGui::SetColumnWidth(0, labelWidth);
+            ImGui::SetColumnWidth(1, inputWidth);
+            ImGui::SetColumnWidth(2, labelWidth);
+        } else {
+            ImGui::Columns(1, id, false);
+        }
     };
     const auto endFieldGrid = [&]() {
         ImGui::Columns(1);
@@ -2397,16 +2423,18 @@ void AppWindow::DrawCameraPanel() {
     const auto fieldLabel = [&](const char* label) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", label);
-        ImGui::NextColumn();
+        if (useWideCameraGrid) {
+            ImGui::NextColumn();
+        }
     };
     const auto fieldWidget = [&](const auto& drawWidget) {
         ImGui::SetNextItemWidth(-FLT_MIN);
         const bool changed = drawWidget();
-        ImGui::NextColumn();
+        if (useWideCameraGrid) {
+            ImGui::NextColumn();
+        }
         return changed;
     };
-
-    ImGui::BeginChild("CameraPanelScroll", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_None);
 
     ImGui::SeparatorText("Framing");
     beginFieldGrid("##camera_framing_grid");
@@ -2456,7 +2484,9 @@ void AppWindow::DrawCameraPanel() {
     scene_.camera.frameHeight = std::clamp(scene_.camera.frameHeight, frameMin, frameMax);
     captureCameraEdit(beforeFraming, framingChanged);
     endFieldGrid();
+    ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("Viewport matte and export both follow this gate.");
+    ImGui::PopTextWrapPos();
 
     ImGui::SeparatorText("Transform");
     beginFieldGrid("##camera_transform_grid");
@@ -2495,21 +2525,25 @@ void AppWindow::DrawCameraPanel() {
     endFieldGrid();
 
     ImGui::Spacing();
-    if (DrawActionButton("##camera_panel_reset_camera", "Reset Camera", IconGlyph::ResetCamera, ActionTone::Accent, false, true, 150.0f)) {
+    const bool stackCameraActions = ImGui::GetContentRegionAvail().x < kWideCameraActionsMinWidth;
+    const float resetButtonWidth = stackCameraActions ? std::max(0.0f, ImGui::GetContentRegionAvail().x) : 150.0f;
+    if (DrawActionButton("##camera_panel_reset_camera", "Reset Camera", IconGlyph::ResetCamera, ActionTone::Accent, false, true, resetButtonWidth)) {
         PushUndoState(scene_);
         scene_.camera = CameraState {};
         AutoKeyCurrentFrame();
         MarkViewportDirty(PreviewResetReason::CameraChanged);
     }
-    ImGui::SameLine();
-    if (DrawActionButton("##camera_panel_export", "Open Export", IconGlyph::ExportImage, ActionTone::Accent, exportPanelOpen_, true, 146.0f)) {
+    if (!stackCameraActions) {
+        ImGui::SameLine();
+    }
+    const float exportButtonWidth = stackCameraActions ? std::max(0.0f, ImGui::GetContentRegionAvail().x) : 146.0f;
+    if (DrawActionButton("##camera_panel_export", "Open Export", IconGlyph::ExportImage, ActionTone::Accent, exportPanelOpen_, true, exportButtonWidth)) {
         exportPanelOpen_ = !exportPanelOpen_;
         if (exportPanelOpen_) {
             OpenExportPanel();
         }
     }
 
-    ImGui::EndChild();
     ImGui::End();
 }
 
@@ -2527,14 +2561,14 @@ void AppWindow::DrawViewportPanel() {
     const bool allowViewportRender = !bootstrapUiFramePending_;
     bool attemptedViewportRender = false;
 
-    if (allowViewportRender && (gpuPreviewRequested || !viewportSrv_ || uploadedViewportWidth_ != width || uploadedViewportHeight_ != height)) {
+    if (allowViewportRender
+        && (gpuPreviewRequested
+            || (renderBackend_ == nullptr || renderBackend_->CpuPreviewShaderResourceView() == nullptr)
+            || UploadedViewportWidth() != width
+            || UploadedViewportHeight() != height)) {
         attemptedViewportRender = true;
         RenderViewportIfNeeded(width, height);
     }
-
-    const bool preferGpuPreview =
-        gpuFlamePreviewEnabled_
-        && IsGpuPreviewPresentationState(previewProgress_.presentation);
 
     const ImVec2 imageMin = ImGui::GetCursorScreenPos();
     const ImVec2 imageMax(imageMin.x + available.x, imageMin.y + available.y);
@@ -2564,56 +2598,23 @@ void AppWindow::DrawViewportPanel() {
         drawList->AddText(textPos, ImGui::GetColorU32(ImVec4(0.78f, 0.79f, 0.82f, 1.0f)), label);
     };
 
-    if (preferGpuPreview) {
-        if (previewProgress_.presentation.stage == PreviewRenderStage::PostProcessed
-            && gpuPostProcess_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuPostProcess_.ShaderResourceView()), available);
-            hovered = ImGui::IsItemHovered();
-        } else if ((previewProgress_.presentation.stage == PreviewRenderStage::Composited
-                || previewProgress_.presentation.stage == PreviewRenderStage::Denoised)
-            && gpuDenoiser_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuDenoiser_.ShaderResourceView()), available);
-            hovered = ImGui::IsItemHovered();
-        } else if (previewProgress_.presentation.stage == PreviewRenderStage::DepthOfField
-            && gpuDofRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuDofRenderer_.ShaderResourceView()), available);
-            hovered = ImGui::IsItemHovered();
-        } else if (previewProgress_.presentation.content == PreviewRenderContent::Flame
-            && previewProgress_.presentation.stage == PreviewRenderStage::Base
-            && gpuFlameRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuFlameRenderer_.ShaderResourceView()), available);
-            hovered = ImGui::IsItemHovered();
-        } else if (previewProgress_.presentation.content == PreviewRenderContent::Path
-            && previewProgress_.presentation.stage == PreviewRenderStage::Base
-            && gpuPathRenderer_.ShaderResourceView() != nullptr) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(gpuPathRenderer_.ShaderResourceView()), available);
-            hovered = ImGui::IsItemHovered();
-        } else if (previewProgress_.presentation.content == PreviewRenderContent::Hybrid
-            && previewProgress_.presentation.stage == PreviewRenderStage::Base
-            && gpuFlameRenderer_.ShaderResourceView() != nullptr) {
-            const bool hasGridLayer = scene_.gridVisible && gpuGridRenderer_.ShaderResourceView() != nullptr;
-            if (hasGridLayer) {
-                ImGui::Image(reinterpret_cast<ImTextureID>(gpuGridRenderer_.ShaderResourceView()), available);
-            } else {
-                ImGui::Image(reinterpret_cast<ImTextureID>(gpuFlameRenderer_.ShaderResourceView()), available);
-            }
-            hovered = ImGui::IsItemHovered();
-            if (hasGridLayer) {
-                ImGui::GetWindowDrawList()->AddImage(reinterpret_cast<ImTextureID>(gpuFlameRenderer_.ShaderResourceView()), imageMin, imageMax);
-            }
-            if (scene_.mode == SceneMode::Hybrid && gpuPathRenderer_.ShaderResourceView() != nullptr) {
-                ImGui::GetWindowDrawList()->AddImage(reinterpret_cast<ImTextureID>(gpuPathRenderer_.ShaderResourceView()), imageMin, imageMax);
-            }
-            hovered = hovered || ImGui::IsMouseHoveringRect(imageMin, imageMax);
-        } else if (viewportSrv_) {
-            ImGui::Image(reinterpret_cast<ImTextureID>(viewportSrv_.Get()), available);
-            hovered = ImGui::IsItemHovered();
-        } else {
-            drawViewportPlaceholder();
-        }
-    } else if (viewportSrv_) {
-        ImGui::Image(reinterpret_cast<ImTextureID>(viewportSrv_.Get()), available);
+    const BackendPreviewImage previewImage = renderBackend_ != nullptr
+        ? renderBackend_->ResolvePreviewImage(BackendPreviewLookupRequest {
+            previewProgress_.presentation,
+            scene_.mode,
+            scene_.gridVisible,
+            CollectPreviewSurfaces()
+        })
+        : BackendPreviewImage {};
+    if (previewImage.HasLayers()) {
+        ImGui::Image(reinterpret_cast<ImTextureID>(previewImage.layers[0].textureId), available);
         hovered = ImGui::IsItemHovered();
+        for (std::size_t layerIndex = 1; layerIndex < previewImage.layerCount; ++layerIndex) {
+            ImGui::GetWindowDrawList()->AddImage(reinterpret_cast<ImTextureID>(previewImage.layers[layerIndex].textureId), imageMin, imageMax);
+        }
+        if (previewImage.layerCount > 1) {
+            hovered = hovered || ImGui::IsMouseHoveringRect(imageMin, imageMax);
+        }
     } else {
         drawViewportPlaceholder();
     }
@@ -2683,7 +2684,7 @@ void AppWindow::DrawStatusBar() {
     ImGui::SameLine();
     ImGui::TextDisabled("| Mode %s", ToString(scene_.mode).c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("| Preview %dx%d", std::max(1, uploadedViewportWidth_), std::max(1, uploadedViewportHeight_));
+    ImGui::TextDisabled("| Preview %dx%d", std::max(1, UploadedViewportWidth()), std::max(1, UploadedViewportHeight()));
     ImGui::End();
 }
 

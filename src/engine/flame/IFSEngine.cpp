@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "engine/flame/Variation.h"
+#include "renderer/RenderMath.h"
 
 namespace radiary {
 
@@ -22,53 +23,6 @@ constexpr std::array<std::pair<int, int>, 9> kAdaptiveSplatOffsets = {{
     {-1, 0}, {0, 0}, {1, 0},
     {-1, 1}, {0, 1}, {1, 1}
 }};
-
-struct ProjectedFlamePoint {
-    double x = 0.0;
-    double y = 0.0;
-    double perspective = 0.0;
-    double depth = 0.0;
-    bool visible = false;
-};
-
-ProjectedFlamePoint ProjectFlamePoint(const Vec3& point, const CameraState& camera, const int width, const int height) {
-    const double yawCos = std::cos(camera.yaw);
-    const double yawSin = std::sin(camera.yaw);
-    const double pitchCos = std::cos(camera.pitch);
-    const double pitchSin = std::sin(camera.pitch);
-
-    Vec3 rotated {
-        point.x * yawCos + point.z * yawSin,
-        point.y,
-        -point.x * yawSin + point.z * yawCos
-    };
-
-    rotated = {
-        rotated.x,
-        rotated.y * pitchCos - rotated.z * pitchSin,
-        rotated.y * pitchSin + rotated.z * pitchCos
-    };
-    if (!std::isfinite(rotated.x) || !std::isfinite(rotated.y) || !std::isfinite(rotated.z)) {
-        return {};
-    }
-
-    rotated.z += camera.distance;
-    if (rotated.z <= 0.15) {
-        return {};
-    }
-
-    const double perspective = 240.0 * camera.zoom2D / rotated.z;
-    if (!std::isfinite(perspective)) {
-        return {};
-    }
-    return {
-        width * 0.5 + camera.panX + rotated.x * perspective,
-        height * 0.5 + camera.panY - rotated.y * perspective,
-        perspective,
-        rotated.z,
-        true
-    };
-}
 
 Vec3 RotateFlameObjectPoint(const Vec3& point, const FlameRenderSettings& settings) {
     const double rx = DegreesToRadians(settings.rotationXDegrees);
@@ -213,7 +167,7 @@ bool IFSEngine::Render(
     // Flame points live in the same camera space as path geometry.
     // zoom2D belongs in projection, not in flame-local world scaling.
     const double flameWorldScale = kFlameWorldScale;
-    const double farDepth = std::max(1.15, scene.camera.distance + 24.0);
+    const double farDepth = render_math::ComputeFarDepth(scene.camera.distance);
     std::uint32_t burnInRemaining = kFlameBurnInIterations;
     const bool reuseTemporalState =
         preserveTemporalState
@@ -311,7 +265,11 @@ bool IFSEngine::Render(
         }
         ++stableIterations;
 
-        const ProjectedFlamePoint projected = ProjectFlamePoint(FlamePointToWorld(point, flameWorldScale, scene.flameRender), scene.camera, width, height);
+        const render_math::CameraProjectionPoint projected = render_math::ProjectCameraPoint(
+            FlamePointToWorld(point, flameWorldScale, scene.flameRender),
+            scene.camera,
+            width,
+            height);
         if (!projected.visible) {
             continue;
         }
@@ -320,7 +278,7 @@ bool IFSEngine::Render(
             ? layer.customColor
             : palette[static_cast<std::size_t>(Clamp(colorIndex, 0.0, 1.0) * 255.0)];
         const double sampleWeight = Clamp(std::pow(projected.perspective / 30.0, 2.0), 0.35, 6.0);
-        const double normalizedDepth = Clamp((projected.depth - 0.15) / std::max(1.0, farDepth - 0.15), 0.0, 1.0);
+        const double normalizedDepth = render_math::NormalizeDepth(projected.depth, farDepth);
         const int baseX = static_cast<int>(std::floor(projected.x));
         const int baseY = static_cast<int>(std::floor(projected.y));
         const double fracX = projected.x - static_cast<double>(baseX);

@@ -3,14 +3,12 @@
 #include <algorithm>
 #include <cmath>
 
+#include "renderer/RenderMath.h"
 #include "renderer/SoftwareRenderer.h"
 
 namespace radiary {
 
 namespace {
-
-constexpr float kFlameDepthNear = 0.15f;
-constexpr float kFlameDepthRangePadding = 24.0f;
 
 float ToClipX(const float x, const int width) {
     return (x / std::max(1.0f, static_cast<float>(width))) * 2.0f - 1.0f;
@@ -18,11 +16,6 @@ float ToClipX(const float x, const int width) {
 
 float ToClipY(const float y, const int height) {
     return 1.0f - (y / std::max(1.0f, static_cast<float>(height))) * 2.0f;
-}
-
-float NormalizeDepth(const double depth, const double farDepth) {
-    const double normalized = (depth - static_cast<double>(kFlameDepthNear)) / std::max(1.0e-6, static_cast<double>(farDepth - kFlameDepthNear));
-    return static_cast<float>(std::clamp(normalized, 0.0, 1.0));
 }
 
 PathDrawVertex MakeVertex(const float x, const float y, const float z, const Color& color, const double alpha, const int width, const int height) {
@@ -48,9 +41,9 @@ void EmitTriangle(
     const int width,
     const int height,
     const double farDepth) {
-    vertices.push_back(MakeVertex(static_cast<float>(a.x), static_cast<float>(a.y), NormalizeDepth(a.depth, farDepth), color, alpha, width, height));
-    vertices.push_back(MakeVertex(static_cast<float>(b.x), static_cast<float>(b.y), NormalizeDepth(b.depth, farDepth), color, alpha, width, height));
-    vertices.push_back(MakeVertex(static_cast<float>(c.x), static_cast<float>(c.y), NormalizeDepth(c.depth, farDepth), color, alpha, width, height));
+    vertices.push_back(MakeVertex(static_cast<float>(a.x), static_cast<float>(a.y), static_cast<float>(render_math::NormalizeDepth(a.depth, farDepth)), color, alpha, width, height));
+    vertices.push_back(MakeVertex(static_cast<float>(b.x), static_cast<float>(b.y), static_cast<float>(render_math::NormalizeDepth(b.depth, farDepth)), color, alpha, width, height));
+    vertices.push_back(MakeVertex(static_cast<float>(c.x), static_cast<float>(c.y), static_cast<float>(render_math::NormalizeDepth(c.depth, farDepth)), color, alpha, width, height));
 }
 
 void EmitLineQuad(
@@ -77,7 +70,7 @@ void EmitLineQuad(
     const float nx = (-dy / length) * static_cast<float>(thickness * 0.5);
     const float ny = (dx / length) * static_cast<float>(thickness * 0.5);
     const double averageDepth = (start.depth + end.depth) * 0.5;
-    const float z = NormalizeDepth(averageDepth, farDepth);
+    const float z = static_cast<float>(render_math::NormalizeDepth(averageDepth, farDepth));
 
     const PathDrawVertex a = MakeVertex(x0 - nx, y0 - ny, z, color, alpha, width, height);
     const PathDrawVertex b = MakeVertex(x0 + nx, y0 + ny, z, color, alpha, width, height);
@@ -103,7 +96,7 @@ void EmitPointQuad(
     const float halfSize = static_cast<float>(std::max(1.0, size) * 0.5);
     const float x = static_cast<float>(point.x);
     const float y = static_cast<float>(point.y);
-    const float z = NormalizeDepth(point.depth, farDepth);
+    const float z = static_cast<float>(render_math::NormalizeDepth(point.depth, farDepth));
 
     const PathDrawVertex a = MakeVertex(x - halfSize, y - halfSize, z, color, alpha, width, height);
     const PathDrawVertex b = MakeVertex(x + halfSize, y - halfSize, z, color, alpha, width, height);
@@ -192,9 +185,7 @@ PathDrawList PathDrawListBuilder::Build(
     std::vector<SoftwareRenderer::PathPointSprite> points;
     SoftwareRenderer::BuildPathPrimitives(scene, width, height, fillTriangles, lines, points);
 
-    const double farDepth = std::max(
-        static_cast<double>(kFlameDepthNear) + 1.0,
-        scene.camera.distance + static_cast<double>(kFlameDepthRangePadding));
+    const double farDepth = render_math::ComputeFarDepth(scene.camera.distance);
 
     if (renderGrid && scene.gridVisible) {
         AppendGrid(drawList.gridVertices, scene, width, height);

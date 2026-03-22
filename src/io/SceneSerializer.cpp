@@ -404,6 +404,11 @@ void WriteDepthOfFieldSettings(std::ostream& stream, const DepthOfFieldSettings&
     stream << indent << "\"blurStrength\": " << depthOfField.blurStrength << "\n";
 }
 
+void WriteDenoiserSettings(std::ostream& stream, const DenoiserSettings& denoiser, const std::string& indent) {
+    stream << indent << "\"enabled\": " << (denoiser.enabled ? "true" : "false") << ",\n";
+    stream << indent << "\"strength\": " << denoiser.strength << "\n";
+}
+
 void WritePostProcessSettings(std::ostream& stream, const PostProcessSettings& pp, const std::string& indent) {
     stream << indent << "\"enabled\": " << (pp.enabled ? "true" : "false") << ",\n";
     stream << indent << "\"bloomIntensity\": " << pp.bloomIntensity << ",\n";
@@ -660,6 +665,9 @@ void WriteScenePose(std::ostream& stream, const ScenePose& pose, const std::stri
     stream << indent << "  \"depthOfField\": {\n";
     WriteDepthOfFieldSettings(stream, pose.depthOfField, indent + "    ");
     stream << indent << "  },\n";
+    stream << indent << "  \"denoiser\": {\n";
+    WriteDenoiserSettings(stream, pose.denoiser, indent + "    ");
+    stream << indent << "  },\n";
     stream << indent << "  \"postProcess\": {\n";
     WritePostProcessSettings(stream, pose.postProcess, indent + "    ");
     stream << indent << "  },\n";
@@ -741,6 +749,10 @@ void LoadScenePose(const JsonValue& poseValue, ScenePose& pose) {
         pose.depthOfField.focusRange = Number(*depthOfField, "focusRange", pose.depthOfField.focusRange);
         pose.depthOfField.blurStrength = Number(*depthOfField, "blurStrength", pose.depthOfField.blurStrength);
     }
+    if (const JsonValue* denoiser = poseValue.Find("denoiser"); denoiser && denoiser->type == JsonValue::Type::Object) {
+        pose.denoiser.enabled = Boolean(*denoiser, "enabled", pose.denoiser.enabled);
+        pose.denoiser.strength = Number(*denoiser, "strength", pose.denoiser.strength);
+    }
     if (const JsonValue* postProcess = poseValue.Find("postProcess"); postProcess && postProcess->type == JsonValue::Type::Object) {
         pose.postProcess.enabled = Boolean(*postProcess, "enabled", pose.postProcess.enabled);
         pose.postProcess.bloomIntensity = Number(*postProcess, "bloomIntensity", pose.postProcess.bloomIntensity);
@@ -793,6 +805,7 @@ bool SceneSerializer::Save(const Scene& scene, const std::filesystem::path& path
     stream << "  \"mode\": \"" << ToString(scene.mode) << "\",\n";
     stream << "  \"previewIterations\": " << scene.previewIterations << ",\n";
     stream << "  \"animatePath\": " << (scene.animatePath ? "true" : "false") << ",\n";
+    stream << "  \"gridVisible\": " << (scene.gridVisible ? "true" : "false") << ",\n";
     stream << "  \"backgroundColor\": ";
     WriteColor(stream, scene.backgroundColor);
     stream << ",\n";
@@ -808,6 +821,9 @@ bool SceneSerializer::Save(const Scene& scene, const std::filesystem::path& path
     stream << "  },\n";
     stream << "  \"depthOfField\": {\n";
     WriteDepthOfFieldSettings(stream, scene.depthOfField, "    ");
+    stream << "  },\n";
+    stream << "  \"denoiser\": {\n";
+    WriteDenoiserSettings(stream, scene.denoiser, "    ");
     stream << "  },\n";
     stream << "  \"postProcess\": {\n";
     WritePostProcessSettings(stream, scene.postProcess, "    ");
@@ -875,6 +891,7 @@ std::optional<Scene> SceneSerializer::Load(const std::filesystem::path& path, st
     scene.mode = SceneModeFromString(String(root, "mode", ToString(scene.mode)));
     scene.previewIterations = static_cast<std::uint32_t>(Number(root, "previewIterations", scene.previewIterations));
     scene.animatePath = Boolean(root, "animatePath", scene.animatePath);
+    scene.gridVisible = Boolean(root, "gridVisible", scene.gridVisible);
     scene.timelineFrameRate = Number(root, "timelineFrameRate", scene.timelineFrameRate);
     scene.timelineStartFrame = static_cast<int>(Number(root, "timelineStartFrame", scene.timelineStartFrame));
     scene.timelineEndFrame = static_cast<int>(Number(root, "timelineEndFrame", scene.timelineEndFrame));
@@ -909,6 +926,10 @@ std::optional<Scene> SceneSerializer::Load(const std::filesystem::path& path, st
         scene.depthOfField.focusDepth = Number(*depthOfField, "focusDepth", scene.depthOfField.focusDepth);
         scene.depthOfField.focusRange = Number(*depthOfField, "focusRange", scene.depthOfField.focusRange);
         scene.depthOfField.blurStrength = Number(*depthOfField, "blurStrength", scene.depthOfField.blurStrength);
+    }
+    if (const JsonValue* denoiser = root.Find("denoiser"); denoiser && denoiser->type == JsonValue::Type::Object) {
+        scene.denoiser.enabled = Boolean(*denoiser, "enabled", scene.denoiser.enabled);
+        scene.denoiser.strength = Number(*denoiser, "strength", scene.denoiser.strength);
     }
     if (const JsonValue* postProcess = root.Find("postProcess"); postProcess && postProcess->type == JsonValue::Type::Object) {
         scene.postProcess.enabled = Boolean(*postProcess, "enabled", scene.postProcess.enabled);

@@ -9,6 +9,7 @@
 #include "core/Math.h"
 #include "renderer/D3D11ResourceUtils.h"
 #include "renderer/D3D11ShaderUtils.h"
+#include "renderer/RenderMath.h"
 
 namespace radiary {
 
@@ -23,8 +24,6 @@ constexpr std::uint32_t kGpuFlameTargetOrbitIterations = 128u;
 constexpr std::uint32_t kMinOrbitThreadCount = 256u;
 constexpr std::uint32_t kMaxOrbitThreadCount = 65536u;
 constexpr float kFlameWorldScale = 0.63f;
-constexpr float kFlameDepthNear = 0.15f;
-constexpr float kFlameDepthRangePadding = 24.0f;
 
 struct PaletteEntry {
     std::uint32_t r = 0;
@@ -261,7 +260,7 @@ bool GpuFlameRenderer::Render(
     params.transparentBackground = transparentBackground ? 1u : 0u;
     params.randomSeedOffset = static_cast<std::uint32_t>(accumulatedIterations_ & 0xFFFFFFFFu);
     params.preserveOrbitState = clearAccumulationForFrame && preserveTemporalState ? 1u : 0u;
-    params.farDepth = std::max(kFlameDepthNear + 1.0f, static_cast<float>(scene.camera.distance) + kFlameDepthRangePadding);
+    params.farDepth = static_cast<float>(render_math::ComputeFarDepth(scene.camera.distance));
 
     const char* failedStage = nullptr;
     HRESULT failedResult = S_OK;

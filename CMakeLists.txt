@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.26)
 
-project(Radiary VERSION 1.0.1 LANGUAGES CXX)
+project(Radiary VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +23,9 @@ set(radiary_sources
     src/renderer/SoftwareRenderer.cpp
     src/renderer/D3D11ShaderUtils.cpp
     src/renderer/D3D11ResourceUtils.cpp
+    src/renderer/RenderMath.h
+    src/renderer/GpuPassParams.h
+    src/renderer/backend/D3D11RenderBackend.cpp
     src/renderer/GpuFlameRenderer.cpp
     src/renderer/GpuPathRenderer.cpp
     src/renderer/PathDrawListBuilder.cpp
@@ -35,6 +38,8 @@ set(radiary_sources
     src/app/CameraUtils.cpp
     src/app/ExportUtils.cpp
     src/app/StartupLogoSvg.cpp
+    src/app/CpuPreviewWorker.cpp
+    src/app/PreviewRenderDecisions.cpp
     src/app/AppWindow.cpp
     src/app/AppWindowD3D.cpp
     src/app/AppWindowUI.cpp
@@ -126,6 +131,38 @@ if (MSVC)
 else()
     target_compile_options(Radiary PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+enable_testing()
+
+set(radiary_test_sources
+    tests/TestMain.cpp
+    tests/SceneSerializerTests.cpp
+    tests/PathDrawListBuilderTests.cpp
+    tests/PreviewRenderDecisionsTests.cpp
+    src/core/Scene.cpp
+    src/engine/flame/Variation.cpp
+    src/engine/flame/IFSEngine.cpp
+    src/engine/path/SplinePath.cpp
+    src/renderer/SoftwareRenderer.cpp
+    src/renderer/PathDrawListBuilder.cpp
+    src/io/SceneSerializer.cpp
+    src/app/PreviewRenderDecisions.cpp
+)
+
+add_executable(RadiaryTests ${radiary_test_sources})
+
+target_include_directories(RadiaryTests PRIVATE
+    src
+    tests
+)
+
+if (MSVC)
+    target_compile_options(RadiaryTests PRIVATE /W4 /permissive- /EHsc)
+else()
+    target_compile_options(RadiaryTests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(NAME RadiaryTests COMMAND RadiaryTests)
 
 target_link_libraries(Radiary PRIVATE windowscodecs comdlg32 ole32 dwmapi d3d11 dxgi gdiplus)
 

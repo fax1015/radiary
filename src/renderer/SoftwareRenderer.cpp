@@ -6,12 +6,11 @@
 #include <random>
 #include <vector>
 
+#include "renderer/RenderMath.h"
+
 namespace radiary {
 
 namespace {
-
-constexpr double kFlameDepthNear = 0.15;
-constexpr double kFlameDepthRangePadding = 24.0;
 
 struct Triangle2D {
     std::array<SoftwareRenderer::ProjectedPoint, 3> points {};
@@ -1705,40 +1704,17 @@ SoftwareRenderer::ProjectedPoint SoftwareRenderer::Project(
     const CameraState& camera,
     const int width,
     const int height) {
-    const double yawCos = std::cos(camera.yaw);
-    const double yawSin = std::sin(camera.yaw);
-    const double pitchCos = std::cos(camera.pitch);
-    const double pitchSin = std::sin(camera.pitch);
-
-    Vec3 rotated {
-        point.x * yawCos + point.z * yawSin,
-        point.y,
-        -point.x * yawSin + point.z * yawCos
-    };
-
-    rotated = {
-        rotated.x,
-        rotated.y * pitchCos - rotated.z * pitchSin,
-        rotated.y * pitchSin + rotated.z * pitchCos
-    };
-
-    rotated.z += camera.distance;
-    if (rotated.z <= 0.15) {
-        return {};
-    }
-
-    const double perspective = 240.0 * camera.zoom2D / rotated.z;
+    const render_math::CameraProjectionPoint projected = render_math::ProjectCameraPoint(point, camera, width, height);
     return {
-        width * 0.5 + camera.panX + rotated.x * perspective,
-        height * 0.5 + camera.panY - rotated.y * perspective,
-        rotated.z,
-        true
+        projected.x,
+        projected.y,
+        projected.depth,
+        projected.visible
     };
 }
 
 double SoftwareRenderer::NormalizeProjectedDepth(const double depth, const CameraState& camera) {
-    const double farDepth = std::max(kFlameDepthNear + 1.0, camera.distance + kFlameDepthRangePadding);
-    return std::clamp((depth - kFlameDepthNear) / std::max(1.0e-6, farDepth - kFlameDepthNear), 0.0, 1.0);
+    return render_math::NormalizeDepthForCamera(depth, camera);
 }
 
 Color SoftwareRenderer::ToneMap(const FlamePixel& pixel, const FlameRenderSettings& flameRender) {

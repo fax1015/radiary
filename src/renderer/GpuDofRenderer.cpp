@@ -7,6 +7,7 @@
 
 #include "renderer/D3D11ResourceUtils.h"
 #include "renderer/D3D11ShaderUtils.h"
+#include "renderer/GpuPassParams.h"
 
 namespace radiary {
 
@@ -87,12 +88,14 @@ bool GpuDofRenderer::Render(
         return false;
     }
 
-    Params params;
-    params.width = static_cast<std::uint32_t>(width);
-    params.height = static_cast<std::uint32_t>(height);
-    params.useGrid = inputs.HasGrid() ? 1u : 0u;
-    params.useFlame = inputs.HasFlame() ? 1u : 0u;
-    params.usePath = inputs.HasPath() ? 1u : 0u;
+    Params params {};
+    const GpuViewportParams viewport = MakeGpuViewportParams(width, height);
+    const GpuFrameLayerFlags layerFlags = MakeGpuFrameLayerFlags(inputs);
+    params.width = viewport.width;
+    params.height = viewport.height;
+    params.useGrid = layerFlags.useGrid;
+    params.useFlame = layerFlags.useFlame;
+    params.usePath = layerFlags.usePath;
     params.focusDepth = static_cast<float>(scene.depthOfField.focusDepth);
     params.focusRange = std::max(0.01f, static_cast<float>(scene.depthOfField.focusRange));
     params.blurStrength = static_cast<float>(std::clamp(scene.depthOfField.blurStrength, 0.0, 1.0));

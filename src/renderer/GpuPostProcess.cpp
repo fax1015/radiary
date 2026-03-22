@@ -7,6 +7,7 @@
 
 #include "renderer/D3D11ResourceUtils.h"
 #include "renderer/D3D11ShaderUtils.h"
+#include "renderer/GpuPassParams.h"
 
 namespace radiary {
 
@@ -104,11 +105,13 @@ bool GpuPostProcess::Render(
         // First downsample from input
         {
             Params params {};
-            params.width = static_cast<std::uint32_t>(width);
-            params.height = static_cast<std::uint32_t>(height);
+            const GpuViewportParams viewport = MakeGpuViewportParams(width, height);
+            const GpuViewportParams mipViewport = MakeGpuViewportParams(mipW, mipH);
+            params.width = viewport.width;
+            params.height = viewport.height;
             params.bloomThreshold = static_cast<float>(pp.bloomThreshold);
-            params.mipWidth = static_cast<std::uint32_t>(mipW);
-            params.mipHeight = static_cast<std::uint32_t>(mipH);
+            params.mipWidth = mipViewport.width;
+            params.mipHeight = mipViewport.height;
             const char* failedStage = nullptr;
             HRESULT failedResult = S_OK;
             if (!WriteD3D11BufferData(deviceContext_, paramsBuffer_, &params, sizeof(params), "Map(paramsBuffer bloom down)", failedStage, failedResult)) {
@@ -137,11 +140,13 @@ bool GpuPostProcess::Render(
             mipH = std::max(1, mipH / 2);
 
             Params params {};
-            params.width = static_cast<std::uint32_t>(prevW);
-            params.height = static_cast<std::uint32_t>(prevH);
+            const GpuViewportParams sourceViewport = MakeGpuViewportParams(prevW, prevH);
+            const GpuViewportParams mipViewport = MakeGpuViewportParams(mipW, mipH);
+            params.width = sourceViewport.width;
+            params.height = sourceViewport.height;
             params.bloomThreshold = 0.0f;
-            params.mipWidth = static_cast<std::uint32_t>(mipW);
-            params.mipHeight = static_cast<std::uint32_t>(mipH);
+            params.mipWidth = mipViewport.width;
+            params.mipHeight = mipViewport.height;
             const char* failedStage = nullptr;
             HRESULT failedResult = S_OK;
             if (!WriteD3D11BufferData(deviceContext_, paramsBuffer_, &params, sizeof(params), "Map(paramsBuffer bloom down mip)", failedStage, failedResult)) {
@@ -172,8 +177,9 @@ bool GpuPostProcess::Render(
             }
 
             Params params {};
-            params.mipWidth = static_cast<std::uint32_t>(upMipW);
-            params.mipHeight = static_cast<std::uint32_t>(upMipH);
+            const GpuViewportParams mipViewport = MakeGpuViewportParams(upMipW, upMipH);
+            params.mipWidth = mipViewport.width;
+            params.mipHeight = mipViewport.height;
             const char* failedStage = nullptr;
             HRESULT failedResult = S_OK;
             if (!WriteD3D11BufferData(deviceContext_, paramsBuffer_, &params, sizeof(params), "Map(paramsBuffer bloom up)", failedStage, failedResult)) {
@@ -198,8 +204,9 @@ bool GpuPostProcess::Render(
     // Final composite pass
     {
         Params params {};
-        params.width = static_cast<std::uint32_t>(width);
-        params.height = static_cast<std::uint32_t>(height);
+        const GpuViewportParams viewport = MakeGpuViewportParams(width, height);
+        params.width = viewport.width;
+        params.height = viewport.height;
         params.bloomIntensity = static_cast<float>(pp.bloomIntensity);
         params.bloomThreshold = static_cast<float>(pp.bloomThreshold);
         params.chromaticAberration = static_cast<float>(pp.chromaticAberration);
@@ -209,7 +216,7 @@ bool GpuPostProcess::Render(
         params.filmGrain = static_cast<float>(pp.filmGrain);
         params.colorTemperature = static_cast<float>(pp.colorTemperature);
         params.saturationBoost = static_cast<float>(pp.saturationBoost);
-        params.randomSeed = randomSeedOverride.value_or(frameCounter_ * 1664525u + 1013904223u);
+        params.randomSeed = MakePostProcessRandomSeed(frameCounter_, randomSeedOverride);
 
         const char* failedStage = nullptr;
         HRESULT failedResult = S_OK;

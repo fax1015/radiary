@@ -6,15 +6,16 @@
 #include <wrl/client.h>
 
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
-#include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
-#include <thread>
 #include <vector>
 
+#include "app/CpuPreviewWorker.h"
+#include "app/PreviewPresentation.h"
+#include "app/PreviewRenderDecisions.h"
 #include "core/Scene.h"
 #include "app/StartupLogoSvg.h"
 #include "io/PresetLibrary.h"
@@ -25,6 +26,7 @@
 #include "renderer/GpuPostProcess.h"
 #include "renderer/GpuPathRenderer.h"
 #include "renderer/SoftwareRenderer.h"
+#include "renderer/backend/RenderBackend.h"
 
 struct ImGuiContext;
 struct ImFont;
@@ -62,43 +64,6 @@ private:
         None,
         Transform,
         Path
-    };
-
-    enum class PreviewRenderDevice {
-        Cpu,
-        Gpu
-    };
-
-    enum class PreviewRenderContent {
-        Flame,
-        Path,
-        Hybrid
-    };
-
-    enum class PreviewRenderStage {
-        Base,
-        Composited,
-        Denoised,
-        DepthOfField,
-        PostProcessed
-    };
-
-    enum class PreviewResetReason {
-        None,
-        SceneChanged,
-        CameraChanged,
-        ModeChanged,
-        IterationChanged,
-        ViewportResized,
-        DeviceChanged
-    };
-
-    struct PreviewPresentationState {
-        PreviewRenderDevice device = PreviewRenderDevice::Cpu;
-        PreviewRenderContent content = PreviewRenderContent::Hybrid;
-        PreviewRenderStage stage = PreviewRenderStage::Base;
-
-        bool operator==(const PreviewPresentationState&) const = default;
     };
 
     enum class PreviewProgressPhase {
@@ -230,8 +195,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> deviceContext_;
     Microsoft::WRL::ComPtr<IDXGISwapChain> swapChain_;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> mainRenderTargetView_;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> viewportTexture_;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> viewportSrv_;
+    std::unique_ptr<RenderBackend> renderBackend_;
     UINT resizeWidth_ = 0;
     UINT resizeHeight_ = 0;
     bool swapChainOccluded_ = false;
@@ -249,6 +213,7 @@ private:
     GpuPathRenderer gpuGridRenderer_;
     GpuPathRenderer gpuPathRenderer_;
     SoftwareRenderer renderer_;
+    CpuPreviewWorker cpuPreviewWorker_;
     SceneSerializer serializer_;
     PresetLibrary presetLibrary_;
     std::filesystem::path currentScenePath_;
@@ -349,27 +314,6 @@ private:
     float startupLogoSvgMaxY_ = 0.0f;
     ULONG_PTR gdiplusToken_ = 0;
     float startupAnimationDashOffset_ = 0.0f;
-    int uploadedViewportWidth_ = 0;
-    int uploadedViewportHeight_ = 0;
-    std::thread renderThread_;
-    std::mutex renderMutex_;
-    std::condition_variable renderCv_;
-    Scene pendingRenderScene_ = scene_;
-    int pendingRenderWidth_ = 0;
-    int pendingRenderHeight_ = 0;
-    std::uint32_t pendingRenderPreviewIterations_ = 0;
-    PreviewPresentationState pendingRenderState_ {};
-    std::uint64_t pendingRenderGeneration_ = 0;
-    bool renderRequestPending_ = false;
-    bool renderThreadExit_ = false;
-    bool renderInProgress_ = false;
-    std::vector<std::uint32_t> completedRenderPixels_;
-    int completedRenderWidth_ = 0;
-    int completedRenderHeight_ = 0;
-    std::uint32_t completedRenderPreviewIterations_ = 0;
-    PreviewPresentationState completedRenderState_ {};
-    std::uint64_t completedRenderGeneration_ = 0;
-    std::uint64_t consumedRenderGeneration_ = 0;
     PreviewProgressState previewProgress_ {};
     std::chrono::steady_clock::time_point lastGpuPreviewDispatchAt_ {};
     int selectedTimelineKeyframe_ = -1;
@@ -392,12 +336,13 @@ private:
     void CleanupDeviceD3D();
     void CreateRenderTarget();
     void CleanupRenderTarget();
-    void CleanupViewportTexture();
-    bool EnsureViewportTexture(int width, int height);
+    int UploadedViewportWidth() const;
+    int UploadedViewportHeight() const;
 
     void LoadPresets();
     void LoadUserSettings();
     void SaveUserSettings() const;
+    static std::filesystem::path UserLayoutPath();
     void ApplyUserSceneDefaults(Scene& scene) const;
     bool EnsureAppLogoLoaded();
     bool EnsureStartupLogoSvgLoaded();
@@ -609,9 +554,10 @@ private:
     bool RenderGpuViewportPreview(const ViewportRenderRequest& request, const ViewportRenderSetup& setup);
     void ExecuteViewportRenderRequest(const ViewportRenderRequest& request, const ViewportRenderSetup& setup);
     bool QueueCpuViewportPreview(const ViewportRenderRequest& request);
+    static CpuPreviewWorker::Request MakeCpuPreviewRequest(const ViewportRenderRequest& request);
     bool PresentViewportPixels(int width, int height, PreviewPresentationState state, std::uint32_t displayedIterations);
+    BackendPreviewSurfaceSet CollectPreviewSurfaces() const;
     bool RenderCpuViewportPreview(const ViewportRenderRequest& request);
-    void QueueViewportRender(int width, int height, bool interactive);
     void ConsumeCompletedRender();
     void RecordPreviewUpdate();
     bool IsViewportDirty() const;
@@ -629,7 +575,6 @@ private:
         const GpuFlameRenderer::StatusSnapshot& snapshot);
     void StartRenderThread();
     void StopRenderThread();
-    void RenderThreadMain();
     void RenderViewportIfNeeded(int width, int height);
     void HandleViewportInteraction(bool hovered);
     void HandleShortcuts();
@@ -747,8 +692,6 @@ private:
         bool& useGpuRender,
         SoftwareRenderer& cpuRenderer,
         std::vector<std::uint32_t>& pixels);
-    bool ReadbackGpuTexture(ID3D11Texture2D* texture, std::vector<std::uint32_t>& pixels) const;
-    bool ReadbackGpuDepthTexture(ID3D11Texture2D* texture, std::vector<float>& depthBuffer) const;
     void DrawLoadingLogo(HDC hdc, int clientWidth, int clientHeight, int barY) const;
     void DrawAnimatedLoadingLogo(HDC hdc, int clientWidth, int clientHeight, int barY) const;
     bool DrawAnimatedLoadingIcon(ImDrawList* drawList, const ImVec2& center, float maxExtent, std::uint32_t color) const;

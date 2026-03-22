@@ -10,8 +10,7 @@
 
 ## Current Status
 
-- Phases 1-10 are complete in practice.
-- Phase 11 is started.
+- Phases 1-15 are complete in practice.
 - Preview/export orchestration has been decomposed into explicit request/plan, base-frame, and execution stages.
 - GPU pass inputs/outputs now use named frame/pass structs instead of raw positional SRV lists.
 - Composition, denoise, DOF, and post-process stages are explicit and shared more cleanly between preview and export.
@@ -21,7 +20,11 @@
 - Preview/export state naming now separates render device, content, and pipeline stage instead of overloading one backend enum.
 - GPU failure, fallback, and export interruption status reporting has been consolidated into shared helpers.
 - Preview accumulation resets now track explicit reasons like scene, camera, iteration, resize, and device changes.
-- Phase 11 preview-state cleanup is partially in place: app-owned preview progress now tracks target/displayed iterations, dirty vs queued vs accumulating vs complete state, and pending vs applied reset reasons, with GPU flame status snapshots feeding the viewport HUD.
+- Phase 11 preview-state cleanup is in place: app-owned preview progress now tracks target/displayed iterations, dirty vs queued vs accumulating vs complete state, and pending vs applied reset reasons, with GPU flame status snapshots feeding the viewport HUD.
+- Phase 12 added a narrow internal D3D11 backend slice for CPU preview upload, texture readback, and presentable preview-surface lookup.
+- Phase 13 extracted the CPU preview worker into its own request/completion component with a cleaner app-thread vs render-thread boundary.
+- Phase 14 introduced shared render math and GPU pass parameter helpers for projection/depth normalization and common viewport/layer packing.
+- Phase 15 added lightweight verification infrastructure with `RadiaryTests` and non-UI coverage for serialization, path draw-list building, and preview decision helpers.
 - Preview and export were manually smoke-tested during the refactor and reported as working.
 
 ## Historical Notes
@@ -50,6 +53,11 @@ These phases are complete enough that they no longer need active tracking before
 - Phase 8: Preview and export composition logic substantially unified.
 - Phase 9: Backend naming and render-stage semantics cleaned up.
 - Phase 10: Failure handling and status reporting cleaned up.
+- Phase 11: Accumulation/progressive preview state normalized around explicit reset and progress tracking.
+- Phase 12: Internal D3D11 backend slice introduced for preview upload, readback, and preview image resolution.
+- Phase 13: CPU preview worker extracted behind a dedicated async boundary.
+- Phase 14: Shared render math and GPU pass parameter helpers introduced.
+- Phase 15: Lightweight verification infrastructure and non-UI tests added.
 
 The detailed phase writeups below are retained as historical notes for what was targeted and why.
 
@@ -253,7 +261,7 @@ Benefits:
 
 ## Future Considerations
 
-Phases 11-15 are the remaining design/cleanup work after the core render-pipeline refactor. They should now be treated as follow-on work rather than blockers for the refactor itself.
+The detailed phase notes below are now primarily historical context for completed refactor work and a baseline for any future follow-on phases.
 
 ## Phase 9: Clean Up Backend Naming And Semantics
 
@@ -369,6 +377,11 @@ Benefits:
 
 ## Phase 15: Add Lightweight Verification Infrastructure
 
+- Implemented:
+  - CMake `enable_testing()` plus a `RadiaryTests` executable and `add_test()` entry.
+  - A tiny self-contained test harness for fast non-UI verification.
+  - Coverage for `SceneSerializer` round-trips/invariants, `PathDrawListBuilder` structure, and pure preview render decision helpers.
+  - Extraction of preview reset / render-stage selection helpers into a standalone testable unit.
 - Add non-UI validation around render prep and pass wiring:
   - scene prep tests
   - path draw-list builder tests
@@ -401,8 +414,9 @@ Benefits:
 7. Create shared scene-preparation stage (Phase 7).
 8. Unify preview/export composition paths (Phase 8).
 9. Move shaders into standalone `.hlsl` files (Phase 5).
+10. Add lightweight verification infrastructure and non-UI render tests (Phase 15).
 
-The next active work starts at Phase 9.
+The next active work starts at Phase 16.
 
 ## Highest-Value Fixes
 
