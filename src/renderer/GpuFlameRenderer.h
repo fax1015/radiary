@@ -105,8 +105,6 @@ private:
     void SetError(const char* stage, HRESULT result);
     DXGI_FORMAT ChooseOutputFormat() const;
 
-    static ID3DBlob* CompileShader(const char* source, const char* entryPoint, const char* target, std::string& error);
-
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* deviceContext_ = nullptr;
 

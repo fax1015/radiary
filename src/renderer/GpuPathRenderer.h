@@ -2,18 +2,17 @@
 
 #include <d3d11.h>
 
+#include <cstddef>
 #include <string>
 
 #include "core/Scene.h"
+#include "renderer/PathDrawListBuilder.h"
 
 namespace radiary {
 
 class GpuPathRenderer {
 public:
-    struct Vertex {
-        float position[3] {};
-        float color[4] {};
-    };
+    using Vertex = PathDrawVertex;
 
     ~GpuPathRenderer();
 
@@ -27,6 +26,13 @@ public:
         bool transparentBackground,
         bool renderGrid,
         ID3D11ShaderResourceView* flameDepthSrv = nullptr);
+    bool RenderDrawList(
+        const Color& backgroundColor,
+        int width,
+        int height,
+        bool transparentBackground,
+        const PathDrawList& drawList,
+        ID3D11ShaderResourceView* flameDepthSrv = nullptr);
 
     ID3D11ShaderResourceView* ShaderResourceView() const { return outputSrv_; }
     ID3D11Texture2D* OutputTexture() const { return outputTexture_; }
@@ -38,13 +44,13 @@ private:
     bool CreatePipeline();
     bool EnsureResources(int width, int height);
     bool EnsureVertexBuffer(std::size_t vertexCount);
-    bool DrawVertices(const Vertex* vertices, std::size_t vertexCount, ID3D11DepthStencilState* depthState);
+    bool UploadDrawListVertices(const PathDrawList& drawList);
+    void DrawUploadedDrawList(const PathDrawList& drawList);
+    bool DrawDrawList(const PathDrawList& drawList);
     void ReleasePipeline();
     void ReleaseResources();
     void SetError(const std::string& error) { lastError_ = error; }
     void SetError(const char* stage, HRESULT result);
-
-    static ID3DBlob* CompileShader(const char* source, const char* entryPoint, const char* target, std::string& error);
 
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* deviceContext_ = nullptr;

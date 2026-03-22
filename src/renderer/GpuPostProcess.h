@@ -6,6 +6,7 @@
 #include <string>
 
 #include "core/Scene.h"
+#include "renderer/GpuFrame.h"
 
 namespace radiary {
 
@@ -20,11 +21,11 @@ public:
         const Scene& scene,
         int width,
         int height,
-        ID3D11ShaderResourceView* inputSrv,
-        std::optional<std::uint32_t> randomSeedOverride = std::nullopt);
+        const GpuPostProcessInputs& inputs);
 
     ID3D11ShaderResourceView* ShaderResourceView() const { return outputSrv_; }
     ID3D11Texture2D* OutputTexture() const { return outputTexture_; }
+    GpuPassOutput Output() const { return {outputSrv_, outputTexture_, nullptr, nullptr}; }
     bool IsReady() const { return device_ != nullptr && postProcessShader_ != nullptr && bloomDownShader_ != nullptr && bloomUpShader_ != nullptr && paramsBuffer_ != nullptr; }
     const std::string& LastError() const { return lastError_; }
 
@@ -55,8 +56,6 @@ private:
     void SetError(const std::string& error) { lastError_ = error; }
     void SetError(const char* stage, HRESULT result);
     DXGI_FORMAT ChooseOutputFormat() const;
-
-    static ID3DBlob* CompileShader(const char* source, const char* entryPoint, const char* target, std::string& error);
 
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* deviceContext_ = nullptr;

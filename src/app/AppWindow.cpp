@@ -39,16 +39,14 @@ namespace {
 
 constexpr int kInitialWindowWidth = 1560;
 constexpr int kInitialWindowHeight = 980;
+constexpr int kMinimumClientWidth = 1120;
+constexpr int kMinimumClientHeight = 720;
 constexpr UINT_PTR kLiveResizeTimerId = 1;
 constexpr UINT_PTR kStartupAnimationTimerId = 2;
 constexpr UINT kLiveResizeTimerIntervalMs = 15;
 constexpr UINT kStartupAnimationTimerIntervalMs = 16;
 constexpr float kOverlayPanelMarginX = 16.0f;
 constexpr float kOverlayPanelMarginY = 12.0f;
-constexpr float kDefaultToolbarSplit = 0.055f;
-constexpr float kDefaultBottomPanelSplit = 0.22f;
-constexpr float kDefaultLeftPanelSplit = 0.3f;
-constexpr float kDefaultRightPanelSplit = 0.47f;
 constexpr int kAppSettingsVersion = 1;
 // Replace this file to swap the app logo everywhere it is used.
 constexpr wchar_t kAppLogoRelativePath[] = L"assets/ui/app-logo.png";
@@ -121,6 +119,17 @@ bool LoadImagePixelsWithWic(
     if (decoder) { decoder->Release(); }
     if (factory) { factory->Release(); }
     return success;
+}
+
+SIZE WindowSizeForClientSize(HWND window, const int clientWidth, const int clientHeight) {
+    RECT rect {0, 0, clientWidth, clientHeight};
+    const DWORD style = window != nullptr ? static_cast<DWORD>(GetWindowLongW(window, GWL_STYLE)) : WS_OVERLAPPEDWINDOW;
+    const DWORD exStyle = window != nullptr ? static_cast<DWORD>(GetWindowLongW(window, GWL_EXSTYLE)) : 0;
+    AdjustWindowRectEx(&rect, style, FALSE, exStyle);
+    return {
+        rect.right - rect.left,
+        rect.bottom - rect.top
+    };
 }
 
 }  // namespace
@@ -666,6 +675,14 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
             PresentBlockingOverlay();
         }
         return 0;
+    case WM_GETMINMAXINFO:
+        if (MINMAXINFO* minMaxInfo = reinterpret_cast<MINMAXINFO*>(lParam)) {
+            const SIZE minWindowSize = WindowSizeForClientSize(window_, kMinimumClientWidth, kMinimumClientHeight);
+            minMaxInfo->ptMinTrackSize.x = minWindowSize.cx;
+            minMaxInfo->ptMinTrackSize.y = minWindowSize.cy;
+            return 0;
+        }
+        break;
     case WM_SYSCOMMAND:
         if ((wParam & 0xFFF0) == SC_KEYMENU) {
             return 0;

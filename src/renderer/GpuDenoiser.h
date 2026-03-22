@@ -5,6 +5,7 @@
 #include <string>
 
 #include "core/Scene.h"
+#include "renderer/GpuFrame.h"
 
 namespace radiary {
 
@@ -15,20 +16,22 @@ public:
     bool Initialize(ID3D11Device* device, ID3D11DeviceContext* deviceContext);
     void Shutdown();
 
+    bool Compose(
+        int width,
+        int height,
+        const GpuFrameInputs& inputs);
+
     bool Render(
         const Scene& scene,
         int width,
         int height,
-        ID3D11ShaderResourceView* gridSrv,
-        ID3D11ShaderResourceView* flameSrv,
-        ID3D11ShaderResourceView* flameDepthSrv,
-        ID3D11ShaderResourceView* pathSrv,
-        ID3D11ShaderResourceView* pathDepthSrv);
+        const GpuFrameInputs& inputs);
 
     ID3D11ShaderResourceView* ShaderResourceView() const { return outputSrv_; }
     ID3D11Texture2D* OutputTexture() const { return outputTexture_; }
     ID3D11ShaderResourceView* DepthShaderResourceView() const { return depthSrv_; }
     ID3D11Texture2D* DepthTexture() const { return depthTexture_; }
+    GpuPassOutput Output() const { return {outputSrv_, outputTexture_, depthSrv_, depthTexture_}; }
     bool IsReady() const { return device_ != nullptr && composeShader_ != nullptr && filterShader_ != nullptr && paramsBuffer_ != nullptr; }
     const std::string& LastError() const { return lastError_; }
 
@@ -48,12 +51,12 @@ private:
 
     bool CreateShaders();
     bool EnsureResources(int width, int height);
+    bool DispatchComposePass(const Params& params, const GpuFrameInputs& inputs);
+    bool DispatchFilterPasses(const Params& params);
     void ReleaseResources();
     void SetError(const std::string& error) { lastError_ = error; }
     void SetError(const char* stage, HRESULT result);
     DXGI_FORMAT ChooseOutputFormat() const;
-
-    static ID3DBlob* CompileShader(const char* source, const char* entryPoint, const char* target, std::string& error);
 
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* deviceContext_ = nullptr;

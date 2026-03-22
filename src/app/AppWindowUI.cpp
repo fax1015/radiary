@@ -20,10 +20,17 @@ namespace {
 
 constexpr float kOverlayPanelMarginX = 16.0f;
 constexpr float kOverlayPanelMarginY = 12.0f;
-constexpr float kDefaultToolbarSplit = 0.055f;
-constexpr float kDefaultBottomPanelSplit = 0.22f;
-constexpr float kDefaultLeftPanelSplit = 0.3f;
-constexpr float kDefaultRightPanelSplit = 0.47f;
+constexpr float kDefaultToolbarHeight = 52.0f;
+constexpr float kDefaultBottomPanelHeight = 196.0f;
+constexpr float kDefaultLeftPanelWidth = 463.0f;
+constexpr float kDefaultRightPanelWidth = 508.0f;
+
+float SplitRatioForPixels(const float pixels, const float available) {
+    if (available <= 1.0f) {
+        return 0.5f;
+    }
+    return std::clamp(pixels / available, 0.05f, 0.95f);
+}
 
 }  // namespace
 
@@ -240,10 +247,19 @@ void AppWindow::BuildDefaultLayout() {
     ImGuiID bottomId = 0;
     ImGuiID leftId = 0;
     ImGuiID rightId = 0;
-    ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Up, kDefaultToolbarSplit, &topId, &centerId);
-    ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Down, kDefaultBottomPanelSplit, &bottomId, &centerId);
-    ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Left, kDefaultLeftPanelSplit, &leftId, &centerId);
-    ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Right, kDefaultRightPanelSplit, &rightId, &centerId);
+    const float toolbarRatio = SplitRatioForPixels(kDefaultToolbarHeight, viewport->Size.y);
+    ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Up, toolbarRatio, &topId, &centerId);
+
+    const float remainingHeightAfterToolbar = std::max(1.0f, viewport->Size.y - kDefaultToolbarHeight);
+    const float bottomRatio = SplitRatioForPixels(kDefaultBottomPanelHeight, remainingHeightAfterToolbar);
+    ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Down, bottomRatio, &bottomId, &centerId);
+
+    const float leftRatio = SplitRatioForPixels(kDefaultLeftPanelWidth, viewport->Size.x);
+    ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Left, leftRatio, &leftId, &centerId);
+
+    const float remainingWidthAfterLeft = std::max(1.0f, viewport->Size.x - kDefaultLeftPanelWidth);
+    const float rightRatio = SplitRatioForPixels(kDefaultRightPanelWidth, remainingWidthAfterLeft);
+    ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Right, rightRatio, &rightId, &centerId);
 
     ImGui::DockBuilderDockWindow("Toolbar", topId);
     ImGui::DockBuilderDockWindow("Layers", leftId);
@@ -256,6 +272,7 @@ void AppWindow::BuildDefaultLayout() {
     if (ImGuiDockNode* topNode = ImGui::DockBuilderGetNode(topId)) {
         topNode->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
         topNode->LocalFlags |= ImGuiDockNodeFlags_NoResize;
+        topNode->SizeRef.y = kDefaultToolbarHeight;
     }
     ImGui::DockBuilderFinish(dockspaceId);
     defaultLayoutBuilt_ = true;
@@ -2527,8 +2544,10 @@ void AppWindow::DrawViewportPanel() {
     const int height = std::max(1, static_cast<int>(available.y));
     const bool gpuPreviewRequested = gpuFlamePreviewEnabled_;
     const bool allowViewportRender = !bootstrapUiFramePending_;
+    bool attemptedViewportRender = false;
 
     if (allowViewportRender && (gpuPreviewRequested || !viewportSrv_ || uploadedViewportWidth_ != width || uploadedViewportHeight_ != height)) {
+        attemptedViewportRender = true;
         RenderViewportIfNeeded(width, height);
     }
 
@@ -2652,9 +2671,11 @@ void AppWindow::DrawViewportPanel() {
         }
     }
 
+    const bool viewportDirtyBeforeInteraction = viewportDirty_;
     HandleViewportInteraction(allowViewportRender && hovered);
+    const bool viewportDirtiedByInteraction = viewportDirty_ && !viewportDirtyBeforeInteraction;
 
-    if (allowViewportRender && viewportDirty_) {
+    if (allowViewportRender && viewportDirty_ && (!attemptedViewportRender || viewportDirtiedByInteraction)) {
         RenderViewportIfNeeded(width, height);
     }
 

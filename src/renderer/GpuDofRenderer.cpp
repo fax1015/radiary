@@ -1,131 +1,17 @@
 #include "renderer/GpuDofRenderer.h"
 
-#include <d3dcompiler.h>
-
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstring>
+
+#include "renderer/D3D11ResourceUtils.h"
+#include "renderer/D3D11ShaderUtils.h"
 
 namespace radiary {
 
 namespace {
-
-constexpr char kGpuDofShaderSource[] = R"(
-cbuffer DofParams : register(b0)
-{
-    uint Width;
-    uint Height;
-    uint UseGrid;
-    uint UseFlame;
-    uint UsePath;
-    float FocusDepth;
-    float FocusRange;
-    float BlurStrength;
-    float4 Padding;
-};
-
-Texture2D<float4> GridTexture : register(t0);
-Texture2D<float4> FlameTexture : register(t1);
-Texture2D<float> FlameDepthTexture : register(t2);
-Texture2D<float4> PathTexture : register(t3);
-Texture2D<float> PathDepthTexture : register(t4);
-
-RWTexture2D<float4> OutputTexture : register(u0);
-
-static const int2 kOffsets[8] = {
-    int2(1, 0),
-    int2(-1, 0),
-    int2(0, 1),
-    int2(0, -1),
-    int2(1, 1),
-    int2(-1, 1),
-    int2(1, -1),
-    int2(-1, -1)
-};
-
-float4 AlphaOver(float4 baseColor, float4 overlayColor)
-{
-    return float4(
-        overlayColor.rgb + baseColor.rgb * (1.0 - overlayColor.a),
-        overlayColor.a + baseColor.a * (1.0 - overlayColor.a));
-}
-
-float4 ComposeColor(int2 pixel)
-{
-    float4 color = float4(0.0, 0.0, 0.0, 0.0);
-    if (UseGrid != 0u)
-    {
-        color = GridTexture.Load(int3(pixel, 0));
-    }
-    if (UseFlame != 0u)
-    {
-        float4 flame = FlameTexture.Load(int3(pixel, 0));
-        color = (UseGrid != 0u) ? AlphaOver(color, flame) : flame;
-    }
-    if (UsePath != 0u)
-    {
-        color = AlphaOver(color, PathTexture.Load(int3(pixel, 0)));
-    }
-    return color;
-}
-
-float ComposeDepth(int2 pixel)
-{
-    if (UsePath != 0u)
-    {
-        float4 path = PathTexture.Load(int3(pixel, 0));
-        if (path.a > 0.001)
-        {
-            return PathDepthTexture.Load(int3(pixel, 0));
-        }
-    }
-
-    if (UseFlame != 0u)
-    {
-        float flameDepth = FlameDepthTexture.Load(int3(pixel, 0));
-        if (flameDepth < 0.999)
-        {
-            return flameDepth;
-        }
-    }
-
-    return 1.0;
-}
-
-[numthreads(8, 8, 1)]
-void MainCS(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
-    if (dispatchThreadId.x >= Width || dispatchThreadId.y >= Height)
-        return;
-
-    int2 pixel = int2(dispatchThreadId.xy);
-    float4 centerColor = ComposeColor(pixel);
-    float depth = ComposeDepth(pixel);
-    float blurAmount = saturate((abs(depth - FocusDepth) - FocusRange) / max(0.02, 1.0 - FocusRange)) * saturate(BlurStrength);
-    if (blurAmount <= 0.001)
-    {
-        OutputTexture[pixel] = centerColor;
-        return;
-    }
-
-    int maxRadius = clamp((int)round(saturate(BlurStrength) * 12.0), 1, 12);
-    float radius = max(1.0, blurAmount * maxRadius);
-    float4 accum = centerColor * 2.0;
-    float weightSum = 2.0;
-
-    [unroll]
-    for (uint index = 0; index < 8u; ++index)
-    {
-        int2 samplePixel = pixel + int2(round((float)kOffsets[index].x * radius), round((float)kOffsets[index].y * radius));
-        samplePixel.x = clamp(samplePixel.x, 0, (int)Width - 1);
-        samplePixel.y = clamp(samplePixel.y, 0, (int)Height - 1);
-        accum += ComposeColor(samplePixel);
-        weightSum += 1.0;
-    }
-
-    OutputTexture[pixel] = accum / max(weightSum, 1.0e-5);
-}
-)";
+constexpr wchar_t kGpuDofShaderFile[] = L"GpuDofRenderer.hlsl";
 
 }  // namespace
 
@@ -153,14 +39,16 @@ bool GpuDofRenderer::Initialize(ID3D11Device* device, ID3D11DeviceContext* devic
         return false;
     }
 
-    D3D11_BUFFER_DESC paramsDesc {};
-    paramsDesc.ByteWidth = (static_cast<UINT>(sizeof(Params)) + 15u) & ~15u;
-    paramsDesc.Usage = D3D11_USAGE_DYNAMIC;
-    paramsDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    paramsDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    const HRESULT result = device_->CreateBuffer(&paramsDesc, nullptr, &paramsBuffer_);
-    if (FAILED(result)) {
-        SetError("CreateBuffer(DofParams)", result);
+    const char* failedStage = nullptr;
+    HRESULT failedResult = S_OK;
+    if (!CreateDynamicConstantBuffer(
+            device_,
+            static_cast<UINT>(sizeof(Params)),
+            "CreateBuffer(DofParams)",
+            &paramsBuffer_,
+            failedStage,
+            failedResult)) {
+        SetError(failedStage, failedResult);
         const std::string error = lastError_;
         Shutdown();
         lastError_ = error;
@@ -184,11 +72,7 @@ bool GpuDofRenderer::Render(
     const Scene& scene,
     const int width,
     const int height,
-    ID3D11ShaderResourceView* gridSrv,
-    ID3D11ShaderResourceView* flameSrv,
-    ID3D11ShaderResourceView* flameDepthSrv,
-    ID3D11ShaderResourceView* pathSrv,
-    ID3D11ShaderResourceView* pathDepthSrv) {
+    const GpuFrameInputs& inputs) {
     if (!IsReady()) {
         if (lastError_.empty()) {
             SetError("GPU DOF renderer is not initialized.");
@@ -206,24 +90,35 @@ bool GpuDofRenderer::Render(
     Params params;
     params.width = static_cast<std::uint32_t>(width);
     params.height = static_cast<std::uint32_t>(height);
-    params.useGrid = gridSrv != nullptr ? 1u : 0u;
-    params.useFlame = (flameSrv != nullptr && flameDepthSrv != nullptr) ? 1u : 0u;
-    params.usePath = (pathSrv != nullptr && pathDepthSrv != nullptr) ? 1u : 0u;
+    params.useGrid = inputs.HasGrid() ? 1u : 0u;
+    params.useFlame = inputs.HasFlame() ? 1u : 0u;
+    params.usePath = inputs.HasPath() ? 1u : 0u;
     params.focusDepth = static_cast<float>(scene.depthOfField.focusDepth);
     params.focusRange = std::max(0.01f, static_cast<float>(scene.depthOfField.focusRange));
     params.blurStrength = static_cast<float>(std::clamp(scene.depthOfField.blurStrength, 0.0, 1.0));
 
-    D3D11_MAPPED_SUBRESOURCE mapped {};
-    HRESULT result = deviceContext_->Map(paramsBuffer_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(result)) {
-        SetError("Map(DofParams)", result);
+    const char* failedStage = nullptr;
+    HRESULT failedResult = S_OK;
+    if (!WriteD3D11BufferData(
+            deviceContext_,
+            paramsBuffer_,
+            &params,
+            sizeof(params),
+            "Map(DofParams)",
+            failedStage,
+            failedResult)) {
+        SetError(failedStage, failedResult);
         return false;
     }
-    std::memcpy(mapped.pData, &params, sizeof(params));
-    deviceContext_->Unmap(paramsBuffer_, 0);
 
     ID3D11Buffer* constantBuffers[] = {paramsBuffer_};
-    ID3D11ShaderResourceView* srvs[] = {gridSrv, flameSrv, flameDepthSrv, pathSrv, pathDepthSrv};
+    ID3D11ShaderResourceView* srvs[] = {
+        inputs.gridColor,
+        inputs.flameColor,
+        inputs.flameDepth,
+        inputs.pathColor,
+        inputs.pathDepth
+    };
     ID3D11UnorderedAccessView* uavs[] = {outputUav_};
     deviceContext_->CSSetConstantBuffers(0, 1, constantBuffers);
     deviceContext_->CSSetShaderResources(0, 5, srvs);
@@ -242,20 +137,16 @@ bool GpuDofRenderer::Render(
 
 bool GpuDofRenderer::CreateShader() {
     std::string compileError;
-    ID3DBlob* shaderBlob = CompileShader(kGpuDofShaderSource, "MainCS", "cs_5_0", compileError);
-    if (shaderBlob == nullptr) {
+    const UINT compileFlags = GetDevelopmentD3D11ShaderCompileFlags(true);
+    if (!CreateD3D11ComputeShaderFromFile(
+            device_,
+            kGpuDofShaderFile,
+            "MainCS",
+            compileFlags,
+            "CreateComputeShader(DofCS)",
+            &shader_,
+            compileError)) {
         SetError(compileError.empty() ? "Failed to compile DOF compute shader." : compileError);
-        return false;
-    }
-
-    const HRESULT result = device_->CreateComputeShader(
-        shaderBlob->GetBufferPointer(),
-        shaderBlob->GetBufferSize(),
-        nullptr,
-        &shader_);
-    shaderBlob->Release();
-    if (FAILED(result)) {
-        SetError("CreateComputeShader(DofCS)", result);
         return false;
     }
     return true;
@@ -283,19 +174,23 @@ bool GpuDofRenderer::EnsureResources(const int width, const int height) {
     outputDesc.Usage = D3D11_USAGE_DEFAULT;
     outputDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
-    HRESULT result = device_->CreateTexture2D(&outputDesc, nullptr, &outputTexture_);
-    if (FAILED(result)) {
-        SetError("CreateTexture2D(DofOutput)", result);
-        return false;
-    }
-    result = device_->CreateUnorderedAccessView(outputTexture_, nullptr, &outputUav_);
-    if (FAILED(result)) {
-        SetError("CreateUnorderedAccessView(DofOutput)", result);
-        return false;
-    }
-    result = device_->CreateShaderResourceView(outputTexture_, nullptr, &outputSrv_);
-    if (FAILED(result)) {
-        SetError("CreateShaderResourceView(DofOutput)", result);
+    const D3D11TextureViewStages stages {
+        "CreateTexture2D(DofOutput)",
+        "CreateUnorderedAccessView(DofOutput)",
+        "CreateShaderResourceView(DofOutput)",
+    };
+    const char* failedStage = nullptr;
+    HRESULT failedResult = S_OK;
+    if (!CreateTexture2DWithViews(
+            device_,
+            outputDesc,
+            stages,
+            &outputTexture_,
+            &outputUav_,
+            &outputSrv_,
+            failedStage,
+            failedResult)) {
+        SetError(failedStage, failedResult);
         return false;
     }
 
@@ -313,9 +208,7 @@ void GpuDofRenderer::ReleaseResources() {
 }
 
 void GpuDofRenderer::SetError(const char* stage, const HRESULT result) {
-    char buffer[96] {};
-    std::snprintf(buffer, sizeof(buffer), "%s failed with HRESULT 0x%08X", stage, static_cast<unsigned>(result));
-    lastError_ = buffer;
+    lastError_ = FormatD3D11StageError(stage, result);
 }
 
 DXGI_FORMAT GpuDofRenderer::ChooseOutputFormat() const {
@@ -323,46 +216,11 @@ DXGI_FORMAT GpuDofRenderer::ChooseOutputFormat() const {
         DXGI_FORMAT_R16G16B16A16_FLOAT,
         DXGI_FORMAT_R32G32B32A32_FLOAT
     };
-
-    for (const DXGI_FORMAT format : formats) {
-        UINT support = 0;
-        if (SUCCEEDED(device_->CheckFormatSupport(format, &support))
-            && (support & D3D11_FORMAT_SUPPORT_TEXTURE2D)
-            && (support & D3D11_FORMAT_SUPPORT_SHADER_LOAD)
-            && (support & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW)) {
-            return format;
-        }
-    }
-
-    return DXGI_FORMAT_UNKNOWN;
-}
-
-ID3DBlob* GpuDofRenderer::CompileShader(const char* source, const char* entryPoint, const char* target, std::string& error) {
-    UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
-#if defined(_DEBUG)
-    flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
-    ID3DBlob* shaderBlob = nullptr;
-    ID3DBlob* errorBlob = nullptr;
-    const HRESULT result = D3DCompile(source, std::strlen(source), nullptr, nullptr, nullptr, entryPoint, target, flags, 0, &shaderBlob, &errorBlob);
-    if (FAILED(result)) {
-        if (errorBlob) {
-            error.assign(static_cast<const char*>(errorBlob->GetBufferPointer()), errorBlob->GetBufferSize());
-            errorBlob->Release();
-        } else {
-            char buffer[96] {};
-            std::snprintf(buffer, sizeof(buffer), "D3DCompile failed with HRESULT 0x%08X", static_cast<unsigned>(result));
-            error = buffer;
-        }
-        if (shaderBlob) {
-            shaderBlob->Release();
-        }
-        return nullptr;
-    }
-    if (errorBlob) {
-        errorBlob->Release();
-    }
-    return shaderBlob;
+    constexpr UINT requiredSupport =
+        D3D11_FORMAT_SUPPORT_TEXTURE2D
+        | D3D11_FORMAT_SUPPORT_SHADER_LOAD
+        | D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW;
+    return ChooseSupportedD3D11Format(device_, formats.data(), formats.size(), requiredSupport);
 }
 
 }  // namespace radiary

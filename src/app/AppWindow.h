@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -96,6 +97,79 @@ private:
         ExportFormat format = ExportFormat::Png;
         int startFrame = 0;
         int endFrame = 0;
+    };
+
+    struct ViewportRenderRequest {
+        Scene scene;
+        int width = 0;
+        int height = 0;
+        std::uint32_t previewIterations = 0;
+        bool interactive = false;
+        bool useGpuViewportPreview = false;
+        bool useGpuDofPreview = false;
+        bool useGpuDenoiserPreview = false;
+        bool useGpuPostProcessPreview = false;
+        PreviewBackend cpuPreviewBackend = PreviewBackend::CpuHybrid;
+    };
+
+    struct ViewportRenderSetup {
+        std::chrono::steady_clock::time_point now {};
+        bool sizeChanged = false;
+        bool gpuAccumulationIncomplete = false;
+        bool uiBusy = false;
+        bool resizeInteractionActive = false;
+        bool allowGpuResolvePasses = false;
+        bool throttleGpuAccumulation = false;
+        bool throttleGpuResize = false;
+        bool needsGpuDofResolve = false;
+        bool needsGpuDenoiserResolve = false;
+        bool needsGpuPostProcessResolve = false;
+    };
+
+    struct GpuPreviewPipeline {
+        GpuFrameInputs baseInputs {};
+        ID3D11ShaderResourceView* directSourceColor = nullptr;
+        PreviewBackend directBackend = PreviewBackend::GpuHybrid;
+        PreviewBackend composedBackend = PreviewBackend::GpuHybrid;
+        PreviewBackend compositeFailureBackend = PreviewBackend::GpuHybrid;
+        std::uint32_t displayedIterations = 0;
+        bool applyDenoiser = false;
+        bool applyDof = false;
+        bool useCompositeFinalize = false;
+    };
+
+    struct GpuPreviewBaseFrameResult {
+        SceneMode mode = SceneMode::Flame;
+        bool includeSeparateGridLayer = false;
+        GpuFrameInputs baseInputs {};
+        ID3D11ShaderResourceView* directSourceColor = nullptr;
+        PreviewBackend directBackend = PreviewBackend::GpuHybrid;
+        PreviewBackend composedBackend = PreviewBackend::GpuHybrid;
+        PreviewBackend compositeFailureBackend = PreviewBackend::GpuHybrid;
+        std::uint32_t displayedIterations = 0;
+        bool useCompositeFinalize = false;
+        bool requireCompletedAccumulation = false;
+    };
+
+    struct GpuFailureChecks {
+        bool flame = false;
+        bool grid = false;
+        bool path = false;
+    };
+
+    struct GpuEffectChainState {
+        GpuFrameInputs inputs {};
+        GpuPassOutput resolvedFrame {};
+        bool hasResolvedFrame = false;
+    };
+
+    struct GpuFlameRenderOptions {
+        std::uint32_t iterations = 1;
+        bool transparent = false;
+        bool clearAccumulationForFrame = false;
+        bool preserveTemporalState = false;
+        bool resetTemporalState = false;
+        bool pumpOverlay = false;
     };
 
     HINSTANCE instance_ = nullptr;
@@ -305,7 +379,158 @@ private:
     void ResetScene(Scene scene);
     void LoadPreset(std::size_t index);
     void MarkViewportDirty();
+    static PreviewBackend DetermineCpuPreviewBackend(SceneMode mode);
+    Scene EvaluateSceneAtTimelineFrame(double frame) const;
     Scene BuildRenderableScene(const Scene& scene) const;
+    Scene BuildExportRenderScene(const Scene& sourceScene, int width, int height, bool hideGrid) const;
+    ViewportRenderRequest BuildViewportRenderRequest(int width, int height, bool interactive, bool useGpuViewportPreview) const;
+    ViewportRenderSetup DetermineViewportRenderSetup(const ViewportRenderRequest& request) const;
+    bool ShouldSkipViewportRender(const ViewportRenderSetup& setup) const;
+    bool SetDirectGpuPreview(int width, int height, PreviewBackend backend, std::uint32_t displayedIterations, std::chrono::steady_clock::time_point dispatchTime);
+    bool ResolveGpuPostProcessOutput(
+        const Scene& scene,
+        int width,
+        int height,
+        const GpuPassOutput& input,
+        GpuPassOutput& output,
+        bool* postProcessed = nullptr,
+        std::optional<std::uint32_t> randomSeedOverride = std::nullopt);
+    bool RenderGpuPostProcessPreview(
+        const ViewportRenderRequest& request,
+        const ViewportRenderSetup& setup,
+        ID3D11ShaderResourceView* sourceColor,
+        PreviewBackend baseBackend,
+        std::uint32_t displayedIterations);
+    bool RenderGpuDofPreview(
+        const ViewportRenderRequest& request,
+        const ViewportRenderSetup& setup,
+        const GpuFrameInputs& inputs,
+        std::uint32_t displayedIterations);
+    bool RenderGpuPathScene(
+        const Scene& scene,
+        int width,
+        int height,
+        bool transparent,
+        bool renderGrid,
+        ID3D11ShaderResourceView* flameDepthSrv,
+        GpuPathRenderer& renderer,
+        const wchar_t* rendererLabel);
+    bool RenderGpuFlameScene(
+        const Scene& scene,
+        int width,
+        int height,
+        const GpuFlameRenderOptions& options);
+    bool RenderGpuFlameBaseLayers(
+        const Scene& scene,
+        int width,
+        int height,
+        bool renderBackground,
+        bool backgroundTransparent,
+        bool backgroundGrid,
+        const GpuFlameRenderOptions& flameOptions,
+        bool includePath,
+        std::uint32_t* displayedIterations = nullptr);
+    GpuFrameInputs CaptureCurrentGpuFrameInputs(bool includeGrid, bool includeFlame, bool includePath) const;
+    GpuFrameInputs CaptureGpuFrameInputsForMode(SceneMode mode, bool includeSeparateGridLayer) const;
+    GpuPreviewPipeline BuildGpuPreviewPipeline(
+        const ViewportRenderRequest& request,
+        const ViewportRenderSetup& setup,
+        const GpuFrameInputs& baseInputs,
+        ID3D11ShaderResourceView* directSourceColor,
+        PreviewBackend directBackend,
+        PreviewBackend composedBackend,
+        PreviewBackend compositeFailureBackend,
+        std::uint32_t displayedIterations,
+        bool useCompositeFinalize,
+        bool requireCompletedAccumulation);
+    static GpuFailureChecks BuildGpuFailureChecks(SceneMode mode, bool includeSeparateGridLayer);
+    std::wstring BuildGpuFailureStatusMessage(
+        const wchar_t* contextLabel,
+        const GpuFailureChecks& checks,
+        bool useGpuDenoiser,
+        bool useGpuDof,
+        bool useGpuPostProcess) const;
+    void PopulateGpuPreviewBaseFrameResult(
+        SceneMode mode,
+        bool includeSeparateGridLayer,
+        std::uint32_t displayedIterations,
+        GpuPreviewBaseFrameResult& result) const;
+    bool RenderGpuPreviewBaseLayers(
+        const ViewportRenderRequest& request,
+        std::uint32_t& displayedIterations,
+        bool& includeSeparateGridLayer);
+    bool RenderGpuPreviewFlameBaseLayers(
+        const Scene& scene,
+        int width,
+        int height,
+        std::uint32_t previewIterations,
+        bool includePath,
+        std::uint32_t& displayedIterations);
+    void UpdateGpuPreviewFailureStatus(
+        const GpuFailureChecks& checks,
+        bool useGpuDenoiserPreview,
+        bool useGpuDofPreview,
+        bool useGpuPostProcessPreview);
+    bool RunGpuDenoiserPass(const Scene& scene, int width, int height, const GpuFrameInputs& inputs, GpuPassOutput& output);
+    bool RunGpuCompositePass(int width, int height, const GpuFrameInputs& inputs, GpuPassOutput& output);
+    bool PrepareGpuEffectChainState(
+        const Scene& scene,
+        int width,
+        int height,
+        const GpuFrameInputs& baseInputs,
+        bool applyDenoiser,
+        bool resolveFrame,
+        GpuEffectChainState& state);
+    bool RunGpuDofPass(
+        const Scene& scene,
+        int width,
+        int height,
+        const GpuFrameInputs& inputs,
+        GpuPassOutput& output);
+    bool TryRenderGpuEffectChain(
+        const ViewportRenderRequest& request,
+        const ViewportRenderSetup& setup,
+        const GpuFrameInputs& baseInputs,
+        bool applyDenoiser,
+        bool applyDof,
+        std::uint32_t displayedIterations,
+        bool& handled);
+    bool ExecuteGpuPreviewPipeline(
+        const ViewportRenderRequest& request,
+        const ViewportRenderSetup& setup,
+        const GpuPreviewPipeline& pipeline);
+    bool ExecuteGpuPreviewPipelineWithFailureStatus(
+        const ViewportRenderRequest& request,
+        const ViewportRenderSetup& setup,
+        const GpuPreviewPipeline& pipeline,
+        const GpuFailureChecks& checks);
+    bool FinalizeGpuPreviewStage(
+        const ViewportRenderRequest& request,
+        const ViewportRenderSetup& setup,
+        ID3D11ShaderResourceView* directSourceColor,
+        const GpuFrameInputs* compositeInputs,
+        PreviewBackend directBackend,
+        PreviewBackend composedBackend,
+        PreviewBackend compositeFailureBackend,
+        std::uint32_t displayedIterations);
+    bool RenderGpuCompositePreview(
+        const ViewportRenderRequest& request,
+        const ViewportRenderSetup& setup,
+        const GpuFrameInputs& inputs,
+        PreviewBackend composedBackend,
+        std::uint32_t displayedIterations);
+    bool BuildGpuPreviewBaseFrameResult(
+        const ViewportRenderRequest& request,
+        GpuPreviewBaseFrameResult& result);
+    bool ExecuteGpuPreviewBaseFrameResult(
+        const ViewportRenderRequest& request,
+        const ViewportRenderSetup& setup,
+        const GpuPreviewBaseFrameResult& result);
+    bool RenderGpuViewportPreview(const ViewportRenderRequest& request, const ViewportRenderSetup& setup);
+    void ExecuteViewportRenderRequest(const ViewportRenderRequest& request, const ViewportRenderSetup& setup);
+    bool QueueCpuViewportPreview(const ViewportRenderRequest& request);
+    bool PresentViewportPixels(int width, int height, PreviewBackend backend, std::uint32_t displayedIterations);
+    bool RenderCpuViewportPreview(const ViewportRenderRequest& request);
     void QueueViewportRender(int width, int height, bool interactive);
     void ConsumeCompletedRender();
     void RecordPreviewUpdate();
@@ -374,9 +599,58 @@ private:
         bool resetTemporalFlameState = false;
         SoftwareRenderer* cpuRenderer = nullptr;
     };
+    struct GpuExportRenderPlan {
+        Scene scene;
+        int width = 0;
+        int height = 0;
+        bool transparentBackground = false;
+        bool exportGrid = false;
+        bool usesEffectPipeline = false;
+        const ExportRenderState* renderState = nullptr;
+    };
+    struct GpuExportBaseFrameResult {
+        GpuFrameInputs baseInputs {};
+    };
+    GpuFlameRenderOptions MakeExportGpuFlameRenderOptions(const Scene& scene, bool transparent, const ExportRenderState* renderState) const;
     bool RenderSceneToPixels(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, bool useGpu, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr);
     bool RenderSceneToPixelsCpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr) const;
     bool RenderSceneToPixelsGpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr);
+    void InvalidateExportViewportPreview();
+    bool PumpExportOverlay();
+    GpuExportRenderPlan BuildGpuExportRenderPlan(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, const ExportRenderState* renderState) const;
+    static bool UsesSeparateGpuExportGridLayer(const GpuExportRenderPlan& plan);
+    bool RenderGpuExportFlameBaseLayers(const Scene& exportScene, int width, int height, bool transparentBackground, bool exportGrid, const ExportRenderState* renderState);
+    bool RenderGpuExportHybridBaseLayers(const Scene& exportScene, int width, int height, bool transparentBackground, bool exportGrid, const ExportRenderState* renderState);
+    bool RenderGpuExportBaseLayers(const GpuExportRenderPlan& plan, bool& includeSeparateGridLayer);
+    bool BuildGpuExportBaseFrameResult(const GpuExportRenderPlan& plan, GpuExportBaseFrameResult& result);
+    bool ExecuteGpuExportBaseFrameResult(const GpuExportRenderPlan& plan, const GpuExportBaseFrameResult& result, std::vector<std::uint32_t>& pixels);
+    bool ReadGpuExportBaseFramePixels(const GpuFrameInputs& inputs, int width, int height, bool transparentBackground, std::vector<std::uint32_t>& output) const;
+    bool ApplyGpuExportPostProcessAndReadback(const Scene& exportScene, int width, int height, const GpuPassOutput& frame, std::vector<std::uint32_t>& output);
+    bool ReadGpuExportEffectPixels(const Scene& exportScene, int width, int height, const GpuFrameInputs& baseInputs, std::vector<std::uint32_t>& output);
+    void UpdateGpuExportFailureStatus(const GpuExportRenderPlan& plan);
+    bool ExecuteGpuExportRenderPlan(const GpuExportRenderPlan& plan, std::vector<std::uint32_t>& pixels);
+    bool RenderExportSceneWithGpuFallback(
+        const Scene& renderScene,
+        int width,
+        int height,
+        std::uint32_t iterations,
+        bool transparentBackground,
+        bool hideGrid,
+        bool& useGpuRender,
+        std::vector<std::uint32_t>& pixels,
+        const ExportRenderState* renderState = nullptr);
+    bool RenderAnimatedExportFrame(
+        int frame,
+        int frameIndex,
+        int frameCount,
+        int width,
+        int height,
+        std::uint32_t iterations,
+        bool transparentBackground,
+        bool hideGrid,
+        bool& useGpuRender,
+        SoftwareRenderer& cpuRenderer,
+        std::vector<std::uint32_t>& pixels);
     bool ReadbackGpuTexture(ID3D11Texture2D* texture, std::vector<std::uint32_t>& pixels) const;
     bool ReadbackGpuDepthTexture(ID3D11Texture2D* texture, std::vector<float>& depthBuffer) const;
     void DrawLoadingLogo(HDC hdc, int clientWidth, int clientHeight, int barY) const;

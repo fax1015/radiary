@@ -21,8 +21,11 @@ set(radiary_sources
     src/engine/flame/IFSEngine.cpp
     src/engine/path/SplinePath.cpp
     src/renderer/SoftwareRenderer.cpp
+    src/renderer/D3D11ShaderUtils.cpp
+    src/renderer/D3D11ResourceUtils.cpp
     src/renderer/GpuFlameRenderer.cpp
     src/renderer/GpuPathRenderer.cpp
+    src/renderer/PathDrawListBuilder.cpp
     src/renderer/GpuDofRenderer.cpp
     src/renderer/GpuDenoiser.cpp
     src/renderer/GpuPostProcess.cpp
@@ -45,6 +48,14 @@ set(radiary_sources
     third_party/imgui/backends/imgui_impl_win32.cpp
     third_party/imgui/backends/imgui_impl_dx11.cpp
     third_party/imgui/misc/cpp/imgui_stdlib.cpp
+)
+
+set(radiary_shader_files
+    src/renderer/shaders/GpuFlameRenderer.hlsl
+    src/renderer/shaders/GpuPathRenderer.hlsl
+    src/renderer/shaders/GpuDofRenderer.hlsl
+    src/renderer/shaders/GpuDenoiser.hlsl
+    src/renderer/shaders/GpuPostProcess.hlsl
 )
 
 if (WIN32)
@@ -107,6 +118,7 @@ target_compile_definitions(Radiary PRIVATE
     _UNICODE
     NOMINMAX
     WIN32_LEAN_AND_MEAN
+    RADIARY_SHADER_DIR=L\"shaders\"
 )
 
 if (MSVC)
@@ -119,7 +131,19 @@ target_link_libraries(Radiary PRIVATE windowscodecs comdlg32 ole32 dwmapi d3d11 
 
 install(TARGETS Radiary RUNTIME DESTINATION .)
 install(DIRECTORY assets DESTINATION .)
+install(FILES ${radiary_shader_files} DESTINATION shaders)
 install(FILES README.md DESTINATION .)
+
+add_custom_command(TARGET Radiary POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:Radiary>/shaders")
+
+foreach(shader_file IN LISTS radiary_shader_files)
+    add_custom_command(TARGET Radiary POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/${shader_file}"
+            "$<TARGET_FILE_DIR:Radiary>/shaders")
+endforeach()
 
 if (RADIARY_EMBED_FFMPEG)
     add_custom_command(TARGET Radiary POST_BUILD
