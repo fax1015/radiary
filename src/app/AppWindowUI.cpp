@@ -3,6 +3,7 @@
 #include "app/CameraUtils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
 #include <functional>
@@ -28,11 +29,91 @@ constexpr float kWidePreviewGridMinWidth = 620.0f;
 constexpr float kWideCameraGridMinWidth = 620.0f;
 constexpr float kWideCameraActionsMinWidth = 340.0f;
 
+ImVec4 WithAlpha(const ImVec4& color, const float alpha) {
+    return ImVec4(color.x, color.y, color.z, alpha);
+}
+
+ImVec4 Mix(const ImVec4& a, const ImVec4& b, const float t) {
+    return ImVec4(
+        a.x + (b.x - a.x) * t,
+        a.y + (b.y - a.y) * t,
+        a.z + (b.z - a.z) * t,
+        a.w + (b.w - a.w) * t);
+}
+
+std::string TitleCaseFromSnakeCase(std::string value) {
+    bool capitalizeNext = true;
+    for (char& ch : value) {
+        if (ch == '_') {
+            ch = ' ';
+            capitalizeNext = true;
+            continue;
+        }
+        if (capitalizeNext) {
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            capitalizeNext = false;
+        }
+    }
+    return value;
+}
+
 float SplitRatioForPixels(const float pixels, const float available) {
     if (available <= 1.0f) {
         return 0.5f;
     }
     return std::clamp(pixels / available, 0.05f, 0.95f);
+}
+
+void DrawDockspaceBackdrop(const ImGuiViewport* viewport) {
+    if (viewport == nullptr) {
+        return;
+    }
+
+    const UiTheme& theme = GetUiTheme();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImVec2 min = viewport->Pos;
+    const ImVec2 max(viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y);
+    drawList->AddRectFilled(min, max, ImGui::GetColorU32(theme.appBackgroundTop));
+}
+
+bool BeginPropertyGrid(const char* id) {
+    const float contentWidth = ImGui::GetContentRegionAvail().x;
+    const float labelWidth = std::clamp(contentWidth * 0.30f, 196.0f, 248.0f);
+    if (!ImGui::BeginTable(
+            id,
+            2,
+            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_PadOuterX,
+            ImVec2(0.0f, 0.0f))) {
+        return false;
+    }
+
+    ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, labelWidth);
+    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    return true;
+}
+
+template <typename DrawWidget>
+bool DrawPropertyRow(const char* label, const DrawWidget& drawWidget, const char* detail = nullptr) {
+    const UiTheme& theme = GetUiTheme();
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::PushStyleColor(ImGuiCol_Text, theme.textMuted);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::PopStyleColor();
+
+    ImGui::TableSetColumnIndex(1);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    const bool changed = drawWidget();
+    if (detail != nullptr && detail[0] != '\0') {
+        ImGui::PushStyleColor(ImGuiCol_Text, theme.textDim);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
+        ImGui::TextUnformatted(detail);
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    }
+    return changed;
 }
 
 }  // namespace
@@ -120,13 +201,15 @@ void AppWindow::DrawBlockingOverlay() const {
         return;
     }
 
+    const UiTheme& theme = GetUiTheme();
+
     ImGui::SetNextWindowPos(viewport->Pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(viewport->Size, ImGuiCond_Always);
     ImGui::SetNextWindowViewport(viewport->ID);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.03f, 0.03f, 0.04f, 0.78f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, theme.overlayScrim);
     ImGui::Begin(
         "##BlockingOverlay",
         nullptr,
@@ -162,9 +245,8 @@ void AppWindow::DrawBlockingOverlay() const {
     ImGui::SetNextWindowSizeConstraints(
         ImVec2(panelWidth, 0.0f),
         ImVec2(panelWidth, std::max(160.0f, viewport->Size.y - 48.0f)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 18.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    PushFloatingPanelStyle();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f, 16.0f));
     ImGui::Begin(
         "##BlockingOverlayPanel",
         nullptr,
@@ -174,14 +256,15 @@ void AppWindow::DrawBlockingOverlay() const {
             | ImGuiWindowFlags_NoSavedSettings
             | ImGuiWindowFlags_NoNav
             | ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::PopStyleVar(3);
+    ImGui::PopStyleVar();
+    PopFloatingPanelStyle();
 
     const std::string title = WideToUtf8(exportProgressTitle_.empty() ? L"Exporting" : exportProgressTitle_);
     const std::string detail = WideToUtf8(exportProgressDetail_);
     const std::string eta = WideToUtf8(exportProgressEta_);
     ImGui::TextUnformatted(title.c_str());
     ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(115.0f / 255.0f, 148.0f / 255.0f, 235.0f / 255.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme.accent);
     ImGui::ProgressBar(std::clamp(exportProgress_, 0.0f, 1.0f), ImVec2(-FLT_MIN, 0.0f));
     ImGui::PopStyleColor();
     if (!detail.empty()) {
@@ -226,6 +309,7 @@ void AppWindow::DrawDockspace() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, dockTabFramePadding);
     ImGui::Begin("RadiaryDockspace", nullptr, flags);
     ImGui::PopStyleVar(4);
+    DrawDockspaceBackdrop(viewport);
     const ImGuiID dockspaceId = ImGui::GetID("RadiaryDockspaceNode");
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
     if (!defaultLayoutBuilt_) {
@@ -266,6 +350,7 @@ void AppWindow::BuildDefaultLayout() {
 
     ImGui::DockBuilderDockWindow("Toolbar", topId);
     ImGui::DockBuilderDockWindow("Layers", leftId);
+    ImGui::DockBuilderDockWindow("Keyframes", leftId);
     ImGui::DockBuilderDockWindow("Inspector", rightId);
     ImGui::DockBuilderDockWindow("Playback", bottomId);
     ImGui::DockBuilderDockWindow("Camera", rightId);
@@ -281,13 +366,90 @@ void AppWindow::BuildDefaultLayout() {
     defaultLayoutBuilt_ = true;
 }
 
+void AppWindow::OpenAllDockPanels() {
+    layersPanelOpen_ = true;
+    keyframeListPanelOpen_ = true;
+    inspectorPanelOpen_ = true;
+    playbackPanelOpen_ = true;
+    previewPanelOpen_ = true;
+    cameraPanelOpen_ = true;
+    viewportPanelOpen_ = true;
+}
+
+void AppWindow::DrawDockPanelVisibilityMenuItems() {
+    ImGui::MenuItem("Layers", nullptr, &layersPanelOpen_);
+    ImGui::MenuItem("Keyframes", nullptr, &keyframeListPanelOpen_);
+    ImGui::MenuItem("Inspector", nullptr, &inspectorPanelOpen_);
+    ImGui::MenuItem("Playback", nullptr, &playbackPanelOpen_);
+    ImGui::MenuItem("Preview", nullptr, &previewPanelOpen_);
+    ImGui::MenuItem("Camera", nullptr, &cameraPanelOpen_);
+    ImGui::MenuItem("Viewport", nullptr, &viewportPanelOpen_);
+}
+
+void AppWindow::DrawDockPanelTabContextMenu(const char* panelName, bool& panelOpen) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window == nullptr) {
+        return;
+    }
+
+    const bool hasVisibleDockTab = window->DockIsActive
+        && window->DockTabIsVisible
+        && window->DC.DockTabItemRect.GetWidth() > 0.0f
+        && window->DC.DockTabItemRect.GetHeight() > 0.0f;
+    if (!hasVisibleDockTab) {
+        return;
+    }
+
+    const ImRect tabRect = window->DC.DockTabItemRect;
+    const ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right)
+        && tabRect.Contains(io.MouseClickedPos[ImGuiMouseButton_Right])
+        && tabRect.Contains(io.MousePos)) {
+        ImGui::OpenPopup("##panel_tab_context_menu");
+    }
+    if (!ImGui::BeginPopup("##panel_tab_context_menu")) {
+        return;
+    }
+
+    const std::string hideLabel = std::string("Hide ") + panelName;
+    if (ImGui::MenuItem(hideLabel.c_str())) {
+        panelOpen = false;
+    }
+    const bool anyHiddenPanels = !layersPanelOpen_
+        || !keyframeListPanelOpen_
+        || !inspectorPanelOpen_
+        || !playbackPanelOpen_
+        || !previewPanelOpen_
+        || !cameraPanelOpen_
+        || !viewportPanelOpen_;
+    if (ImGui::MenuItem("Show All Panels", nullptr, false, anyHiddenPanels)) {
+        OpenAllDockPanels();
+    }
+    if (ImGui::MenuItem("Restore Default Layout")) {
+        OpenAllDockPanels();
+        defaultLayoutBuilt_ = false;
+    }
+
+    ImGui::EndPopup();
+}
+
 void AppWindow::DrawToolbar() {
+    const UiTheme& theme = GetUiTheme();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 7.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(9.0f, 6.0f));
     ImGui::Begin(
         "Toolbar",
         nullptr,
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
+    ImDrawList* toolbarDrawList = ImGui::GetWindowDrawList();
+    const ImVec2 toolbarMin = ImGui::GetWindowPos();
+    const ImVec2 toolbarMax(toolbarMin.x + ImGui::GetWindowSize().x, toolbarMin.y + ImGui::GetWindowSize().y);
+    toolbarDrawList->AddRectFilled(toolbarMin, toolbarMax, ImGui::GetColorU32(WithAlpha(theme.panelBackgroundAlt, 0.92f)), 0.0f);
+    toolbarDrawList->AddLine(
+        ImVec2(toolbarMin.x, toolbarMax.y - 0.5f),
+        ImVec2(toolbarMax.x, toolbarMax.y - 0.5f),
+        ImGui::GetColorU32(theme.borderSubtle),
+        1.0f);
 
     const float toolbarWidth = ImGui::GetContentRegionAvail().x;
     const float settingsGap = 8.0f;
@@ -335,7 +497,7 @@ void AppWindow::DrawToolbar() {
     }
 
     drawDivider();
-    DrawSectionChip("FILE", ImVec4(0.12f, 0.19f, 0.30f, 1.0f));
+    DrawSectionChip("FILE", Mix(theme.accentSurface, theme.accent, 0.30f));
     ImGui::SameLine(0.0f, 8.0f);
 
     if (DrawActionButton("##new_scene", "New", IconGlyph::NewScene, ActionTone::Slate)) {
@@ -372,7 +534,7 @@ void AppWindow::DrawToolbar() {
     exportButtonAnchorY_ = ImGui::GetItemRectMax().y + kOverlayPanelMarginY;
 
     drawDivider();
-    DrawSectionChip("PLAY", ImVec4(0.12f, 0.19f, 0.30f, 1.0f));
+    DrawSectionChip("PLAY", Mix(theme.accentSurface, ImVec4(0.25f, 0.66f, 0.72f, 1.0f), 0.42f));
     ImGui::SameLine(0.0f, 8.0f);
     if (DrawActionButton("##randomize_scene", "Randomize", IconGlyph::Randomize, ActionTone::Accent)) {
         PushUndoState(scene_);
@@ -389,7 +551,7 @@ void AppWindow::DrawToolbar() {
     }
 
     drawDivider();
-    DrawSectionChip("VIEW", ImVec4(0.12f, 0.19f, 0.30f, 1.0f));
+    DrawSectionChip("VIEW", Mix(theme.panelBackgroundAlt, theme.textMuted, 0.18f));
     ImGui::SameLine(0.0f, 8.0f);
     if (DrawActionButton("##toggle_grid", "Grid", IconGlyph::Grid, ActionTone::Accent, scene_.gridVisible)) {
         PushUndoState(scene_);
@@ -410,9 +572,28 @@ void AppWindow::DrawToolbar() {
     CaptureWidgetUndo(beforeMode, modeChanged);
 
     drawDivider();
-    DrawSectionChip("PRESET", ImVec4(0.12f, 0.19f, 0.30f, 1.0f));
+    DrawSectionChip("PRESET", Mix(theme.accentSurface, ImVec4(0.36f, 0.66f, 0.54f, 1.0f), 0.38f));
     ImGui::SameLine(0.0f, 8.0f);
-    ImGui::SetNextItemWidth(210.0f);
+    const bool canStepPresets = presetLibrary_.Count() > 1;
+    if (DrawActionButton("##preset_prev", "", IconGlyph::ChevronLeft, ActionTone::Slate, false, canStepPresets, 0.0f, "Previous preset")) {
+        PushUndoState(scene_);
+        const std::size_t nextIndex = presetIndex_ == 0 ? presetLibrary_.Count() - 1 : presetIndex_ - 1;
+        LoadPreset(nextIndex);
+    }
+    ImGui::SameLine(0.0f, 6.0f);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float presetArrowWidth = ImGui::GetFrameHeight();
+    float presetComboWidth = 170.0f;
+    float presetPopupWidth = 170.0f;
+    if (presetLibrary_.Count() > 0) {
+        for (std::size_t index = 0; index < presetLibrary_.Count(); ++index) {
+            const float textWidth = ImGui::CalcTextSize(presetLibrary_.NameAt(index).c_str()).x;
+            presetComboWidth = std::max(presetComboWidth, textWidth + presetArrowWidth + style.FramePadding.x * 2.0f + 18.0f);
+            presetPopupWidth = std::max(presetPopupWidth, textWidth + style.WindowPadding.x * 2.0f + style.FramePadding.x * 2.0f + 30.0f);
+        }
+    }
+    ImGui::SetNextItemWidth(presetComboWidth);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(presetPopupWidth, 0.0f), ImVec2(presetPopupWidth, FLT_MAX));
     if (BeginComboWithMaterialArrow("##preset", presetLibrary_.Count() > 0 ? presetLibrary_.NameAt(presetIndex_).c_str() : "(none)")) {
         for (std::size_t index = 0; index < presetLibrary_.Count(); ++index) {
             const bool selected = index == presetIndex_;
@@ -426,14 +607,37 @@ void AppWindow::DrawToolbar() {
         }
         ImGui::EndCombo();
     }
+    ImGui::SameLine(0.0f, 6.0f);
+    if (DrawActionButton("##preset_next", "", IconGlyph::ChevronRight, ActionTone::Slate, false, canStepPresets, 0.0f, "Next preset")) {
+        PushUndoState(scene_);
+        const std::size_t nextIndex = (presetIndex_ + 1) % presetLibrary_.Count();
+        LoadPreset(nextIndex);
+    }
 
     drawDivider();
-    DrawSectionChip("SCENE", ImVec4(0.12f, 0.19f, 0.30f, 1.0f));
+    DrawSectionChip("SCENE", Mix(theme.accentSurface, ImVec4(0.86f, 0.61f, 0.32f, 1.0f), 0.28f));
     ImGui::SameLine(0.0f, 8.0f);
     ImGui::SetNextItemWidth(220.0f);
     const Scene beforeName = scene_;
     const bool nameChanged = ImGui::InputText("##scene_name", &scene_.name);
     CaptureWidgetUndo(beforeName, nameChanged);
+
+    drawDivider();
+    ImGui::SetNextItemWidth(124.0f);
+    if (BeginComboWithMaterialArrow("##toolbar_windows_menu", "Windows", ImGuiComboFlags_WidthFitPreview)) {
+        DrawDockPanelVisibilityMenuItems();
+        ImGui::Separator();
+        if (ImGui::Selectable("Show All Panels", false)) {
+            OpenAllDockPanels();
+        }
+        if (ImGui::Selectable("Restore Default Layout", false)) {
+            OpenAllDockPanels();
+            defaultLayoutBuilt_ = false;
+        }
+        ImGui::Separator();
+        ImGui::MenuItem("Status Overlay", nullptr, &showStatusOverlay_);
+        ImGui::EndCombo();
+    }
 
     ImGui::EndChild();
     ImGui::SameLine(0.0f, settingsGap);
@@ -475,6 +679,7 @@ void AppWindow::DrawSettingsPanel() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(520.0f, maxWidth), std::min(420.0f, maxHeight)), ImVec2(maxWidth, maxHeight));
     ImGui::SetNextWindowSize(ImVec2(panelWidth, panelHeight), ImGuiCond_Always);
 
+    PushFloatingPanelStyle();
     if (ImGui::Begin(
             "Settings",
             &settingsPanelOpen_,
@@ -490,41 +695,60 @@ void AppWindow::DrawSettingsPanel() {
         const Scene defaultScene = CreateDefaultScene();
         static const char* kExportFormatLabels[] = {"PNG Image", "JPG Image", "PNG Sequence", "JPG Sequence", "AVI Video", "MP4 Video", "MOV Video"};
 
-        ImGui::BeginChild("SettingsPanelScroll", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_None);
-
-        const auto fullWidthScalar = [&](const char* label, const char* id, ImGuiDataType dataType, void* value, const void* minValue, const void* maxValue, const char* format) {
-            ImGui::TextDisabled("%s", label);
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            return SliderScalarWithInput(id, dataType, value, minValue, maxValue, format);
-        };
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
+        ImGui::BeginChild("SettingsPanelScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_None);
+        ImGui::TextDisabled("Preview behavior, GPU selection, and new-scene defaults.");
 
         ImGui::SeparatorText("Rendering");
-        if (ImGui::Checkbox("GPU viewport preview", &gpuFlamePreviewEnabled_) || ResetValueOnDoubleClick(gpuFlamePreviewEnabled_, kDefaultGpuViewportPreview)) {
-            MarkViewportDirty(PreviewResetReason::DeviceChanged);
-        }
-        if (gpuFlamePreviewEnabled_) {
-            std::string gpuBackendSummary = "Flame ";
-            gpuBackendSummary += gpuFlameRenderer_.IsReady() ? "D3D11 compute" : "lazy";
-            gpuBackendSummary += " | Path ";
-            gpuBackendSummary += gpuPathRenderer_.IsReady() ? "D3D11 raster" : "lazy";
-            ImGui::TextDisabled("Viewport GPU path: %s", gpuBackendSummary.c_str());
-            if (!gpuFlameRenderer_.LastError().empty()) {
-                ImGui::TextWrapped("Flame GPU status: %s", gpuFlameRenderer_.LastError().c_str());
+        if (BeginPropertyGrid("##settings_rendering_grid")) {
+            DrawPropertyRow(
+                "GPU viewport preview",
+                [&]() {
+                    const bool changed = ImGui::Checkbox("##gpu_viewport_preview", &gpuFlamePreviewEnabled_)
+                        || ResetValueOnDoubleClick(gpuFlamePreviewEnabled_, kDefaultGpuViewportPreview);
+                    if (changed) {
+                        MarkViewportDirty(PreviewResetReason::DeviceChanged);
+                    }
+                    return changed;
+                },
+                "Uses the D3D11 flame and path preview pipeline while editing.");
+
+            std::string gpuBackendSummary = gpuFlamePreviewEnabled_ ? "Flame " : "CPU ";
+            if (gpuFlamePreviewEnabled_) {
+                gpuBackendSummary += gpuFlameRenderer_.IsReady() ? "D3D11 compute" : "lazy";
+                gpuBackendSummary += " | Path ";
+                gpuBackendSummary += gpuPathRenderer_.IsReady() ? "D3D11 raster" : "lazy";
+            } else {
+                gpuBackendSummary += "software renderer";
             }
-            if (!gpuPathRenderer_.LastError().empty()) {
-                ImGui::TextWrapped("Path GPU status: %s", gpuPathRenderer_.LastError().c_str());
-            }
-        } else {
-            ImGui::TextDisabled("Viewport path: CPU software renderer");
+            DrawPropertyRow("Viewport backend", [&]() {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextWrapped("%s", gpuBackendSummary.c_str());
+                if (gpuFlamePreviewEnabled_ && !gpuFlameRenderer_.LastError().empty()) {
+                    ImGui::TextDisabled("Flame: %s", gpuFlameRenderer_.LastError().c_str());
+                }
+                if (gpuFlamePreviewEnabled_ && !gpuPathRenderer_.LastError().empty()) {
+                    ImGui::TextDisabled("Path: %s", gpuPathRenderer_.LastError().c_str());
+                }
+                return false;
+            });
+            ImGui::EndTable();
         }
 
         ImGui::SeparatorText("Hardware");
-        ImGui::TextDisabled("Renderer");
-        ImGui::SameLine();
-        ImGui::TextUnformatted(usingWarpDevice_ ? "D3D11 WARP" : "D3D11 Hardware");
-        ImGui::TextDisabled("Adapter");
-        ImGui::SameLine();
-        ImGui::TextWrapped("%s", WideToUtf8(renderAdapterName_).c_str());
+        if (BeginPropertyGrid("##settings_hardware_grid")) {
+            DrawPropertyRow("Renderer", [&]() {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(usingWarpDevice_ ? "D3D11 WARP" : "D3D11 Hardware");
+                return false;
+            });
+            DrawPropertyRow("Adapter", [&]() {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextWrapped("%s", WideToUtf8(renderAdapterName_).c_str());
+                return false;
+            });
+            ImGui::EndTable();
+        }
         if (!adapterOptions_.empty()) {
             std::string selectedAdapterLabel = "Select GPU";
             if (selectedAdapterIndex_ >= 0 && selectedAdapterIndex_ < static_cast<int>(adapterOptions_.size())) {
@@ -538,60 +762,87 @@ void AppWindow::DrawSettingsPanel() {
                 }
             }
 
-            ImGui::Spacing();
-            ImGui::TextDisabled("Preferred GPU");
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (BeginComboWithMaterialArrow("##gpu_adapter", selectedAdapterLabel.c_str())) {
-                for (std::size_t index = 0; index < adapterOptions_.size(); ++index) {
-                    const AdapterOption& option = adapterOptions_[index];
-                    std::string label = WideToUtf8(option.name);
-                    if (option.dedicatedVideoMemoryMb > 0) {
-                        label += " | " + std::to_string(option.dedicatedVideoMemoryMb) + " MB";
-                    }
-                    if (option.software) {
-                        label += " | Software";
-                    }
-                    if (static_cast<int>(index) == activeAdapterIndex_) {
-                        label += " | Active";
-                    }
-                    const bool selected = static_cast<int>(index) == selectedAdapterIndex_;
-                    if (ImGui::Selectable(label.c_str(), selected)) {
-                        selectedAdapterIndex_ = static_cast<int>(index);
-                    }
-                    if (selected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
+            if (BeginPropertyGrid("##settings_adapter_grid")) {
+                DrawPropertyRow(
+                    "Preferred GPU",
+                    [&]() {
+                        if (BeginComboWithMaterialArrow("##gpu_adapter", selectedAdapterLabel.c_str())) {
+                            for (std::size_t index = 0; index < adapterOptions_.size(); ++index) {
+                                const AdapterOption& option = adapterOptions_[index];
+                                std::string label = WideToUtf8(option.name);
+                                if (option.dedicatedVideoMemoryMb > 0) {
+                                    label += " | " + std::to_string(option.dedicatedVideoMemoryMb) + " MB";
+                                }
+                                if (option.software) {
+                                    label += " | Software";
+                                }
+                                if (static_cast<int>(index) == activeAdapterIndex_) {
+                                    label += " | Active";
+                                }
+                                const bool selected = static_cast<int>(index) == selectedAdapterIndex_;
+                                if (ImGui::Selectable(label.c_str(), selected)) {
+                                    selectedAdapterIndex_ = static_cast<int>(index);
+                                }
+                                if (selected) {
+                                    ImGui::SetItemDefaultFocus();
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                        return false;
+                    },
+                    "Choose the adapter used for viewport rendering and GPU export.");
 
-            const bool canApplyGpu = selectedAdapterIndex_ >= 0 && selectedAdapterIndex_ != activeAdapterIndex_;
-            if (DrawActionButton("##apply_gpu_adapter", "Apply GPU", IconGlyph::Settings, ActionTone::Accent, false, canApplyGpu, 132.0f)) {
-                graphicsDeviceChangePending_ = true;
-                statusText_ = L"Applying GPU change";
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Refresh GPU List")) {
-                EnumerateAdapters();
-            }
-            if (graphicsDeviceChangePending_) {
-                ImGui::TextDisabled("GPU switch queued for the next frame.");
+                const bool canApplyGpu = selectedAdapterIndex_ >= 0 && selectedAdapterIndex_ != activeAdapterIndex_;
+                DrawPropertyRow("GPU switch", [&]() {
+                    bool pressed = false;
+                    if (DrawActionButton("##apply_gpu_adapter", "Apply GPU", IconGlyph::Settings, ActionTone::Accent, false, canApplyGpu, 128.0f)) {
+                        graphicsDeviceChangePending_ = true;
+                        statusText_ = L"Applying GPU change";
+                        pressed = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Refresh GPU List")) {
+                        EnumerateAdapters();
+                    }
+                    if (graphicsDeviceChangePending_) {
+                        ImGui::TextDisabled("GPU switch queued for the next frame.");
+                    }
+                    return pressed;
+                });
+                ImGui::EndTable();
             }
         }
 
         ImGui::SeparatorText("Graphics");
-        Scene beforeGraphics = scene_;
-        bool graphicsChanged = ImGui::Checkbox("Show viewport grid", &scene_.gridVisible);
-        graphicsChanged = ResetValueOnDoubleClick(scene_.gridVisible, defaultScene.gridVisible) || graphicsChanged;
-        if (graphicsChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeGraphics, scene_));
-        }
-        CaptureWidgetUndo(beforeGraphics, graphicsChanged);
-        if (ImGui::Checkbox("Show status overlay", &showStatusOverlay_) || ResetValueOnDoubleClick(showStatusOverlay_, kDefaultShowStatusOverlay)) {
-            MarkViewportDirty();
-        }
-        if (ImGui::Checkbox("Hide grid on export", &exportHideGrid_) || ResetValueOnDoubleClick(exportHideGrid_, kDefaultExportHideGrid)) {
-            MarkViewportDirty();
+        if (BeginPropertyGrid("##settings_graphics_grid")) {
+            DrawPropertyRow("Viewport grid", [&]() {
+                Scene beforeGraphics = scene_;
+                bool graphicsChanged = ImGui::Checkbox("##show_viewport_grid", &scene_.gridVisible);
+                graphicsChanged = ResetValueOnDoubleClick(scene_.gridVisible, defaultScene.gridVisible) || graphicsChanged;
+                if (graphicsChanged) {
+                    MarkViewportDirty(DeterminePreviewResetReason(beforeGraphics, scene_));
+                }
+                CaptureWidgetUndo(beforeGraphics, graphicsChanged);
+                return graphicsChanged;
+            });
+            DrawPropertyRow("Status overlay", [&]() {
+                const bool changed = ImGui::Checkbox("##show_status_overlay", &showStatusOverlay_)
+                    || ResetValueOnDoubleClick(showStatusOverlay_, kDefaultShowStatusOverlay);
+                if (changed) {
+                    MarkViewportDirty();
+                }
+                return changed;
+            });
+            DrawPropertyRow("Hide grid on export", [&]() {
+                const bool changed = ImGui::Checkbox("##hide_grid_on_export", &exportHideGrid_)
+                    || ResetValueOnDoubleClick(exportHideGrid_, kDefaultExportHideGrid);
+                if (changed) {
+                    MarkViewportDirty();
+                }
+                return changed;
+            });
+            ImGui::EndTable();
         }
 
         ImGui::SeparatorText("Defaults");
@@ -599,37 +850,60 @@ void AppWindow::DrawSettingsPanel() {
         constexpr int kMaxNewSceneEndFrame = 2400;
         constexpr double kMinNewSceneFps = 1.0;
         constexpr double kMaxNewSceneFps = 120.0;
-        int exportFormatIndex = static_cast<int>(exportFormat_);
-        if (ComboWithMaterialArrow("Default export format", &exportFormatIndex, kExportFormatLabels, IM_ARRAYSIZE(kExportFormatLabels))) {
-            exportFormat_ = static_cast<ExportFormat>(exportFormatIndex);
-        }
-        if (ImGui::Checkbox("Use GPU for export by default", &exportUseGpu_)) {
-            MarkViewportDirty();
-        }
-        if (ImGui::Checkbox("Stable flame sampling for export", &exportStableFlameSampling_)
-            || ResetValueOnDoubleClick(exportStableFlameSampling_, kDefaultExportStableFlameSampling)) {
-            MarkViewportDirty();
-        }
-        ImGui::TextDisabled("Keeps flame particles temporally anchored across exported frames.");
-        if (fullWidthScalar(
-                "New scene end frame",
-                "##new_scene_end_frame",
-                ImGuiDataType_S32,
-                &newSceneEndFrameDefault_,
-                &kMinNewSceneEndFrame,
-                &kMaxNewSceneEndFrame,
-                "%d")) {
-            newSceneEndFrameDefault_ = std::clamp(newSceneEndFrameDefault_, kMinNewSceneEndFrame, kMaxNewSceneEndFrame);
-        }
-        if (fullWidthScalar(
-                "New scene FPS",
-                "##new_scene_fps",
-                ImGuiDataType_Double,
-                &newSceneFrameRateDefault_,
-                &kMinNewSceneFps,
-                &kMaxNewSceneFps,
-                "%.2f")) {
-            newSceneFrameRateDefault_ = std::clamp(newSceneFrameRateDefault_, kMinNewSceneFps, kMaxNewSceneFps);
+        if (BeginPropertyGrid("##settings_defaults_grid")) {
+            DrawPropertyRow("Default export format", [&]() {
+                int exportFormatIndex = static_cast<int>(exportFormat_);
+                if (ComboWithMaterialArrow("##default_export_format", &exportFormatIndex, kExportFormatLabels, IM_ARRAYSIZE(kExportFormatLabels))) {
+                    exportFormat_ = static_cast<ExportFormat>(exportFormatIndex);
+                    return true;
+                }
+                return false;
+            });
+            DrawPropertyRow("Use GPU for export", [&]() {
+                const bool changed = ImGui::Checkbox("##default_use_gpu_export", &exportUseGpu_);
+                if (changed) {
+                    MarkViewportDirty();
+                }
+                return changed;
+            });
+            DrawPropertyRow(
+                "Stable flame sampling",
+                [&]() {
+                    const bool changed = ImGui::Checkbox("##default_stable_flame_sampling", &exportStableFlameSampling_)
+                        || ResetValueOnDoubleClick(exportStableFlameSampling_, kDefaultExportStableFlameSampling);
+                    if (changed) {
+                        MarkViewportDirty();
+                    }
+                    return changed;
+                },
+                "Keeps flame particles temporally anchored across exported frames.");
+            DrawPropertyRow("New scene end frame", [&]() {
+                const bool changed = SliderScalarWithInput(
+                    "##new_scene_end_frame",
+                    ImGuiDataType_S32,
+                    &newSceneEndFrameDefault_,
+                    &kMinNewSceneEndFrame,
+                    &kMaxNewSceneEndFrame,
+                    "%d");
+                if (changed) {
+                    newSceneEndFrameDefault_ = std::clamp(newSceneEndFrameDefault_, kMinNewSceneEndFrame, kMaxNewSceneEndFrame);
+                }
+                return changed;
+            });
+            DrawPropertyRow("New scene FPS", [&]() {
+                const bool changed = SliderScalarWithInput(
+                    "##new_scene_fps",
+                    ImGuiDataType_Double,
+                    &newSceneFrameRateDefault_,
+                    &kMinNewSceneFps,
+                    &kMaxNewSceneFps,
+                    "%.2f");
+                if (changed) {
+                    newSceneFrameRateDefault_ = std::clamp(newSceneFrameRateDefault_, kMinNewSceneFps, kMaxNewSceneFps);
+                }
+                return changed;
+            });
+            ImGui::EndTable();
         }
 
         ImGui::SeparatorText("Layout");
@@ -638,8 +912,10 @@ void AppWindow::DrawSettingsPanel() {
         }
 
         ImGui::EndChild();
+        ImGui::PopStyleVar();
     }
     ImGui::End();
+    PopFloatingPanelStyle();
 }
 
 void AppWindow::DrawExportPanel() {
@@ -673,6 +949,7 @@ void AppWindow::DrawExportPanel() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(560.0f, maxWidth), std::min(320.0f, maxHeight)), ImVec2(maxWidth, maxHeight));
     ImGui::SetNextWindowSize(ImVec2(panelWidth, panelHeight), ImGuiCond_Always);
 
+    PushFloatingPanelStyle();
     if (ImGui::Begin(
             "Export",
             &exportPanelOpen_,
@@ -683,14 +960,24 @@ void AppWindow::DrawExportPanel() {
                 | ImGuiWindowFlags_NoSavedSettings)) {
         static const char* kFormats[] = {"PNG Image", "JPG Image", "PNG Sequence", "JPG Sequence", "AVI Video", "MP4 Video", "MOV Video"};
 
-        ImGui::BeginChild("ExportPanelScroll", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_None);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
+        ImGui::BeginChild("ExportPanelScroll", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_None);
+        ImGui::TextDisabled("Output format, framing, background, and export quality.");
+
         ImGui::SeparatorText("Format");
-        int formatIndex = static_cast<int>(exportFormat_);
-        if (ComboWithMaterialArrow("File Type", &formatIndex, kFormats, IM_ARRAYSIZE(kFormats))) {
-            exportFormat_ = static_cast<ExportFormat>(formatIndex);
-            if (exportFormat_ == ExportFormat::Jpeg || exportFormat_ == ExportFormat::JpegSequence || exportFormat_ == ExportFormat::Avi) {
-                exportTransparentBackground_ = false;
-            }
+        if (BeginPropertyGrid("##export_format_grid")) {
+            DrawPropertyRow("File type", [&]() {
+                int formatIndex = static_cast<int>(exportFormat_);
+                if (ComboWithMaterialArrow("##export_file_type", &formatIndex, kFormats, IM_ARRAYSIZE(kFormats))) {
+                    exportFormat_ = static_cast<ExportFormat>(formatIndex);
+                    if (exportFormat_ == ExportFormat::Jpeg || exportFormat_ == ExportFormat::JpegSequence || exportFormat_ == ExportFormat::Avi) {
+                        exportTransparentBackground_ = false;
+                    }
+                    return true;
+                }
+                return false;
+            });
+            ImGui::EndTable();
         }
         const bool rendersMultipleFrames = exportFormat_ == ExportFormat::PngSequence
             || exportFormat_ == ExportFormat::JpegSequence
@@ -705,71 +992,121 @@ void AppWindow::DrawExportPanel() {
             activeResolutionPreset >= 0
             ? resolutionPresets[static_cast<std::size_t>(activeResolutionPreset)].label
             : "Custom";
-        if (BeginComboWithMaterialArrow("Resolution Preset", resolutionPreview.c_str())) {
-            for (std::size_t index = 0; index < resolutionPresets.size(); ++index) {
-                const bool selected = static_cast<int>(index) == activeResolutionPreset;
-                if (ImGui::Selectable(resolutionPresets[index].label.c_str(), selected)) {
-                    exportWidth_ = resolutionPresets[index].width;
-                    exportHeight_ = resolutionPresets[index].height;
+        if (BeginPropertyGrid("##export_output_grid")) {
+            DrawPropertyRow("Resolution preset", [&]() {
+                if (BeginComboWithMaterialArrow("##export_resolution_preset", resolutionPreview.c_str())) {
+                    for (std::size_t index = 0; index < resolutionPresets.size(); ++index) {
+                        const bool selected = static_cast<int>(index) == activeResolutionPreset;
+                        if (ImGui::Selectable(resolutionPresets[index].label.c_str(), selected)) {
+                            exportWidth_ = resolutionPresets[index].width;
+                            exportHeight_ = resolutionPresets[index].height;
+                        }
+                        if (selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
                 }
-                if (selected) {
-                    ImGui::SetItemDefaultFocus();
+                return false;
+            });
+            DrawPropertyRow("Camera gate", [&]() {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(CameraAspectSummary(scene_.camera).c_str());
+                return false;
+            }, "Export resolution stays locked to this aspect.");
+            DrawPropertyRow("Width", [&]() {
+                exportWidth_ = std::max(2, exportWidth_);
+                exportHeight_ = std::max(2, exportHeight_);
+                const bool changed = ImGui::InputInt("##export_width", &exportWidth_, 64, 256);
+                if (changed) {
+                    ConstrainExportResolutionToCamera(scene_.camera, exportWidth_, exportHeight_, true);
                 }
+                return changed;
+            });
+            DrawPropertyRow("Height", [&]() {
+                exportWidth_ = std::max(2, exportWidth_);
+                exportHeight_ = std::max(2, exportHeight_);
+                const bool changed = ImGui::InputInt("##export_height", &exportHeight_, 64, 256);
+                if (changed) {
+                    ConstrainExportResolutionToCamera(scene_.camera, exportWidth_, exportHeight_, false);
+                }
+                return changed;
+            });
+            if (rendersMultipleFrames) {
+                DrawPropertyRow("Frame range", [&]() {
+                    exportFrameStart_ = std::max(scene_.timelineStartFrame, exportFrameStart_);
+                    exportFrameEnd_ = std::max(exportFrameStart_, exportFrameEnd_);
+                    ImGui::SetNextItemWidth(92.0f);
+                    const bool startChanged = ImGui::InputInt("##export_start_frame", &exportFrameStart_, 1, 10);
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("to");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(92.0f);
+                    const bool endChanged = ImGui::InputInt("##export_end_frame", &exportFrameEnd_, 1, 10);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Use Timeline")) {
+                        exportFrameStart_ = scene_.timelineStartFrame;
+                        exportFrameEnd_ = scene_.timelineEndFrame;
+                    }
+                    exportFrameStart_ = std::clamp(exportFrameStart_, scene_.timelineStartFrame, scene_.timelineEndFrame);
+                    exportFrameEnd_ = std::clamp(exportFrameEnd_, exportFrameStart_, scene_.timelineEndFrame);
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%d frames", std::max(1, exportFrameEnd_ - exportFrameStart_ + 1));
+                    return startChanged || endChanged;
+                });
             }
-            ImGui::EndCombo();
-        }
-        ImGui::TextDisabled("Camera gate");
-        ImGui::SameLine();
-        ImGui::TextUnformatted(CameraAspectSummary(scene_.camera).c_str());
-        const int previousExportHeight = exportHeight_;
-        exportWidth_ = std::max(2, exportWidth_);
-        exportHeight_ = std::max(2, exportHeight_);
-        ImGui::InputInt("Width", &exportWidth_, 64, 256);
-        ImGui::InputInt("Height", &exportHeight_, 64, 256);
-        const bool heightChanged = exportHeight_ != previousExportHeight;
-        if (heightChanged) {
-            ConstrainExportResolutionToCamera(scene_.camera, exportWidth_, exportHeight_, false);
-        } else {
-            ConstrainExportResolutionToCamera(scene_.camera, exportWidth_, exportHeight_, true);
-        }
-        ImGui::TextDisabled("Export resolution is locked to the camera aspect.");
-        if (rendersMultipleFrames) {
-            exportFrameStart_ = std::max(scene_.timelineStartFrame, exportFrameStart_);
-            exportFrameEnd_ = std::max(exportFrameStart_, exportFrameEnd_);
-            ImGui::InputInt("Start Frame", &exportFrameStart_, 1, 10);
-            ImGui::InputInt("End Frame", &exportFrameEnd_, 1, 10);
-            exportFrameStart_ = std::clamp(exportFrameStart_, scene_.timelineStartFrame, scene_.timelineEndFrame);
-            exportFrameEnd_ = std::clamp(exportFrameEnd_, exportFrameStart_, scene_.timelineEndFrame);
-            if (ImGui::Button("Use Timeline Range")) {
-                exportFrameStart_ = scene_.timelineStartFrame;
-                exportFrameEnd_ = scene_.timelineEndFrame;
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("%d frames", std::max(1, exportFrameEnd_ - exportFrameStart_ + 1));
+            ImGui::EndTable();
         }
 
         ImGui::SeparatorText("Background");
-        ImGui::Checkbox("Hide grid on export", &exportHideGrid_);
-        const bool transparencySupported = exportFormat_ == ExportFormat::Png || exportFormat_ == ExportFormat::PngSequence;
-        if (!transparencySupported) {
-            ImGui::BeginDisabled();
-        }
-        ImGui::Checkbox("Transparent background", &exportTransparentBackground_);
-        if (!transparencySupported) {
-            ImGui::EndDisabled();
-            ImGui::TextDisabled("Transparency is only available for PNG outputs.");
+        if (BeginPropertyGrid("##export_background_grid")) {
+            DrawPropertyRow("Hide grid", [&]() {
+                return ImGui::Checkbox("##export_hide_grid", &exportHideGrid_);
+            });
+            const bool transparencySupported = exportFormat_ == ExportFormat::Png || exportFormat_ == ExportFormat::PngSequence;
+            DrawPropertyRow(
+                "Transparent background",
+                [&]() {
+                    if (!transparencySupported) {
+                        ImGui::BeginDisabled();
+                    }
+                    const bool changed = ImGui::Checkbox("##export_transparent_background", &exportTransparentBackground_);
+                    if (!transparencySupported) {
+                        ImGui::EndDisabled();
+                    }
+                    return changed;
+                },
+                transparencySupported ? "" : "Transparency is only available for PNG outputs.");
+            ImGui::EndTable();
         }
 
         ImGui::SeparatorText("Render");
-        ImGui::Checkbox("Use GPU for export", &exportUseGpu_);
-        ImGui::TextDisabled("Falls back to CPU if the GPU export path is unavailable.");
         constexpr std::uint32_t kMinExportIterations = 20000u;
         constexpr std::uint32_t kMaxExportIterations = 100000000u;
-        exportIterations_ = std::clamp(exportIterations_, kMinExportIterations, kMaxExportIterations);
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputScalar("Iterations", ImGuiDataType_U32, &exportIterations_, &kMinExportIterations, &kMinExportIterations, "%u");
-        exportIterations_ = std::clamp(exportIterations_, kMinExportIterations, kMaxExportIterations);
-        ImGui::TextDisabled("Used for export renders only. Higher values increase render time, with diminishing quality returns.");
+        if (BeginPropertyGrid("##export_render_grid")) {
+            DrawPropertyRow(
+                "Use GPU",
+                [&]() {
+                    return ImGui::Checkbox("##export_use_gpu", &exportUseGpu_);
+                },
+                "Falls back to CPU if the GPU export path is unavailable.");
+            DrawPropertyRow(
+                "Iterations",
+                [&]() {
+                    exportIterations_ = std::clamp(exportIterations_, kMinExportIterations, kMaxExportIterations);
+                    const bool changed = ImGui::InputScalar(
+                        "##export_iterations",
+                        ImGuiDataType_U32,
+                        &exportIterations_,
+                        &kMinExportIterations,
+                        &kMinExportIterations,
+                        "%u");
+                    exportIterations_ = std::clamp(exportIterations_, kMinExportIterations, kMaxExportIterations);
+                    return changed;
+                },
+                "Higher values increase render time with diminishing quality returns.");
+            ImGui::EndTable();
+        }
 
         ImGui::Spacing();
         if (DrawActionButton("##export_confirm", "Export File", IconGlyph::ExportImage, ActionTone::Accent, false, true, 132.0f)) {
@@ -777,8 +1114,10 @@ void AppWindow::DrawExportPanel() {
         }
 
         ImGui::EndChild();
+        ImGui::PopStyleVar();
     }
     ImGui::End();
+    PopFloatingPanelStyle();
 }
 
 void AppWindow::DrawEasingPanel() {
@@ -831,6 +1170,7 @@ void AppWindow::DrawEasingPanel() {
     ImGui::SetNextWindowSize(ImVec2(panelWidth, panelHeight), ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(248.0f, maxWidth), std::min(188.0f, maxHeight)), ImVec2(maxWidth, maxHeight));
 
+    PushFloatingPanelStyle(true);
     if (ImGui::Begin(
         "Easing",
         &easingPanelOpen_,
@@ -840,6 +1180,7 @@ void AppWindow::DrawEasingPanel() {
             | ImGuiWindowFlags_NoResize
             | ImGuiWindowFlags_NoSavedSettings)) {
         SceneKeyframe& keyframe = scene_.keyframes[static_cast<std::size_t>(editableKeyframeIndex)];
+        ImGui::Spacing();
         Scene beforeCurve = scene_;
         const bool curveChanged = DrawBezierCurveEditor("##timeline_curve_editor_popup", keyframe);
         if (curveChanged) {
@@ -848,14 +1189,28 @@ void AppWindow::DrawEasingPanel() {
         CaptureWidgetUndo(beforeCurve, curveChanged);
     }
     ImGui::End();
+    PopFloatingPanelStyle();
 }
 
 void AppWindow::DrawLayersPanel() {
+    if (!layersPanelOpen_) {
+        layersPanelActive_ = false;
+        return;
+    }
+
     EnsureSelectionIsValid();
+    const ImGuiIO& io = ImGui::GetIO();
+    bool rightClickStartedOnLayerControl = false;
+    const auto markLayerControlRect = [&](const ImRect& rect) {
+        if (rect.Contains(io.MouseClickedPos[ImGuiMouseButton_Right])) {
+            rightClickStartedOnLayerControl = true;
+        }
+    };
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::Begin("Layers", nullptr, ImGuiWindowFlags_NoCollapse);
     ImGui::PopStyleVar();
     layersPanelActive_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+    DrawDockPanelTabContextMenu("Layers", layersPanelOpen_);
     ImGui::SeparatorText("Layer Stack");
 
     if (DrawActionButton("##add_flame_layer", "Add Flame", IconGlyph::Add, ActionTone::Accent, false, true, 118.0f)) {
@@ -871,6 +1226,7 @@ void AppWindow::DrawLayersPanel() {
         SelectSingleLayer(InspectorTarget::FlameLayer, static_cast<int>(scene_.transforms.size()) - 1);
         MarkViewportDirty(PreviewResetReason::SceneChanged);
     }
+    markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
     ImGui::SameLine();
     if (DrawActionButton("##add_path_layer", "Add Path", IconGlyph::Add, ActionTone::Accent, false, true, 112.0f)) {
         FinishLayerRename(false);
@@ -885,11 +1241,13 @@ void AppWindow::DrawLayersPanel() {
         SelectSingleLayer(InspectorTarget::PathLayer, static_cast<int>(scene_.paths.size()) - 1);
         MarkViewportDirty(PreviewResetReason::SceneChanged);
     }
+    markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
     ImGui::SameLine();
     const bool canRemoveLayer = CanRemoveSelectedLayers();
     if (DrawActionButton("##remove_layer", "Remove", IconGlyph::Remove, ActionTone::Accent, false, canRemoveLayer, 108.0f) && canRemoveLayer) {
         RemoveSelectedLayers();
     }
+    markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
 
     ImGui::Spacing();
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
@@ -926,6 +1284,7 @@ void AppWindow::DrawLayersPanel() {
                 const char* inputId = renameTarget == RenameTarget::Path ? "##path_layer_rename" : "##layer_rename";
                 ImGui::SetNextItemWidth(labelWidth);
                 const bool submitted = ImGui::InputText(inputId, &layerRenameBuffer_, renameFlags);
+                markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
                 const bool cancelRename = ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
                 const bool commitRename = submitted || (ImGui::IsItemDeactivated() && !cancelRename);
                 if (cancelRename) {
@@ -943,15 +1302,50 @@ void AppWindow::DrawLayersPanel() {
                         SelectSingleLayer(target, static_cast<int>(index));
                     }
                 }
+                markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
+                if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                    FinishLayerRename(false);
+                    SelectSingleLayer(target, static_cast<int>(index));
+                    ImGui::OpenPopup("##layer_context_menu");
+                }
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     SelectSingleLayer(target, static_cast<int>(index));
                     BeginLayerRename(renameTarget, static_cast<int>(index));
+                }
+                if (ImGui::BeginPopup("##layer_context_menu")) {
+                    const bool canPasteLayer = layerClipboardType_ != LayerClipboardType::None;
+                    const char* visibilityLabel = visible ? "Hide Layer" : "Show Layer";
+                    if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
+                        DuplicateSelectedLayer();
+                    }
+                    if (ImGui::MenuItem("Rename")) {
+                        BeginLayerRename(renameTarget, static_cast<int>(index));
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Copy", "Ctrl+C")) {
+                        CopySelectedLayer();
+                    }
+                    if (ImGui::MenuItem("Paste", "Ctrl+V", false, canPasteLayer)) {
+                        PasteCopiedLayer();
+                    }
+                    if (ImGui::MenuItem(visibilityLabel)) {
+                        PushUndoState(scene_);
+                        visible = !visible;
+                        MarkViewportDirty(PreviewResetReason::SceneChanged);
+                        statusText_ = visible ? L"Layer shown" : L"Layer hidden";
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Delete", "Delete", false, CanRemoveSelectedLayers())) {
+                        RemoveSelectedLayers();
+                    }
+                    ImGui::EndPopup();
                 }
             }
             ImGui::SameLine(0.0f, visibilityGap);
             const ImVec2 visibilityPos = ImGui::GetCursorScreenPos();
             const ImVec2 visibilitySize(visibilityButtonSize, visibilityButtonSize);
             const bool togglePressed = ImGui::InvisibleButton("##visibility_toggle", visibilitySize);
+            markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
             const bool toggleHovered = ImGui::IsItemHovered();
             const bool toggleHeld = ImGui::IsItemActive();
             if (togglePressed) {
@@ -996,16 +1390,172 @@ void AppWindow::DrawLayersPanel() {
         pathNames.emplace_back(path.name);
     }
     drawLayerList(InspectorTarget::PathLayer, RenameTarget::Path, 1000, pathNames);
+    const bool layerContextPopupOpen = ImGui::IsPopupOpen("##layer_context_menu", ImGuiPopupFlags_None);
+    const bool panelTabContextPopupOpen = ImGui::IsPopupOpen("##panel_tab_context_menu", ImGuiPopupFlags_None);
+    ImGuiWindow* layersWindow = ImGui::GetCurrentWindow();
+    const ImRect blankMenuRect = layersWindow != nullptr ? layersWindow->InnerRect : ImRect();
+    if (!rightClickStartedOnLayerControl
+        && !layerContextPopupOpen
+        && !panelTabContextPopupOpen
+        && blankMenuRect.Contains(io.MouseClickedPos[ImGuiMouseButton_Right])
+        && blankMenuRect.Contains(io.MousePos)
+        && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        ImGui::OpenPopup("##layers_blank_context_menu");
+    }
+    if (ImGui::BeginPopup("##layers_blank_context_menu")) {
+        const bool canPasteLayer = layerClipboardType_ != LayerClipboardType::None;
+        if (ImGui::MenuItem("Add Flame Layer")) {
+            FinishLayerRename(false);
+            PushUndoState(scene_);
+            EnsureSelectionIsValid();
+            TransformLayer layer = scene_.transforms.empty()
+                ? CreateDefaultScene().transforms.front()
+                : scene_.transforms[scene_.selectedTransform];
+            layer.name = "Layer " + std::to_string(scene_.transforms.size() + 1);
+            layer.visible = true;
+            scene_.transforms.push_back(layer);
+            SelectSingleLayer(InspectorTarget::FlameLayer, static_cast<int>(scene_.transforms.size()) - 1);
+            MarkViewportDirty(PreviewResetReason::SceneChanged);
+        }
+        if (ImGui::MenuItem("Add Path Layer")) {
+            FinishLayerRename(false);
+            PushUndoState(scene_);
+            EnsureSelectionIsValid();
+            PathSettings path = scene_.paths.empty()
+                ? CreateDefaultScene().paths.front()
+                : scene_.paths[scene_.selectedPath];
+            path.name = "Path Layer " + std::to_string(scene_.paths.size() + 1);
+            path.visible = true;
+            scene_.paths.push_back(path);
+            SelectSingleLayer(InspectorTarget::PathLayer, static_cast<int>(scene_.paths.size()) - 1);
+            MarkViewportDirty(PreviewResetReason::SceneChanged);
+        }
+        if (ImGui::MenuItem("Paste", "Ctrl+V", false, canPasteLayer)) {
+            PasteCopiedLayer();
+        }
+        ImGui::EndPopup();
+    }
     ImGui::PopStyleVar();
     ImGui::End();
 }
 
+void AppWindow::DrawKeyframeListPanel() {
+    if (!keyframeListPanelOpen_) {
+        keyframeListPanelActive_ = false;
+        return;
+    }
+
+    if (ImGuiWindow* layersWindow = ImGui::FindWindowByName("Layers")) {
+        if (layersWindow->DockId != 0) {
+            ImGui::SetNextWindowDockID(layersWindow->DockId, ImGuiCond_FirstUseEver);
+        }
+    }
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
+    ImGui::Begin("Keyframes", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::PopStyleVar();
+    keyframeListPanelActive_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+    DrawDockPanelTabContextMenu("Keyframes", keyframeListPanelOpen_);
+
+    if (scene_.keyframes.empty()) {
+        ImGui::TextDisabled("No keyframes in the scene.");
+        ImGui::End();
+        return;
+    }
+
+    const auto ownerLabel = [](const KeyframeOwnerType ownerType) {
+        return ownerType == KeyframeOwnerType::Path ? "Path" : "Flame";
+    };
+    const auto layerNameForKeyframe = [&](const SceneKeyframe& keyframe) {
+        if (keyframe.ownerType == KeyframeOwnerType::Path) {
+            if (keyframe.ownerIndex >= 0 && keyframe.ownerIndex < static_cast<int>(scene_.paths.size())) {
+                return scene_.paths[static_cast<std::size_t>(keyframe.ownerIndex)].name;
+            }
+            return std::string("Path ") + std::to_string(keyframe.ownerIndex + 1);
+        }
+        if (keyframe.ownerIndex >= 0 && keyframe.ownerIndex < static_cast<int>(scene_.transforms.size())) {
+            return scene_.transforms[static_cast<std::size_t>(keyframe.ownerIndex)].name;
+        }
+        return std::string("Layer ") + std::to_string(keyframe.ownerIndex + 1);
+    };
+
+    const UiTheme& theme = GetUiTheme();
+    const ImU32 selectedRowBg = ImGui::GetColorU32(WithAlpha(theme.accentSurface, 0.94f));
+    const ImU32 hoveredRowBg = ImGui::GetColorU32(WithAlpha(theme.frameBackgroundHover, 0.72f));
+    const ImVec4 transparentHeader(0.0f, 0.0f, 0.0f, 0.0f);
+
+    if (ImGui::BeginTable(
+            "##keyframe_list_table",
+            4,
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+            ImVec2(0.0f, 0.0f))) {
+        ImGui::TableSetupColumn("Frame", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Layer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Easing", ImGuiTableColumnFlags_WidthFixed, 104.0f);
+        ImGui::TableHeadersRow();
+
+        for (std::size_t index = 0; index < scene_.keyframes.size(); ++index) {
+            const SceneKeyframe& keyframe = scene_.keyframes[index];
+            const bool selected = static_cast<int>(index) == selectedTimelineKeyframe_;
+
+            ImGui::TableNextRow();
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::TableSetColumnIndex(0);
+            const std::string frameLabel = std::to_string(keyframe.frame);
+            ImGui::PushStyleColor(ImGuiCol_Header, transparentHeader);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, transparentHeader);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, transparentHeader);
+            // Keep the row tint in the table background channel so column resize guides stay visible.
+            const bool rowPressed = ImGui::Selectable(frameLabel.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
+            const bool rowHovered = ImGui::IsItemHovered();
+            ImGui::PopStyleColor(3);
+            if (selected) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, selectedRowBg);
+            } else if (rowHovered) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, hoveredRowBg);
+            }
+            if (rowPressed) {
+                selectedTimelineKeyframe_ = static_cast<int>(index);
+                if (keyframe.ownerType == KeyframeOwnerType::Path) {
+                    SelectSingleLayer(InspectorTarget::PathLayer, keyframe.ownerIndex);
+                } else {
+                    SelectSingleLayer(InspectorTarget::FlameLayer, keyframe.ownerIndex);
+                }
+                SetTimelineFrame(static_cast<double>(keyframe.frame), false);
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(ownerLabel(keyframe.ownerType));
+
+            ImGui::TableSetColumnIndex(2);
+            const std::string layerLabel = layerNameForKeyframe(keyframe);
+            ImGui::TextUnformatted(layerLabel.c_str());
+
+            ImGui::TableSetColumnIndex(3);
+            const std::string easingLabel = TitleCaseFromSnakeCase(ToString(keyframe.easing));
+            ImGui::TextUnformatted(easingLabel.c_str());
+            ImGui::PopID();
+        }
+
+        ImGui::EndTable();
+    }
+
+    ImGui::End();
+}
+
 void AppWindow::DrawInspectorPanel() {
+    if (!inspectorPanelOpen_) {
+        inspectorPanelActive_ = false;
+        return;
+    }
+
     EnsureSelectionIsValid();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::Begin("Inspector", nullptr, ImGuiWindowFlags_NoCollapse);
     ImGui::PopStyleVar();
     inspectorPanelActive_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+    DrawDockPanelTabContextMenu("Inspector", inspectorPanelOpen_);
     if (SelectedLayerCount() == 0) {
         ImGui::TextDisabled("No layers");
         ImGui::End();
@@ -1717,10 +2267,16 @@ void AppWindow::DrawInspectorPanel() {
 }
 
 void AppWindow::DrawTimelinePanel() {
+    if (!playbackPanelOpen_) {
+        playbackPanelActive_ = false;
+        return;
+    }
+
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::Begin("Playback", nullptr, ImGuiWindowFlags_NoCollapse);
     ImGui::PopStyleVar();
     playbackPanelActive_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+    DrawDockPanelTabContextMenu("Playback", playbackPanelOpen_);
     const Scene defaultScene = CreateDefaultScene();
     const float playbackTopGap = 1.0f;
     const float playbackSectionGap = 3.0f;
@@ -2065,10 +2621,18 @@ void AppWindow::DrawTimelinePanel() {
 
     SyncCurrentKeyframeFromScene();
     ImGui::End();
+}
+
+void AppWindow::DrawPreviewPanel() {
+    if (!previewPanelOpen_) {
+        return;
+    }
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::Begin("Preview", nullptr, ImGuiWindowFlags_NoCollapse);
     ImGui::PopStyleVar();
+    DrawDockPanelTabContextMenu("Preview", previewPanelOpen_);
+    const Scene defaultScene = CreateDefaultScene();
     const int previewGridColumns = ImGui::GetContentRegionAvail().x >= kWidePreviewGridMinWidth ? 2 : 1;
     const bool previewUseWideGrid = previewGridColumns > 1;
     const std::uint32_t minInteractiveIterations = 10000;
@@ -2380,9 +2944,14 @@ void AppWindow::DrawTimelinePanel() {
 }
 
 void AppWindow::DrawCameraPanel() {
+    if (!cameraPanelOpen_) {
+        return;
+    }
+
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::Begin("Camera", nullptr, ImGuiWindowFlags_NoCollapse);
     ImGui::PopStyleVar();
+    DrawDockPanelTabContextMenu("Camera", cameraPanelOpen_);
 
     const Scene defaultScene = CreateDefaultScene();
     const CameraState defaultCamera = defaultScene.camera;
@@ -2548,11 +3117,17 @@ void AppWindow::DrawCameraPanel() {
 }
 
 void AppWindow::DrawViewportPanel() {
+    if (!viewportPanelOpen_) {
+        return;
+    }
+
+    const UiTheme& theme = GetUiTheme();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10.0f / 255.0f, 10.0f / 255.0f, 13.0f / 255.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, theme.panelBackgroundInset);
     ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
+    DrawDockPanelTabContextMenu("Viewport", viewportPanelOpen_);
 
     const ImVec2 available = ImGui::GetContentRegionAvail();
     const int width = std::max(1, static_cast<int>(available.x));
@@ -2576,10 +3151,10 @@ void AppWindow::DrawViewportPanel() {
 
     const auto drawViewportPlaceholder = [&]() {
         ImDrawList* drawList = ImGui::GetWindowDrawList();
-        const ImU32 fillColor = ImGui::GetColorU32(ImVec4(0.05f, 0.05f, 0.07f, 1.0f));
-        const ImU32 borderColor = ImGui::GetColorU32(ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
-        drawList->AddRectFilled(imageMin, imageMax, fillColor, 6.0f);
-        drawList->AddRect(imageMin, imageMax, borderColor, 6.0f, 0, 1.0f);
+        const ImU32 fillColor = ImGui::GetColorU32(theme.panelBackgroundInset);
+        const ImU32 borderColor = ImGui::GetColorU32(theme.border);
+        drawList->AddRectFilled(imageMin, imageMax, fillColor, theme.roundingSmall);
+        drawList->AddRect(imageMin, imageMax, borderColor, theme.roundingSmall, 0, 1.0f);
         const char* label = bootstrapUiFramePending_ ? "Loading UI..." : "Loading preview...";
         const ImVec2 textSize = ImGui::CalcTextSize(label);
         const float iconExtent = std::clamp(std::min(available.x, available.y) * 0.16f, 34.0f, 64.0f);
@@ -2591,11 +3166,11 @@ void AppWindow::DrawViewportPanel() {
             drawList,
             iconCenter,
             iconExtent,
-            ImGui::GetColorU32(ImVec4(0.72f, 0.76f, 0.92f, 0.95f)));
+            ImGui::GetColorU32(WithAlpha(theme.accentHover, 0.95f)));
         const ImVec2 textPos(
             imageMin.x + std::max(0.0f, (available.x - textSize.x) * 0.5f),
             iconCenter.y + iconExtent * 0.5f + 12.0f);
-        drawList->AddText(textPos, ImGui::GetColorU32(ImVec4(0.78f, 0.79f, 0.82f, 1.0f)), label);
+        drawList->AddText(textPos, ImGui::GetColorU32(theme.textMuted), label);
     };
 
     const BackendPreviewImage previewImage = renderBackend_ != nullptr
@@ -2623,8 +3198,8 @@ void AppWindow::DrawViewportPanel() {
         const ImRect imageRect(imageMin, imageMax);
         const ImRect cameraRect = CameraFrameRectInBounds(scene_.camera, imageRect);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
-        const ImU32 matteColor = ImGui::GetColorU32(ImVec4(0.02f, 0.02f, 0.03f, 0.26f));
-        const ImU32 outlineColor = ImGui::GetColorU32(ImVec4(0.86f, 0.87f, 0.90f, 0.42f));
+        const ImU32 matteColor = ImGui::GetColorU32(theme.matte);
+        const ImU32 outlineColor = ImGui::GetColorU32(theme.cameraFrame);
         if (cameraRect.Min.x > imageRect.Min.x + 1.0f) {
             drawList->AddRectFilled(imageRect.Min, ImVec2(cameraRect.Min.x, imageRect.Max.y), matteColor);
             drawList->AddRectFilled(ImVec2(cameraRect.Max.x, imageRect.Min.y), imageRect.Max, matteColor);
@@ -2645,7 +3220,7 @@ void AppWindow::DrawViewportPanel() {
             const ImVec2 barMin(imageMin.x, imageMax.y - barHeight);
             const ImVec2 barMax(imageMin.x + available.x * progress, imageMax.y);
             ImDrawList* drawList = ImGui::GetWindowDrawList();
-            drawList->AddRectFilled(barMin, barMax, ImGui::GetColorU32(ImVec4(0.45f, 0.58f, 0.92f, 0.55f)));
+            drawList->AddRectFilled(barMin, barMax, ImGui::GetColorU32(WithAlpha(theme.accent, 0.55f)));
         }
     }
 

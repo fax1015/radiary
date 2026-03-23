@@ -14,6 +14,48 @@ constexpr float kComboArrowScale = 0.66f;
 
 ImFont* gActionIconFont = nullptr;
 
+ImVec4 WithAlpha(const ImVec4& color, const float alpha) {
+    return ImVec4(color.x, color.y, color.z, alpha);
+}
+
+ImVec4 Mix(const ImVec4& a, const ImVec4& b, const float t) {
+    return ImVec4(
+        a.x + (b.x - a.x) * t,
+        a.y + (b.y - a.y) * t,
+        a.z + (b.z - a.z) * t,
+        a.w + (b.w - a.w) * t);
+}
+
+const UiTheme kUiTheme {
+    .appBackgroundTop = ImVec4(0.04f, 0.04f, 0.05f, 1.0f),
+    .appBackgroundBottom = ImVec4(0.04f, 0.04f, 0.05f, 1.0f),
+    .panelBackground = ImVec4(0.07f, 0.07f, 0.08f, 1.0f),
+    .panelBackgroundAlt = ImVec4(0.10f, 0.10f, 0.12f, 1.0f),
+    .panelBackgroundElevated = ImVec4(0.10f, 0.10f, 0.12f, 0.98f),
+    .panelBackgroundInset = ImVec4(0.09f, 0.09f, 0.10f, 1.0f),
+    .frameBackground = ImVec4(0.13f, 0.13f, 0.15f, 1.0f),
+    .frameBackgroundHover = ImVec4(0.18f, 0.18f, 0.21f, 1.0f),
+    .frameBackgroundActive = ImVec4(0.22f, 0.22f, 0.26f, 1.0f),
+    .accent = ImVec4(0.44f, 0.58f, 0.92f, 1.0f),
+    .accentHover = ImVec4(0.48f, 0.58f, 0.92f, 1.0f),
+    .accentActive = ImVec4(0.36f, 0.47f, 0.78f, 1.0f),
+    .accentSoft = ImVec4(0.44f, 0.58f, 0.92f, 0.12f),
+    .accentSurface = ImVec4(0.13f, 0.19f, 0.32f, 1.0f),
+    .border = ImVec4(0.30f, 0.29f, 0.28f, 0.42f),
+    .borderStrong = ImVec4(0.34f, 0.33f, 0.31f, 0.52f),
+    .borderSubtle = ImVec4(0.34f, 0.33f, 0.31f, 0.34f),
+    .text = ImVec4(0.93f, 0.92f, 0.90f, 1.0f),
+    .textMuted = ImVec4(0.72f, 0.73f, 0.79f, 1.0f),
+    .textDim = ImVec4(0.62f, 0.60f, 0.57f, 1.0f),
+    .textOnAccent = ImVec4(0.97f, 0.98f, 1.0f, 1.0f),
+    .overlayScrim = ImVec4(0.03f, 0.03f, 0.04f, 0.78f),
+    .matte = ImVec4(0.02f, 0.02f, 0.03f, 0.26f),
+    .cameraFrame = ImVec4(0.86f, 0.87f, 0.90f, 0.42f),
+    .roundingSmall = 6.0f,
+    .roundingMedium = 10.0f,
+    .roundingLarge = 14.0f,
+};
+
 struct ActionPalette {
     ImVec4 base;
     ImVec4 hover;
@@ -197,7 +239,16 @@ bool HandleScalarInputAffordances(const ImRect& frameBounds, const ImGuiDataType
     }
 
     if (inlineEdit.itemId == itemId) {
-        const ImVec2 restoreCursor = ImGui::GetCursorScreenPos();
+        ImGuiWindow* window = g.CurrentWindow;
+        const ImVec2 restoreCursor = window->DC.CursorPos;
+        const ImVec2 restoreCursorPrevLine = window->DC.CursorPosPrevLine;
+        const ImVec2 restoreCursorMax = window->DC.CursorMaxPos;
+        const ImVec2 restoreIdealMax = window->DC.IdealMaxPos;
+        const ImVec2 restoreCurrLineSize = window->DC.CurrLineSize;
+        const ImVec2 restorePrevLineSize = window->DC.PrevLineSize;
+        const float restoreCurrLineTextBaseOffset = window->DC.CurrLineTextBaseOffset;
+        const float restorePrevLineTextBaseOffset = window->DC.PrevLineTextBaseOffset;
+        const bool restoreIsSameLine = window->DC.IsSameLine;
         const bool openingThisFrame = requestInlineInput || inlineEdit.focusPending;
         ImGui::SetCursorScreenPos(frameBounds.Min);
         ImGui::SetNextItemWidth(frameBounds.GetWidth());
@@ -218,7 +269,18 @@ bool HandleScalarInputAffordances(const ImRect& frameBounds, const ImGuiDataType
         const bool closeRequested = enterPressed || deactivated;
         const bool keepEditing = !closeRequested && (openingThisFrame || ImGui::IsItemActive() || ImGui::IsItemFocused());
         ImGui::PopID();
-        ImGui::SetCursorScreenPos(restoreCursor);
+        // This editor is drawn as an overlay on top of the slider/drag widget, so restore layout state
+        // directly instead of issuing another SetCursorScreenPos() with no following item.
+        window->DC.CursorPos = restoreCursor;
+        window->DC.CursorPosPrevLine = restoreCursorPrevLine;
+        window->DC.CursorMaxPos = restoreCursorMax;
+        window->DC.IdealMaxPos = restoreIdealMax;
+        window->DC.CurrLineSize = restoreCurrLineSize;
+        window->DC.PrevLineSize = restorePrevLineSize;
+        window->DC.CurrLineTextBaseOffset = restoreCurrLineTextBaseOffset;
+        window->DC.PrevLineTextBaseOffset = restorePrevLineTextBaseOffset;
+        window->DC.IsSameLine = restoreIsSameLine;
+        window->DC.IsSetPos = false;
         if (!keepEditing) {
             inlineEdit.itemId = 0;
             inlineEdit.focusPending = false;
@@ -232,6 +294,109 @@ bool HandleScalarInputAffordances(const ImRect& frameBounds, const ImGuiDataType
 
 void SetActionIconFont(ImFont* font) {
     gActionIconFont = font;
+}
+
+const UiTheme& GetUiTheme() {
+    return kUiTheme;
+}
+
+void ApplyRadiaryStyle(ImGuiStyle& style) {
+    const UiTheme& theme = GetUiTheme();
+    style = ImGuiStyle {};
+    style.WindowRounding = 10.0f;
+    style.ChildRounding = 8.0f;
+    style.FrameRounding = 8.0f;
+    style.PopupRounding = 8.0f;
+    style.ScrollbarRounding = 9.0f;
+    style.GrabRounding = 8.0f;
+    style.TabRounding = 5.0f;
+    style.WindowBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
+    style.FrameBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
+    style.TabBorderSize = 0.0f;
+    style.WindowPadding = ImVec2(11.0f, 9.0f);
+    style.FramePadding = ImVec2(9.0f, 6.0f);
+    style.CellPadding = ImVec2(8.0f, 4.0f);
+    style.ItemSpacing = ImVec2(9.0f, 8.0f);
+    style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
+    style.IndentSpacing = 18.0f;
+    style.ScrollbarSize = 14.0f;
+    style.GrabMinSize = 12.0f;
+    style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
+    style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
+    style.SelectableTextAlign = ImVec2(0.0f, 0.5f);
+    style.SeparatorTextBorderSize = 1.0f;
+    style.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
+    style.SeparatorTextPadding = ImVec2(6.0f, 4.0f);
+
+    style.Colors[ImGuiCol_WindowBg] = theme.panelBackground;
+    style.Colors[ImGuiCol_ChildBg] = theme.panelBackgroundInset;
+    style.Colors[ImGuiCol_PopupBg] = theme.panelBackgroundElevated;
+    style.Colors[ImGuiCol_Border] = theme.border;
+    style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    style.Colors[ImGuiCol_FrameBg] = theme.frameBackground;
+    style.Colors[ImGuiCol_FrameBgHovered] = theme.frameBackgroundHover;
+    style.Colors[ImGuiCol_FrameBgActive] = theme.frameBackgroundActive;
+    style.Colors[ImGuiCol_TitleBg] = theme.panelBackgroundAlt;
+    style.Colors[ImGuiCol_TitleBgActive] = theme.frameBackground;
+    style.Colors[ImGuiCol_TitleBgCollapsed] = theme.panelBackground;
+    style.Colors[ImGuiCol_MenuBarBg] = theme.panelBackgroundAlt;
+    style.Colors[ImGuiCol_ScrollbarBg] = theme.panelBackgroundInset;
+    style.Colors[ImGuiCol_ScrollbarGrab] = Mix(theme.frameBackground, theme.borderStrong, 0.55f);
+    style.Colors[ImGuiCol_ScrollbarGrabHovered] = theme.frameBackgroundHover;
+    style.Colors[ImGuiCol_ScrollbarGrabActive] = theme.frameBackgroundActive;
+    style.Colors[ImGuiCol_CheckMark] = theme.accentHover;
+    style.Colors[ImGuiCol_SliderGrab] = theme.accent;
+    style.Colors[ImGuiCol_SliderGrabActive] = theme.accentHover;
+    style.Colors[ImGuiCol_Button] = theme.panelBackgroundAlt;
+    style.Colors[ImGuiCol_ButtonHovered] = theme.frameBackgroundHover;
+    style.Colors[ImGuiCol_ButtonActive] = theme.frameBackgroundActive;
+    style.Colors[ImGuiCol_Header] = ImVec4(0.16f, 0.16f, 0.19f, 0.96f);
+    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.22f, 0.21f, 0.25f, 1.0f);
+    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.28f, 0.27f, 0.31f, 1.0f);
+    style.Colors[ImGuiCol_Separator] = theme.borderSubtle;
+    style.Colors[ImGuiCol_SeparatorHovered] = WithAlpha(theme.accent, 0.62f);
+    style.Colors[ImGuiCol_SeparatorActive] = WithAlpha(theme.accentHover, 0.86f);
+    style.Colors[ImGuiCol_ResizeGrip] = WithAlpha(theme.accent, 0.18f);
+    style.Colors[ImGuiCol_ResizeGripHovered] = WithAlpha(theme.accent, 0.46f);
+    style.Colors[ImGuiCol_ResizeGripActive] = WithAlpha(theme.accentHover, 0.68f);
+    style.Colors[ImGuiCol_Tab] = theme.panelBackgroundAlt;
+    style.Colors[ImGuiCol_TabHovered] = ImVec4(0.21f, 0.20f, 0.23f, 0.98f);
+    style.Colors[ImGuiCol_TabActive] = ImVec4(0.17f, 0.17f, 0.20f, 0.98f);
+    style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.09f, 0.09f, 0.11f, 0.86f);
+    style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.14f, 0.14f, 0.17f, 0.92f);
+    style.Colors[ImGuiCol_DockingPreview] = WithAlpha(theme.accent, 0.24f);
+    style.Colors[ImGuiCol_DockingEmptyBg] = theme.appBackgroundBottom;
+    style.Colors[ImGuiCol_Text] = theme.text;
+    style.Colors[ImGuiCol_TextDisabled] = theme.textDim;
+    style.Colors[ImGuiCol_TextSelectedBg] = WithAlpha(theme.accent, 0.28f);
+    style.Colors[ImGuiCol_PlotHistogram] = theme.accent;
+    style.Colors[ImGuiCol_PlotHistogramHovered] = theme.accentHover;
+    style.Colors[ImGuiCol_TableHeaderBg] = theme.panelBackgroundAlt;
+    style.Colors[ImGuiCol_TableBorderStrong] = theme.borderStrong;
+    style.Colors[ImGuiCol_TableBorderLight] = theme.borderSubtle;
+    style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    style.Colors[ImGuiCol_TableRowBgAlt] = WithAlpha(theme.panelBackgroundAlt, 0.34f);
+    style.Colors[ImGuiCol_NavCursor] = WithAlpha(theme.accentHover, 0.90f);
+}
+
+void PushFloatingPanelStyle(const bool compact) {
+    const UiTheme& theme = GetUiTheme();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, compact ? theme.roundingMedium : theme.roundingLarge);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, compact ? ImVec2(8.0f, 8.0f) : ImVec2(8.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, compact ? ImVec2(8.0f, 7.0f) : ImVec2(10.0f, 9.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, theme.panelBackgroundElevated);
+    ImGui::PushStyleColor(ImGuiCol_Border, theme.border);
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, theme.panelBackgroundAlt);
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, theme.frameBackground);
+    ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, theme.panelBackgroundAlt);
+}
+
+void PopFloatingPanelStyle() {
+    ImGui::PopStyleColor(5);
+    ImGui::PopStyleVar(4);
 }
 
 ImWchar IconGlyphCodepoint(const IconGlyph glyph) {
@@ -264,6 +429,10 @@ ImWchar IconGlyphCodepoint(const IconGlyph glyph) {
         return 0xE5C7;
     case IconGlyph::Settings:
         return 0xE8B8;
+    case IconGlyph::ChevronLeft:
+        return 0xE5CB;
+    case IconGlyph::ChevronRight:
+        return 0xE5CC;
     case IconGlyph::PreviousKeyframe:
         return 0xE045;
     case IconGlyph::NextKeyframe:
@@ -594,6 +763,12 @@ void DrawIconGlyph(ImDrawList* drawList, const ImRect& rect, const IconGlyph gly
         line(0.66f, 0.48f, 0.80f, 0.34f);
         line(0.66f, 0.48f, 0.82f, 0.50f);
         break;
+    case IconGlyph::ChevronLeft:
+        polyline({ImVec2(0.62f, 0.24f), ImVec2(0.38f, 0.50f), ImVec2(0.62f, 0.76f)});
+        break;
+    case IconGlyph::ChevronRight:
+        polyline({ImVec2(0.38f, 0.24f), ImVec2(0.62f, 0.50f), ImVec2(0.38f, 0.76f)});
+        break;
     case IconGlyph::PreviousKeyframe:
         line(0.26f, 0.24f, 0.26f, 0.76f);
         polyline({ImVec2(0.64f, 0.24f), ImVec2(0.40f, 0.50f), ImVec2(0.64f, 0.76f)});
@@ -699,6 +874,7 @@ void DrawSectionChip(const char* label, const ImVec4& fillColor) {
 }
 
 void DrawSubtleToolbarDivider(const float spacing) {
+    const UiTheme& theme = GetUiTheme();
     ImGui::SameLine(0.0f, spacing);
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const float height = ImGui::GetFrameHeight() - 8.0f;
@@ -706,7 +882,7 @@ void DrawSubtleToolbarDivider(const float spacing) {
     ImGui::GetWindowDrawList()->AddLine(
         ImVec2(pos.x + 3.0f, pos.y + 4.0f),
         ImVec2(pos.x + 3.0f, pos.y + 4.0f + height),
-        ImGui::GetColorU32(ImVec4(0.24f, 0.30f, 0.38f, 0.45f)),
+        ImGui::GetColorU32(theme.borderSubtle),
         1.0f);
     ImGui::SameLine(0.0f, spacing);
 }
@@ -722,17 +898,18 @@ double ScreenToCurveEditorY(const ImRect& rect, const float y) {
 }
 
 bool DrawBezierCurveEditor(const char* id, SceneKeyframe& keyframe) {
+    const UiTheme& theme = GetUiTheme();
     const ImVec2 size(220.0f, 126.0f);
     ImGui::InvisibleButton(id, size);
     const ImRect rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    const ImU32 border = ImGui::GetColorU32(ImVec4(0.28f, 0.28f, 0.29f, 0.36f));
-    const ImU32 fill = ImGui::GetColorU32(ImVec4(0.10f, 0.10f, 0.11f, 0.95f));
-    const ImU32 grid = ImGui::GetColorU32(ImVec4(0.22f, 0.22f, 0.24f, 0.30f));
-    const ImU32 curve = ImGui::GetColorU32(ImVec4(0.76f, 0.78f, 0.82f, 0.96f));
-    const ImU32 handle = ImGui::GetColorU32(ImVec4(0.62f, 0.70f, 0.82f, 0.96f));
-    drawList->AddRectFilled(rect.Min, rect.Max, fill, 8.0f);
-    drawList->AddRect(rect.Min, rect.Max, border, 8.0f);
+    const ImU32 border = ImGui::GetColorU32(WithAlpha(theme.borderStrong, 0.72f));
+    const ImU32 fill = ImGui::GetColorU32(theme.panelBackgroundInset);
+    const ImU32 grid = ImGui::GetColorU32(WithAlpha(theme.borderSubtle, 0.70f));
+    const ImU32 curve = ImGui::GetColorU32(theme.text);
+    const ImU32 handle = ImGui::GetColorU32(theme.accentHover);
+    drawList->AddRectFilled(rect.Min, rect.Max, fill, theme.roundingMedium);
+    drawList->AddRect(rect.Min, rect.Max, border, theme.roundingMedium);
     for (int step = 1; step < 4; ++step) {
         const float x = rect.Min.x + rect.GetWidth() * (static_cast<float>(step) / 4.0f);
         const float y = rect.Min.y + rect.GetHeight() * (static_cast<float>(step) / 4.0f);

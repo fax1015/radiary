@@ -956,11 +956,13 @@ void AppWindow::RenderFrame() {
     DrawDockspace();
     DrawToolbar();
     DrawLayersPanel();
+    DrawKeyframeListPanel();
     DrawInspectorPanel();
     DrawTimelinePanel();
+    DrawPreviewPanel();
     DrawCameraPanel();
     DrawViewportPanel();
-    if (showStatusOverlay_) {
+    if (showStatusOverlay_ && viewportPanelOpen_) {
         DrawStatusBar();
     }
     DrawSettingsPanel();

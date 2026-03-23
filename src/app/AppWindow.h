@@ -225,6 +225,13 @@ private:
     Scene pendingUndoScene_ = scene_;
     bool hasPendingUndoScene_ = false;
     bool viewportInteractionCaptured_ = false;
+    bool layersPanelOpen_ = true;
+    bool keyframeListPanelOpen_ = true;
+    bool inspectorPanelOpen_ = true;
+    bool playbackPanelOpen_ = true;
+    bool previewPanelOpen_ = true;
+    bool cameraPanelOpen_ = true;
+    bool viewportPanelOpen_ = true;
     bool settingsPanelOpen_ = false;
     bool exportPanelOpen_ = false;
     bool easingPanelOpen_ = false;
@@ -278,6 +285,7 @@ private:
     int pathSelectionAnchor_ = 0;
     int layerSelectionAnchorGlobal_ = 0;
     bool layersPanelActive_ = false;
+    bool keyframeListPanelActive_ = false;
     bool inspectorPanelActive_ = false;
     bool playbackPanelActive_ = false;
     bool startupWindowPlacementLoaded_ = false;
@@ -361,10 +369,15 @@ private:
     void BuildDefaultLayout();
     void DrawToolbar();
     void DrawLayersPanel();
+    void DrawKeyframeListPanel();
     void DrawInspectorPanel();
     void DrawTimelinePanel();
+    void DrawPreviewPanel();
     void DrawCameraPanel();
     void DrawViewportPanel();
+    void OpenAllDockPanels();
+    void DrawDockPanelVisibilityMenuItems();
+    void DrawDockPanelTabContextMenu(const char* panelName, bool& panelOpen);
     void DrawStatusBar();
     void DrawSettingsPanel();
     void DrawExportPanel();

@@ -17,6 +17,36 @@ enum class ActionTone {
     Accent
 };
 
+struct UiTheme {
+    ImVec4 appBackgroundTop;
+    ImVec4 appBackgroundBottom;
+    ImVec4 panelBackground;
+    ImVec4 panelBackgroundAlt;
+    ImVec4 panelBackgroundElevated;
+    ImVec4 panelBackgroundInset;
+    ImVec4 frameBackground;
+    ImVec4 frameBackgroundHover;
+    ImVec4 frameBackgroundActive;
+    ImVec4 accent;
+    ImVec4 accentHover;
+    ImVec4 accentActive;
+    ImVec4 accentSoft;
+    ImVec4 accentSurface;
+    ImVec4 border;
+    ImVec4 borderStrong;
+    ImVec4 borderSubtle;
+    ImVec4 text;
+    ImVec4 textMuted;
+    ImVec4 textDim;
+    ImVec4 textOnAccent;
+    ImVec4 overlayScrim;
+    ImVec4 matte;
+    ImVec4 cameraFrame;
+    float roundingSmall = 6.0f;
+    float roundingMedium = 10.0f;
+    float roundingLarge = 14.0f;
+};
+
 enum class IconGlyph {
     NewScene,
     OpenScene,
@@ -32,6 +62,8 @@ enum class IconGlyph {
     Settings,
     Undo,
     Redo,
+    ChevronLeft,
+    ChevronRight,
     PreviousKeyframe,
     NextKeyframe,
     Add,
@@ -42,6 +74,10 @@ enum class IconGlyph {
 };
 
 void SetActionIconFont(ImFont* font);
+const UiTheme& GetUiTheme();
+void ApplyRadiaryStyle(ImGuiStyle& style);
+void PushFloatingPanelStyle(bool compact = false);
+void PopFloatingPanelStyle();
 
 ImWchar IconGlyphCodepoint(IconGlyph glyph);
 bool DrawMaterialFontIcon(ImDrawList* drawList, const ImRect& rect, IconGlyph glyph, ImU32 color, float scale = 0.98f);

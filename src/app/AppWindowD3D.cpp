@@ -444,6 +444,15 @@ void AppWindow::LoadUserSettings() {
     }
 
     TryParseBoolValue(values, "settings_panel_open", settingsPanelOpen_);
+    TryParseBoolValue(values, "layers_panel_open", layersPanelOpen_);
+    TryParseBoolValue(values, "keyframe_list_panel_open", keyframeListPanelOpen_);
+    TryParseBoolValue(values, "inspector_panel_open", inspectorPanelOpen_);
+    TryParseBoolValue(values, "playback_panel_open", playbackPanelOpen_);
+    TryParseBoolValue(values, "preview_panel_open", previewPanelOpen_);
+    TryParseBoolValue(values, "camera_panel_open", cameraPanelOpen_);
+    TryParseBoolValue(values, "viewport_panel_open", viewportPanelOpen_);
+    TryParseBoolValue(values, "export_panel_open", exportPanelOpen_);
+    TryParseBoolValue(values, "easing_panel_open", easingPanelOpen_);
     TryParseBoolValue(values, "show_status_overlay", showStatusOverlay_);
     TryParseBoolValue(values, "gpu_viewport_preview", gpuFlamePreviewEnabled_);
     TryParseBoolValue(values, "export_hide_grid", exportHideGrid_);
@@ -532,6 +541,15 @@ void AppWindow::SaveUserSettings() const {
 
     stream << "version=" << kAppSettingsVersion << "\n";
     stream << "settings_panel_open=" << (settingsPanelOpen_ ? 1 : 0) << "\n";
+    stream << "layers_panel_open=" << (layersPanelOpen_ ? 1 : 0) << "\n";
+    stream << "keyframe_list_panel_open=" << (keyframeListPanelOpen_ ? 1 : 0) << "\n";
+    stream << "inspector_panel_open=" << (inspectorPanelOpen_ ? 1 : 0) << "\n";
+    stream << "playback_panel_open=" << (playbackPanelOpen_ ? 1 : 0) << "\n";
+    stream << "preview_panel_open=" << (previewPanelOpen_ ? 1 : 0) << "\n";
+    stream << "camera_panel_open=" << (cameraPanelOpen_ ? 1 : 0) << "\n";
+    stream << "viewport_panel_open=" << (viewportPanelOpen_ ? 1 : 0) << "\n";
+    stream << "export_panel_open=" << (exportPanelOpen_ ? 1 : 0) << "\n";
+    stream << "easing_panel_open=" << (easingPanelOpen_ ? 1 : 0) << "\n";
     stream << "show_status_overlay=" << (showStatusOverlay_ ? 1 : 0) << "\n";
     stream << "gpu_viewport_preview=" << (gpuFlamePreviewEnabled_ ? 1 : 0) << "\n";
     stream << "interactive_preview_iterations=" << interactivePreviewIterations_ << "\n";
@@ -703,51 +721,7 @@ void AppWindow::ShutdownImGui() {
 }
 
 void AppWindow::ApplyStyle() const {
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 10.0f;
-    style.ChildRounding = 8.0f;
-    style.FrameRounding = 8.0f;
-    style.PopupRounding = 8.0f;
-    style.GrabRounding = 8.0f;
-    style.TabRounding = 5.0f;
-    style.WindowBorderSize = 1.0f;
-    style.ChildBorderSize = 1.0f;
-    style.FrameBorderSize = 1.0f;
-    style.PopupBorderSize = 1.0f;
-    style.WindowPadding = ImVec2(11.0f, 9.0f);
-    style.FramePadding = ImVec2(9.0f, 6.0f);
-    style.CellPadding = ImVec2(8.0f, 4.0f);
-    style.ItemSpacing = ImVec2(9.0f, 8.0f);
-    style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.07f, 0.08f, 1.0f);
-    style.Colors[ImGuiCol_ChildBg] = ImVec4(0.09f, 0.09f, 0.10f, 1.0f);
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.13f, 0.13f, 0.15f, 1.0f);
-    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.18f, 0.18f, 0.21f, 1.0f);
-    style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.22f, 0.22f, 0.26f, 1.0f);
-    style.Colors[ImGuiCol_Button] = ImVec4(0.16f, 0.16f, 0.18f, 1.0f);
-    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.22f, 0.21f, 0.24f, 1.0f);
-    style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.27f, 0.26f, 0.29f, 1.0f);
-    style.Colors[ImGuiCol_Header] = ImVec4(0.16f, 0.16f, 0.19f, 0.96f);
-    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.22f, 0.21f, 0.25f, 1.0f);
-    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.28f, 0.27f, 0.31f, 1.0f);
-    style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.48f, 0.49f, 0.53f, 1.0f);
-    style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.58f, 0.58f, 0.62f, 1.0f);
-    style.Colors[ImGuiCol_CheckMark] = ImVec4(0.72f, 0.73f, 0.79f, 1.0f);
-    style.Colors[ImGuiCol_TitleBg] = ImVec4(0.10f, 0.10f, 0.12f, 1.0f);
-    style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.13f, 0.13f, 0.15f, 1.0f);
-    style.Colors[ImGuiCol_Border] = ImVec4(0.30f, 0.29f, 0.28f, 0.42f);
-    style.Colors[ImGuiCol_Separator] = ImVec4(0.34f, 0.33f, 0.31f, 0.34f);
-    style.Colors[ImGuiCol_SeparatorHovered] = ImVec4(0.48f, 0.47f, 0.43f, 0.62f);
-    style.Colors[ImGuiCol_SeparatorActive] = ImVec4(0.59f, 0.58f, 0.54f, 0.76f);
-    style.Colors[ImGuiCol_Tab] = ImVec4(0.11f, 0.11f, 0.13f, 0.92f);
-    style.Colors[ImGuiCol_TabActive] = ImVec4(0.17f, 0.17f, 0.20f, 0.98f);
-    style.Colors[ImGuiCol_TabHovered] = ImVec4(0.21f, 0.20f, 0.23f, 0.98f);
-    style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.09f, 0.09f, 0.11f, 0.86f);
-    style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.14f, 0.14f, 0.17f, 0.92f);
-    style.Colors[ImGuiCol_PopupBg] = ImVec4(0.10f, 0.10f, 0.12f, 0.98f);
-    style.Colors[ImGuiCol_Text] = ImVec4(0.93f, 0.92f, 0.90f, 1.0f);
-    style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.62f, 0.60f, 0.57f, 1.0f);
+    ApplyRadiaryStyle(ImGui::GetStyle());
 }
 
 void AppWindow::ApplyPendingResize() {

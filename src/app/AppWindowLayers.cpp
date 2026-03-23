@@ -62,7 +62,7 @@ void AppWindow::HandleShortcuts() {
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
-        if (playbackPanelActive_ && RemoveSelectedOrCurrentKeyframe()) {
+        if ((playbackPanelActive_ || keyframeListPanelActive_) && RemoveSelectedOrCurrentKeyframe()) {
             return;
         }
         if ((layersPanelActive_ || inspectorPanelActive_) && RemoveSelectedLayers()) {

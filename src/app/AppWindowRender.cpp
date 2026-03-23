@@ -274,6 +274,7 @@ AppWindow::ViewportRenderSetup AppWindow::DetermineViewportRenderSetup(const Vie
     setup.uiBusy =
         io.WantTextInput
         || layersPanelActive_
+        || keyframeListPanelActive_
         || inspectorPanelActive_
         || playbackPanelActive_
         || uiWidgetActive;
