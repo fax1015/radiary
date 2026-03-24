@@ -153,6 +153,22 @@ Color HsvToRgb(const double hue, const double saturation, const double value) {
     };
 }
 
+CameraState RandomCameraState(std::mt19937& generator) {
+    CameraState camera;
+    std::uniform_real_distribution<double> yaw(-kPi, kPi);
+    std::uniform_real_distribution<double> pitch(-0.82, -0.32);
+    std::uniform_real_distribution<double> distance(0.2, 6.0);
+    std::uniform_real_distribution<double> zoom(0.88, 1.18);
+
+    camera.yaw = yaw(generator);
+    camera.pitch = pitch(generator);
+    camera.distance = distance(generator);
+    camera.zoom2D = zoom(generator);
+    camera.panX = 0.0;
+    camera.panY = 0.0;
+    return camera;
+}
+
 std::vector<GradientStop> RandomGradient(std::mt19937& generator) {
     std::uniform_real_distribution<double> hue(0.0, 360.0);
     std::uniform_real_distribution<double> offset(18.0, 58.0);
@@ -779,6 +795,7 @@ Scene CreateRandomScene(const std::uint32_t seed) {
     const std::uint32_t modeRoll = seed % 20;
     scene.mode = modeRoll < 13 ? SceneMode::Flame : (modeRoll < 18 ? SceneMode::Hybrid : SceneMode::Path);
     scene.animatePath = false;
+    scene.camera = RandomCameraState(generator);
     scene.backgroundColor = RandomBackgroundColor(generator);
     scene.depthOfField.enabled = enableDof(generator);
     if (scene.depthOfField.enabled) {

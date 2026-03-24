@@ -27,7 +27,7 @@ constexpr float kStatusPanelHeaderPaddingY = 8.0f;
 constexpr float kStatusPanelSeparatorHeight = 1.0f;
 constexpr float kStatusPanelMinWrapWidth = 240.0f;
 constexpr float kDefaultToolbarHeight = 52.0f;
-constexpr float kDefaultBottomPanelHeight = 180.0f;
+constexpr float kDefaultBottomPanelHeight = 190.0f;
 constexpr float kDefaultLeftPanelWidth = 463.0f;
 constexpr float kDefaultRightPanelWidth = 508.0f;
 constexpr float kWidePreviewGridMinWidth = 620.0f;
@@ -614,6 +614,7 @@ void AppWindow::DrawToolbar() {
     const float presetArrowWidth = ImGui::GetFrameHeight();
     float presetComboWidth = 170.0f;
     float presetPopupWidth = 170.0f;
+    constexpr float kPresetPopupMaxHeight = 320.0f;
     if (presetLibrary_.Count() > 0) {
         for (std::size_t index = 0; index < presetLibrary_.Count(); ++index) {
             const float textWidth = ImGui::CalcTextSize(presetLibrary_.NameAt(index).c_str()).x;
@@ -622,7 +623,7 @@ void AppWindow::DrawToolbar() {
         }
     }
     ImGui::SetNextItemWidth(presetComboWidth);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(presetPopupWidth, 0.0f), ImVec2(presetPopupWidth, FLT_MAX));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(presetPopupWidth, 0.0f), ImVec2(presetPopupWidth, kPresetPopupMaxHeight));
     if (BeginComboWithMaterialArrow("##preset", presetLibrary_.Count() > 0 ? presetLibrary_.NameAt(presetIndex_).c_str() : "(none)")) {
         for (std::size_t index = 0; index < presetLibrary_.Count(); ++index) {
             const bool selected = index == presetIndex_;
@@ -1343,7 +1344,10 @@ void AppWindow::DrawLayersPanel() {
                 }
                 if (ImGui::BeginPopup("##layer_context_menu")) {
                     const bool canPasteLayer = layerClipboardType_ != LayerClipboardType::None;
-                    const char* visibilityLabel = visible ? "Hide Layer" : "Show Layer";
+                    const bool affectsSelection = IsLayerSelected(target, static_cast<int>(index)) && SelectedLayerCount() > 1;
+                    const char* visibilityLabel = visible
+                        ? (affectsSelection ? "Hide Selected Layers" : "Hide Layer")
+                        : (affectsSelection ? "Show Selected Layers" : "Show Layer");
                     if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
                         DuplicateSelectedLayer();
                     }
@@ -1358,10 +1362,13 @@ void AppWindow::DrawLayersPanel() {
                         PasteCopiedLayer();
                     }
                     if (ImGui::MenuItem(visibilityLabel)) {
-                        PushUndoState(scene_);
-                        visible = !visible;
-                        MarkViewportDirty(PreviewResetReason::SceneChanged);
-                        statusText_ = visible ? L"Layer shown" : L"Layer hidden";
+                        const bool nextVisibility = !visible;
+                        const Scene beforeVisibility = scene_;
+                        if (ApplyLayerVisibilityToSelectionOrItem(target, static_cast<int>(index), nextVisibility)) {
+                            PushUndoState(beforeVisibility);
+                            MarkViewportDirty(PreviewResetReason::SceneChanged);
+                            statusText_ = nextVisibility ? L"Layer shown" : L"Layer hidden";
+                        }
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Delete", "Delete", false, CanRemoveSelectedLayers())) {
@@ -1378,10 +1385,13 @@ void AppWindow::DrawLayersPanel() {
             const bool toggleHovered = ImGui::IsItemHovered();
             const bool toggleHeld = ImGui::IsItemActive();
             if (togglePressed) {
-                PushUndoState(scene_);
-                visible = !visible;
-                MarkViewportDirty(PreviewResetReason::SceneChanged);
-                statusText_ = visible ? L"Layer shown" : L"Layer hidden";
+                const bool nextVisibility = !visible;
+                const Scene beforeVisibility = scene_;
+                if (ApplyLayerVisibilityToSelectionOrItem(target, static_cast<int>(index), nextVisibility)) {
+                    PushUndoState(beforeVisibility);
+                    MarkViewportDirty(PreviewResetReason::SceneChanged);
+                    statusText_ = nextVisibility ? L"Layer shown" : L"Layer hidden";
+                }
             }
             ImDrawList* drawList = ImGui::GetWindowDrawList();
             const ImRect visibilityRect(visibilityPos, ImVec2(visibilityPos.x + visibilitySize.x, visibilityPos.y + visibilitySize.y));
@@ -1536,7 +1546,9 @@ void AppWindow::DrawKeyframeListPanel() {
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, transparentHeader);
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, transparentHeader);
             // Keep the row tint in the table background channel so column resize guides stay visible.
+            PushMonospaceFont();
             const bool rowPressed = ImGui::Selectable(frameLabel.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
+            PopMonospaceFont();
             const bool rowHovered = ImGui::IsItemHovered();
             ImGui::PopStyleColor(3);
             if (selected) {
@@ -2342,6 +2354,55 @@ void AppWindow::DrawTimelinePanel() {
         }
     }
 
+    constexpr float kTimelineZoomMin = 1.0f;
+    constexpr float kTimelineZoomMax = 64.0f;
+    constexpr float kTimelineZoomStep = 1.25f;
+    const double timelineRangeStartFrame = static_cast<double>(scene_.timelineStartFrame);
+    const double timelineRangeEndFrame = static_cast<double>(std::max(scene_.timelineStartFrame, scene_.timelineEndFrame));
+    const double timelineRangeSpanFrames = std::max(1.0, timelineRangeEndFrame - timelineRangeStartFrame);
+    const auto timelineRangeMidpoint = [&]() {
+        return (timelineRangeStartFrame + timelineRangeEndFrame) * 0.5;
+    };
+    const auto clampTimelineViewCenter = [&](const double visibleSpanFrames) {
+        const double halfVisibleSpan = visibleSpanFrames * 0.5;
+        const double minCenter = timelineRangeStartFrame + halfVisibleSpan;
+        const double maxCenter = timelineRangeEndFrame - halfVisibleSpan;
+        if (minCenter > maxCenter) {
+            timelineViewCenterFrame_ = timelineRangeMidpoint();
+            return;
+        }
+        timelineViewCenterFrame_ = Clamp(timelineViewCenterFrame_, minCenter, maxCenter);
+    };
+    const auto zoomTimelineView = [&](const float zoomFactor, const double focusFrame) {
+        const float currentZoom = std::clamp(timelineZoom_, kTimelineZoomMin, kTimelineZoomMax);
+        const float nextZoom = std::clamp(currentZoom * zoomFactor, kTimelineZoomMin, kTimelineZoomMax);
+        if (std::abs(nextZoom - currentZoom) < 1.0e-4f) {
+            return;
+        }
+
+        const double oldVisibleSpan = timelineRangeSpanFrames / static_cast<double>(currentZoom);
+        const double newVisibleSpan = timelineRangeSpanFrames / static_cast<double>(nextZoom);
+        if (timelineZoom_ <= kTimelineZoomMin + 1.0e-4f) {
+            timelineViewCenterFrame_ = timelineRangeMidpoint();
+        }
+        timelineZoom_ = nextZoom;
+        timelineViewCenterFrame_ = focusFrame + (timelineViewCenterFrame_ - focusFrame) * (newVisibleSpan / oldVisibleSpan);
+        clampTimelineViewCenter(newVisibleSpan);
+    };
+    const auto resetTimelineZoom = [&]() {
+        timelineZoom_ = 1.0f;
+        timelineViewCenterFrame_ = timelineRangeMidpoint();
+    };
+    if (!io.WantTextInput && playbackPanelActive_ && io.KeyCtrl) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false)) {
+            zoomTimelineView(kTimelineZoomStep, scene_.timelineFrame);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) {
+            zoomTimelineView(1.0f / kTimelineZoomStep, scene_.timelineFrame);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)) {
+            resetTimelineZoom();
+        }
+    }
+
     if (DrawActionButton("##timeline_play", scene_.animatePath ? "Pause" : "Play", scene_.animatePath ? IconGlyph::Pause : IconGlyph::Play, ActionTone::Accent, scene_.animatePath, true, 108.0f)) {
         PushUndoState(scene_);
         scene_.animatePath = !scene_.animatePath;
@@ -2403,7 +2464,7 @@ void AppWindow::DrawTimelinePanel() {
     if (editableKeyframeIndex >= 0 && editableKeyframeIndex < static_cast<int>(scene_.keyframes.size())) {
         Scene beforeEasing = scene_;
         int easingIndex = static_cast<int>(scene_.keyframes[static_cast<std::size_t>(editableKeyframeIndex)].easing);
-        ImGui::SetNextItemWidth(118.0f);
+        ImGui::SetNextItemWidth(156.0f);
         if (ComboWithMaterialArrow("##timeline_easing", &easingIndex, kKeyframeEasingLabels, IM_ARRAYSIZE(kKeyframeEasingLabels))) {
             ApplyKeyframeEasingPreset(scene_.keyframes[static_cast<std::size_t>(editableKeyframeIndex)], static_cast<KeyframeEasing>(easingIndex));
             RefreshTimelinePose();
@@ -2421,7 +2482,7 @@ void AppWindow::DrawTimelinePanel() {
         ImGui::SameLine();
     } else {
         ImGui::BeginDisabled();
-        ImGui::SetNextItemWidth(118.0f);
+        ImGui::SetNextItemWidth(156.0f);
         int easingIndex = 0;
         ComboWithMaterialArrow("##timeline_easing", &easingIndex, kKeyframeEasingLabels, IM_ARRAYSIZE(kKeyframeEasingLabels));
         ImGui::SameLine();
@@ -2437,10 +2498,11 @@ void AppWindow::DrawTimelinePanel() {
     std::snprintf(
         playbackSummary,
         sizeof(playbackSummary),
-        "Frame %d / %d at %.2f fps",
+        "Frame %d / %d at %.2f fps | %.1fx",
         currentFrame,
         scene_.timelineEndFrame,
-        scene_.timelineFrameRate);
+        scene_.timelineFrameRate,
+        timelineZoom_);
     constexpr float kTimelineValueWidth = 82.0f;
     constexpr float kTimelineFpsWidth = 76.0f;
     constexpr float kTimelineLabelGap = 6.0f;
@@ -2458,8 +2520,10 @@ void AppWindow::DrawTimelinePanel() {
         + ImGui::CalcTextSize("Frame").x + kTimelineLabelGap + kTimelineValueWidth;
     (void)rightToolbarWidth;
     drawHeaderDivider();
+    PushMonospaceFont();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%s", playbackSummary);
+    PopMonospaceFont();
     drawHeaderDivider();
 
     Scene beforeTimeline = scene_;
@@ -2567,18 +2631,53 @@ void AppWindow::DrawTimelinePanel() {
     const float trackLeft = trackMin.x + leftPad;
     const float trackRight = trackMax.x - rightPad;
     const float usableWidth = std::max(1.0f, trackRight - trackLeft);
-    const int startFrame = scene_.timelineStartFrame;
-    const int endFrame = std::max(scene_.timelineStartFrame, scene_.timelineEndFrame);
-    const int spanFrames = std::max(1, endFrame - startFrame);
+    timelineZoom_ = std::clamp(timelineZoom_, kTimelineZoomMin, kTimelineZoomMax);
+    const double visibleSpanFrames = std::max(1.0, timelineRangeSpanFrames / static_cast<double>(timelineZoom_));
+    if (timelineZoom_ <= kTimelineZoomMin + 1.0e-4f) {
+        timelineViewCenterFrame_ = timelineRangeMidpoint();
+    }
+    clampTimelineViewCenter(visibleSpanFrames);
+    const double halfVisibleSpan = visibleSpanFrames * 0.5;
+    const double visibleStartFrame = std::max(timelineRangeStartFrame, timelineViewCenterFrame_ - halfVisibleSpan);
+    const double visibleEndFrame = std::min(timelineRangeEndFrame, visibleStartFrame + visibleSpanFrames);
+    const double displayedSpanFrames = std::max(1.0, visibleEndFrame - visibleStartFrame);
     const auto frameToX = [&](const double frameValue) {
-        const double normalized = Clamp((frameValue - static_cast<double>(startFrame)) / static_cast<double>(spanFrames), 0.0, 1.0);
+        const double normalized = (frameValue - visibleStartFrame) / displayedSpanFrames;
         return trackLeft + static_cast<float>(normalized) * usableWidth;
     };
-
-    for (int frame = startFrame; frame <= endFrame; frame += std::max(1, spanFrames / 10)) {
+    const auto xToFrame = [&](const float x, const bool clampToVisibleRange = true) {
+        const double normalized = Clamp((x - trackLeft) / std::max(1.0f, usableWidth), 0.0, 1.0);
+        if (clampToVisibleRange) {
+            return visibleStartFrame + normalized * displayedSpanFrames;
+        }
+        const double rawNormalized = static_cast<double>(x - trackLeft) / std::max(1.0f, usableWidth);
+        return visibleStartFrame + rawNormalized * displayedSpanFrames;
+    };
+    const auto timelineTickStep = [&](const double span) {
+        static const int kTickSteps[] = {
+            1, 2, 5, 10, 20, 50, 100, 200, 500,
+            1000, 2000, 5000, 10000, 20000, 50000, 100000
+        };
+        const double targetStep = std::max(1.0, span / 10.0);
+        for (const int step : kTickSteps) {
+            if (step >= targetStep) {
+                return step;
+            }
+        }
+        int step = 100000;
+        while (static_cast<double>(step) < targetStep) {
+            step *= 10;
+        }
+        return step;
+    };
+    const int tickStep = timelineTickStep(displayedSpanFrames);
+    const int firstTick = static_cast<int>(std::ceil(visibleStartFrame / static_cast<double>(tickStep))) * tickStep;
+    for (int frame = firstTick; static_cast<double>(frame) <= visibleEndFrame; frame += tickStep) {
         const float x = frameToX(static_cast<double>(frame));
         drawList->AddLine(ImVec2(x, trackMin.y + topPad), ImVec2(x, trackMax.y - bottomPad), guide);
+        PushMonospaceFont();
         drawList->AddText(ImVec2(x + 3.0f, trackMin.y + 4.0f), ImGui::GetColorU32(ImVec4(0.60f, 0.58f, 0.54f, 0.90f)), std::to_string(frame).c_str());
+        PopMonospaceFont();
     }
     const auto markerYForLane = [&](const int laneIndex) {
         return trackMax.y - bottomPad - static_cast<float>(laneIndex) * laneSpacing;
@@ -2590,13 +2689,35 @@ void AppWindow::DrawTimelinePanel() {
     ImGui::SetCursorScreenPos(trackMin);
     ImGui::InvisibleButton("##timeline_track_input", ImGui::GetWindowSize());
     const bool trackHovered = ImGui::IsItemHovered();
-    if (trackHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (trackHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+        timelineDraggingView_ = true;
+        timelineViewDragLastMouseX_ = io.MousePos.x;
+    }
+    if (trackHovered && !io.WantTextInput && io.KeyCtrl && io.MouseWheel != 0.0f) {
+        zoomTimelineView(io.MouseWheel > 0.0f ? kTimelineZoomStep : 1.0f / kTimelineZoomStep, xToFrame(io.MousePos.x));
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+        timelineDraggingView_ = false;
+    }
+    if (timelineDraggingView_) {
+        const float mouseDeltaX = io.MousePos.x - timelineViewDragLastMouseX_;
+        timelineViewDragLastMouseX_ = io.MousePos.x;
+        if (std::abs(mouseDeltaX) > 0.0f) {
+            timelineViewCenterFrame_ -= static_cast<double>(mouseDeltaX) / std::max(1.0f, usableWidth) * displayedSpanFrames;
+            clampTimelineViewCenter(visibleSpanFrames);
+        }
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    }
+    if (!timelineDraggingView_ && trackHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         selectedTimelineKeyframe_ = -1;
         for (std::size_t index = 0; index < scene_.keyframes.size(); ++index) {
             const float markerX = frameToX(static_cast<double>(scene_.keyframes[index].frame));
             const float markerY = markerYForLane(laneIndexForKeyframe(scene_.keyframes[index]));
-            if (std::abs(mouse.x - markerX) <= 7.0f && std::abs(mouse.y - markerY) <= 8.0f) {
+            if (markerX >= trackLeft - 7.0f
+                && markerX <= trackRight + 7.0f
+                && std::abs(mouse.x - markerX) <= 7.0f
+                && std::abs(mouse.y - markerY) <= 8.0f) {
                 selectedTimelineKeyframe_ = static_cast<int>(index);
                 timelineDraggingKeyframe_ = true;
                 PushUndoState(scene_);
@@ -2605,8 +2726,7 @@ void AppWindow::DrawTimelinePanel() {
         }
         if (selectedTimelineKeyframe_ < 0) {
             timelineDraggingPlayhead_ = true;
-            const double normalized = Clamp((mouse.x - trackLeft) / std::max(1.0f, usableWidth), 0.0, 1.0);
-            SetTimelineFrame(static_cast<double>(startFrame) + normalized * static_cast<double>(spanFrames), false);
+            SetTimelineFrame(xToFrame(mouse.x), false);
         }
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -2614,11 +2734,9 @@ void AppWindow::DrawTimelinePanel() {
         timelineDraggingKeyframe_ = false;
     }
     if (timelineDraggingPlayhead_) {
-        const double normalized = Clamp((ImGui::GetIO().MousePos.x - trackLeft) / std::max(1.0f, usableWidth), 0.0, 1.0);
-        SetTimelineFrame(static_cast<double>(startFrame) + normalized * static_cast<double>(spanFrames), false);
+        SetTimelineFrame(xToFrame(ImGui::GetIO().MousePos.x), false);
     } else if (timelineDraggingKeyframe_ && selectedTimelineKeyframe_ >= 0 && selectedTimelineKeyframe_ < static_cast<int>(scene_.keyframes.size())) {
-        const double normalized = Clamp((ImGui::GetIO().MousePos.x - trackLeft) / std::max(1.0f, usableWidth), 0.0, 1.0);
-        const int targetFrame = static_cast<int>(std::round(static_cast<double>(startFrame) + normalized * static_cast<double>(spanFrames)));
+        const int targetFrame = static_cast<int>(std::round(xToFrame(ImGui::GetIO().MousePos.x)));
         bool occupied = false;
         const SceneKeyframe& selectedKeyframe = scene_.keyframes[static_cast<std::size_t>(selectedTimelineKeyframe_)];
         for (std::size_t index = 0; index < scene_.keyframes.size(); ++index) {
@@ -2641,6 +2759,9 @@ void AppWindow::DrawTimelinePanel() {
     for (std::size_t index = 0; index < scene_.keyframes.size(); ++index) {
         const SceneKeyframe& keyframe = scene_.keyframes[index];
         const float markerX = frameToX(static_cast<double>(keyframe.frame));
+        if (markerX < trackLeft - 8.0f || markerX > trackRight + 8.0f) {
+            continue;
+        }
         const float markerY = markerYForLane(laneIndexForKeyframe(keyframe));
         const float markerSize = static_cast<int>(index) == selectedTimelineKeyframe_ ? 7.0f : 5.5f;
         const ImU32 markerColor = IM_COL32(keyframe.markerColor.r, keyframe.markerColor.g, keyframe.markerColor.b, keyframe.markerColor.a);
@@ -2653,12 +2774,14 @@ void AppWindow::DrawTimelinePanel() {
     }
 
     const float playheadX = frameToX(scene_.timelineFrame);
-    drawList->AddLine(ImVec2(playheadX, trackMin.y + topPad), ImVec2(playheadX, trackMax.y - bottomPad), playhead, 2.0f);
-    drawList->AddTriangleFilled(
-        ImVec2(playheadX - 5.0f, trackMin.y + 8.0f),
-        ImVec2(playheadX + 5.0f, trackMin.y + 8.0f),
-        ImVec2(playheadX, trackMin.y + 16.0f),
-        playhead);
+    if (playheadX >= trackLeft - 6.0f && playheadX <= trackRight + 6.0f) {
+        drawList->AddLine(ImVec2(playheadX, trackMin.y + topPad), ImVec2(playheadX, trackMax.y - bottomPad), playhead, 2.0f);
+        drawList->AddTriangleFilled(
+            ImVec2(playheadX - 5.0f, trackMin.y + 8.0f),
+            ImVec2(playheadX + 5.0f, trackMin.y + 8.0f),
+            ImVec2(playheadX, trackMin.y + 16.0f),
+            playhead);
+    }
     ImGui::EndChild();
 
     SyncCurrentKeyframeFromScene();

@@ -2,7 +2,7 @@
   "version": 4,
   "name": "Worldsheets",
   "mode": "flame",
-  "previewIterations": 10000000,
+  "previewIterations": 98304056,
   "animatePath": false,
   "backgroundColor": {"r": 196, "g": 196, "b": 196, "a": 255},
   "timelineFrame": 0,
@@ -10,12 +10,12 @@
   "timelineStartFrame": 0,
   "timelineEndFrame": 120,
   "camera": {
-    "yaw": -1.28,
-    "pitch": 0.36,
-    "distance": 15.4245,
-    "panX": -183,
-    "panY": -187,
-    "zoom2D": 0.349401,
+    "yaw": -0.52,
+    "pitch": -1.45,
+    "distance": 10.0805,
+    "panX": -241,
+    "panY": 131,
+    "zoom2D": 0.503547,
     "frameWidth": 16,
     "frameHeight": 9
   },
@@ -23,7 +23,30 @@
     "rotationXDegrees": -83.7261,
     "rotationYDegrees": -61.8658,
     "rotationZDegrees": 108.403,
-    "depthAmount": 1.93944
+    "depthAmount": 1.93944,
+    "curveExposure": 1,
+    "curveContrast": 1,
+    "curveHighlights": 1,
+    "curveGamma": 1
+  },
+  "depthOfField": {
+    "enabled": false,
+    "focusDepth": 0.45,
+    "focusRange": 0.1,
+    "blurStrength": 0.45
+  },
+  "postProcess": {
+    "enabled": false,
+    "bloomIntensity": 0.35,
+    "bloomRadius": 0.8,
+    "bloomThreshold": 0.6,
+    "chromaticAberration": 0,
+    "vignetteIntensity": 0,
+    "vignetteRoundness": 0.5,
+    "acesToneMap": false,
+    "filmGrain": 0,
+    "colorTemperature": 6500,
+    "saturationBoost": 0
   },
   "gradient": [
     {"position": 0, "r": 13, "g": 20, "b": 17, "a": 255},
@@ -332,7 +355,23 @@
         "sec": 0.306699,
         "csc": 0,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -392,7 +431,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -452,7 +507,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0,
-        "sech": 0.377893
+        "sech": 0.377893,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -512,7 +583,23 @@
         "sec": 0,
         "csc": 0.374174,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -572,7 +659,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0.23859,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -632,7 +735,23 @@
         "sec": 0.255021,
         "csc": 0,
         "cot": 0,
-        "sech": 0.264337
+        "sech": 0.264337,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -692,7 +811,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -752,7 +887,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -812,7 +963,23 @@
         "sec": 0,
         "csc": 0,
         "cot": 0,
-        "sech": 0
+        "sech": 0,
+        "perspective": 0,
+        "blob": 0,
+        "pdj": 0,
+        "fan2": 0,
+        "rings2": 0,
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     }
   ],

@@ -429,6 +429,59 @@ void AppWindow::SelectAllLayers(const InspectorTarget target) {
     NormalizeLayerSelections();
 }
 
+bool AppWindow::ApplyLayerVisibilityToSelectionOrItem(const InspectorTarget target, const int index, const bool visible) {
+    EnsureSelectionIsValid();
+
+    std::vector<std::pair<InspectorTarget, int>> targets;
+    if (IsLayerSelected(target, index) && SelectedLayerCount() > 1) {
+        targets.reserve(static_cast<std::size_t>(SelectedLayerCount()));
+        for (const int transformIndex : selectedTransformLayers_) {
+            targets.emplace_back(InspectorTarget::FlameLayer, transformIndex);
+        }
+        for (const int pathIndex : selectedPathLayers_) {
+            targets.emplace_back(InspectorTarget::PathLayer, pathIndex);
+        }
+    } else {
+        targets.emplace_back(target, index);
+    }
+
+    bool changed = false;
+    for (const auto& [targetType, targetIndex] : targets) {
+        if (targetType == InspectorTarget::PathLayer) {
+            if (targetIndex >= 0 && targetIndex < static_cast<int>(scene_.paths.size()) && scene_.paths[static_cast<std::size_t>(targetIndex)].visible != visible) {
+                scene_.paths[static_cast<std::size_t>(targetIndex)].visible = visible;
+                changed = true;
+            }
+            continue;
+        }
+
+        if (targetIndex >= 0 && targetIndex < static_cast<int>(scene_.transforms.size()) && scene_.transforms[static_cast<std::size_t>(targetIndex)].visible != visible) {
+            scene_.transforms[static_cast<std::size_t>(targetIndex)].visible = visible;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+bool AppWindow::ToggleLayerVisibilityForSelectionOrItem(const InspectorTarget target, const int index) {
+    EnsureSelectionIsValid();
+
+    bool currentVisibility = true;
+    if (target == InspectorTarget::PathLayer) {
+        if (index < 0 || index >= static_cast<int>(scene_.paths.size())) {
+            return false;
+        }
+        currentVisibility = scene_.paths[static_cast<std::size_t>(index)].visible;
+    } else {
+        if (index < 0 || index >= static_cast<int>(scene_.transforms.size())) {
+            return false;
+        }
+        currentVisibility = scene_.transforms[static_cast<std::size_t>(index)].visible;
+    }
+
+    return ApplyLayerVisibilityToSelectionOrItem(target, index, !currentVisibility);
+}
+
 bool AppWindow::IsLayerSelected(const InspectorTarget target, const int index) const {
     if (target == InspectorTarget::PathLayer) {
         return ContainsIndex(selectedPathLayers_, index);

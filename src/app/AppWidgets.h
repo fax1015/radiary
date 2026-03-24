@@ -74,6 +74,9 @@ enum class IconGlyph {
 };
 
 void SetActionIconFont(ImFont* font);
+void SetMonospaceFont(ImFont* font);
+void PushMonospaceFont();
+void PopMonospaceFont();
 const UiTheme& GetUiTheme();
 void ApplyRadiaryStyle(ImGuiStyle& style);
 void PushFloatingPanelStyle(bool compact = false);

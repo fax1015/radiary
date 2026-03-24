@@ -327,6 +327,10 @@ private:
     int selectedTimelineKeyframe_ = -1;
     bool timelineDraggingPlayhead_ = false;
     bool timelineDraggingKeyframe_ = false;
+    bool timelineDraggingView_ = false;
+    float timelineViewDragLastMouseX_ = 0.0f;
+    float timelineZoom_ = 1.0f;
+    double timelineViewCenterFrame_ = 0.0;
     double newSceneFrameRateDefault_ = 24.0;
     int newSceneEndFrameDefault_ = 120;
 
@@ -620,6 +624,8 @@ private:
     void ToggleLayerSelection(InspectorTarget target, int index);
     void SelectLayerRange(InspectorTarget target, int index);
     void SelectAllLayers(InspectorTarget target);
+    bool ApplyLayerVisibilityToSelectionOrItem(InspectorTarget target, int index, bool visible);
+    bool ToggleLayerVisibilityForSelectionOrItem(InspectorTarget target, int index);
     bool IsLayerSelected(InspectorTarget target, int index) const;
     int SelectedLayerCount() const;
     bool HasMultipleLayersSelected() const;

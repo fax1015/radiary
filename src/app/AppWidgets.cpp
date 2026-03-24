@@ -1,18 +1,29 @@
 #include "app/AppWidgets.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <string>
 #include <vector>
 
+#include "misc/cpp/imgui_stdlib.h"
+
 namespace radiary {
+
+void PushMonospaceFont();
+void PopMonospaceFont();
 
 namespace {
 
 constexpr float kComboArrowScale = 0.66f;
 
 ImFont* gActionIconFont = nullptr;
+ImFont* gMonospaceFont = nullptr;
 
 ImVec4 WithAlpha(const ImVec4& color, const float alpha) {
     return ImVec4(color.x, color.y, color.z, alpha);
@@ -188,11 +199,204 @@ void ClampScalarValue(const ImGuiDataType dataType, void* value, const void* min
 struct InlineScalarEditState {
     ImGuiID itemId = 0;
     bool focusPending = false;
+    std::string buffer;
 };
 
 InlineScalarEditState& GetInlineScalarEditState() {
     static InlineScalarEditState state;
     return state;
+}
+
+class MathExpressionParser {
+public:
+    explicit MathExpressionParser(const char* text)
+        : cursor_(text != nullptr ? text : "") {}
+
+    bool Parse(double& result) {
+        SkipWhitespace();
+        if (*cursor_ == '\0') {
+            return false;
+        }
+        const double value = ParseExpression();
+        SkipWhitespace();
+        if (!ok_ || *cursor_ != '\0' || !std::isfinite(value)) {
+            return false;
+        }
+        result = value;
+        return true;
+    }
+
+private:
+    double ParseExpression() {
+        double value = ParseTerm();
+        while (ok_) {
+            SkipWhitespace();
+            if (Consume('+')) {
+                value += ParseTerm();
+            } else if (Consume('-')) {
+                value -= ParseTerm();
+            } else {
+                break;
+            }
+        }
+        return value;
+    }
+
+    double ParseTerm() {
+        double value = ParseFactor();
+        while (ok_) {
+            SkipWhitespace();
+            if (Consume('*')) {
+                value *= ParseFactor();
+            } else if (Consume('/')) {
+                const double divisor = ParseFactor();
+                if (std::abs(divisor) <= 1.0e-12) {
+                    ok_ = false;
+                    return 0.0;
+                }
+                value /= divisor;
+            } else if (Consume('%')) {
+                const double divisor = ParseFactor();
+                if (std::abs(divisor) <= 1.0e-12) {
+                    ok_ = false;
+                    return 0.0;
+                }
+                value = std::fmod(value, divisor);
+            } else {
+                break;
+            }
+        }
+        return value;
+    }
+
+    double ParseFactor() {
+        SkipWhitespace();
+        if (Consume('+')) {
+            return ParseFactor();
+        }
+        if (Consume('-')) {
+            return -ParseFactor();
+        }
+        if (Consume('(')) {
+            const double value = ParseExpression();
+            SkipWhitespace();
+            if (!Consume(')')) {
+                ok_ = false;
+                return 0.0;
+            }
+            return value;
+        }
+        return ParseNumber();
+    }
+
+    double ParseNumber() {
+        SkipWhitespace();
+        errno = 0;
+        char* end = nullptr;
+        const double value = std::strtod(cursor_, &end);
+        if (end == cursor_ || errno == ERANGE) {
+            ok_ = false;
+            return 0.0;
+        }
+        cursor_ = end;
+        return value;
+    }
+
+    bool Consume(const char ch) {
+        if (*cursor_ != ch) {
+            return false;
+        }
+        ++cursor_;
+        return true;
+    }
+
+    void SkipWhitespace() {
+        while (*cursor_ != '\0' && std::isspace(static_cast<unsigned char>(*cursor_))) {
+            ++cursor_;
+        }
+    }
+
+    const char* cursor_ = "";
+    bool ok_ = true;
+};
+
+std::string FormatScalarValue(const ImGuiDataType dataType, const void* value, const char* format) {
+    char buffer[128] = {};
+    ImGui::DataTypeFormatString(buffer, IM_ARRAYSIZE(buffer), dataType, value, format);
+    return buffer;
+}
+
+bool AssignScalarExpressionValue(const ImGuiDataType dataType, void* value, const double evaluatedValue) {
+    if (!std::isfinite(evaluatedValue)) {
+        return false;
+    }
+
+    switch (dataType) {
+    case ImGuiDataType_S32: {
+        const double clamped = std::clamp(
+            std::trunc(evaluatedValue),
+            static_cast<double>(std::numeric_limits<int>::lowest()),
+            static_cast<double>(std::numeric_limits<int>::max()));
+        const int castValue = static_cast<int>(clamped);
+        int& current = *static_cast<int*>(value);
+        if (current == castValue) {
+            return false;
+        }
+        current = castValue;
+        return true;
+    }
+    case ImGuiDataType_U32: {
+        const double clamped = std::clamp(
+            std::trunc(evaluatedValue),
+            0.0,
+            static_cast<double>(std::numeric_limits<std::uint32_t>::max()));
+        const std::uint32_t castValue = static_cast<std::uint32_t>(clamped);
+        std::uint32_t& current = *static_cast<std::uint32_t*>(value);
+        if (current == castValue) {
+            return false;
+        }
+        current = castValue;
+        return true;
+    }
+    case ImGuiDataType_Float: {
+        const float castValue = static_cast<float>(evaluatedValue);
+        float& current = *static_cast<float*>(value);
+        if (current == castValue) {
+            return false;
+        }
+        current = castValue;
+        return true;
+    }
+    case ImGuiDataType_Double: {
+        double& current = *static_cast<double*>(value);
+        if (current == evaluatedValue) {
+            return false;
+        }
+        current = evaluatedValue;
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+bool CommitInlineScalarExpression(
+    InlineScalarEditState& inlineEdit,
+    const ImGuiDataType dataType,
+    void* value,
+    const void* minimum,
+    const void* maximum,
+    const char* format) {
+    MathExpressionParser parser(inlineEdit.buffer.c_str());
+    double evaluatedValue = 0.0;
+    if (!parser.Parse(evaluatedValue)) {
+        return false;
+    }
+
+    const bool changed = AssignScalarExpressionValue(dataType, value, evaluatedValue);
+    ClampScalarValue(dataType, value, minimum, maximum);
+    inlineEdit.buffer = FormatScalarValue(dataType, value, format);
+    return changed;
 }
 
 bool HandleScalarInputAffordances(const ImRect& frameBounds, const ImGuiDataType dataType, void* value, const void* minimum, const void* maximum, const char* format) {
@@ -236,6 +440,7 @@ bool HandleScalarInputAffordances(const ImRect& frameBounds, const ImGuiDataType
     if (requestInlineInput) {
         inlineEdit.itemId = itemId;
         inlineEdit.focusPending = true;
+        inlineEdit.buffer = FormatScalarValue(dataType, value, format);
     }
 
     if (inlineEdit.itemId == itemId) {
@@ -257,16 +462,23 @@ bool HandleScalarInputAffordances(const ImRect& frameBounds, const ImGuiDataType
             ImGui::SetKeyboardFocusHere();
             inlineEdit.focusPending = false;
         }
-        if (ImGui::InputScalar("##inline_scalar", dataType, value, nullptr, nullptr, format, ImGuiInputTextFlags_AutoSelectAll)) {
-            ClampScalarValue(dataType, value, minimum, maximum);
-            valueChanged = true;
-        }
-        const bool enterPressed = ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
+        PushMonospaceFont();
+        const bool submitted = ImGui::InputText(
+            "##inline_scalar",
+            &inlineEdit.buffer,
+            ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue);
+        PopMonospaceFont();
+        const bool enterPressed = submitted;
         const bool deactivated = ImGui::IsItemDeactivated();
+        const bool cancelRequested = ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        const bool commitRequested = !cancelRequested && (enterPressed || deactivated);
+        if (commitRequested) {
+            valueChanged = CommitInlineScalarExpression(inlineEdit, dataType, value, minimum, maximum, format) || valueChanged;
+        }
         if (deactivated) {
             ClampScalarValue(dataType, value, minimum, maximum);
         }
-        const bool closeRequested = enterPressed || deactivated;
+        const bool closeRequested = cancelRequested || enterPressed || deactivated;
         const bool keepEditing = !closeRequested && (openingThisFrame || ImGui::IsItemActive() || ImGui::IsItemFocused());
         ImGui::PopID();
         // This editor is drawn as an overlay on top of the slider/drag widget, so restore layout state
@@ -284,6 +496,7 @@ bool HandleScalarInputAffordances(const ImRect& frameBounds, const ImGuiDataType
         if (!keepEditing) {
             inlineEdit.itemId = 0;
             inlineEdit.focusPending = false;
+            inlineEdit.buffer.clear();
         }
     }
 
@@ -294,6 +507,22 @@ bool HandleScalarInputAffordances(const ImRect& frameBounds, const ImGuiDataType
 
 void SetActionIconFont(ImFont* font) {
     gActionIconFont = font;
+}
+
+void SetMonospaceFont(ImFont* font) {
+    gMonospaceFont = font;
+}
+
+void PushMonospaceFont() {
+    if (gMonospaceFont != nullptr) {
+        ImGui::PushFont(gMonospaceFont);
+    }
+}
+
+void PopMonospaceFont() {
+    if (gMonospaceFont != nullptr) {
+        ImGui::PopFont();
+    }
 }
 
 const UiTheme& GetUiTheme() {
@@ -470,7 +699,7 @@ bool DrawMaterialFontIcon(ImDrawList* drawList, const ImRect& rect, const IconGl
     const ImVec2 glyphSize = gActionIconFont->CalcTextSizeA(iconFontSize, FLT_MAX, 0.0f, iconUtf8);
     const ImVec2 glyphPos(
         rect.Min.x + (rect.GetWidth() - glyphSize.x) * 0.5f,
-        rect.Min.y + (rect.GetHeight() - glyphSize.y) * 0.5f - 0.5f);
+        rect.Min.y + (rect.GetHeight() - glyphSize.y) * 0.5f + 0.5f);
     drawList->AddText(gActionIconFont, iconFontSize, glyphPos, color, iconUtf8);
     return true;
 }
@@ -624,7 +853,9 @@ bool SliderScalarWithInput(const char* label, const ImGuiDataType dataType, void
     const ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
     const float frameWidth = ImGui::CalcItemWidth();
     const ImRect frameBounds(frameMin, ImVec2(frameMin.x + frameWidth, frameMin.y + labelSize.y + style.FramePadding.y * 2.0f));
+    PushMonospaceFont();
     const bool changed = ImGui::SliderScalar(label, dataType, value, minimum, maximum, format, flags | ImGuiSliderFlags_AlwaysClamp);
+    PopMonospaceFont();
     const bool affordanceChanged = HandleScalarInputAffordances(frameBounds, dataType, value, minimum, maximum, format);
     return changed || affordanceChanged;
 }
@@ -635,7 +866,9 @@ bool DragScalarWithInput(const char* label, const ImGuiDataType dataType, void* 
     const ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
     const float frameWidth = ImGui::CalcItemWidth();
     const ImRect frameBounds(frameMin, ImVec2(frameMin.x + frameWidth, frameMin.y + labelSize.y + style.FramePadding.y * 2.0f));
+    PushMonospaceFont();
     const bool changed = ImGui::DragScalar(label, dataType, value, speed, minimum, maximum, format, flags);
+    PopMonospaceFont();
     const bool affordanceChanged = HandleScalarInputAffordances(frameBounds, dataType, value, minimum, maximum, format);
     return changed || affordanceChanged;
 }
@@ -659,11 +892,14 @@ bool ResetColorOnDoubleClick(float color[3], const Color& defaultColor) {
 }
 
 void DrawIconGlyph(ImDrawList* drawList, const ImRect& rect, const IconGlyph glyph, const ImU32 color) {
+    const ImRect shiftedRect(
+        ImVec2(rect.Min.x, rect.Min.y + 1.0f),
+        ImVec2(rect.Max.x, rect.Max.y + 1.0f));
     const float width = rect.GetWidth();
     const float height = rect.GetHeight();
-    const float left = rect.Min.x;
-    const float top = rect.Min.y;
-    const float right = rect.Max.x;
+    const float left = shiftedRect.Min.x;
+    const float top = shiftedRect.Min.y;
+    const float right = shiftedRect.Max.x;
     const float stroke = std::max(1.45f, width * 0.078f);
     const auto point = [&](const float x, const float y) {
         return ImVec2(left + width * x, top + height * y);

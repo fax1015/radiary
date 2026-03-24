@@ -2,7 +2,7 @@
   "version": 4,
   "name": "Whirpool",
   "mode": "flame",
-  "previewIterations": 50000000,
+  "previewIterations": 99919240,
   "animatePath": false,
   "backgroundColor": {"r": 10, "g": 10, "b": 13, "a": 255},
   "timelineFrame": 0,
@@ -23,13 +23,30 @@
     "rotationXDegrees": 78.5826,
     "rotationYDegrees": -40.1915,
     "rotationZDegrees": 55.9167,
-    "depthAmount": 0.653301
+    "depthAmount": 0.653301,
+    "curveExposure": 0.39,
+    "curveContrast": 1,
+    "curveHighlights": 2,
+    "curveGamma": 0.75
   },
   "depthOfField": {
     "enabled": false,
     "focusDepth": 0.45,
     "focusRange": 0.1,
     "blurStrength": 0.45
+  },
+  "postProcess": {
+    "enabled": false,
+    "bloomIntensity": 0.35,
+    "bloomRadius": 0.8,
+    "bloomThreshold": 0.6,
+    "chromaticAberration": 0,
+    "vignetteIntensity": 0,
+    "vignetteRoundness": 0.5,
+    "acesToneMap": false,
+    "filmGrain": 0,
+    "colorTemperature": 6500,
+    "saturationBoost": 0
   },
   "gradient": [
     {"position": 0, "r": 103, "g": 165, "b": 115, "a": 255},
@@ -344,7 +361,17 @@
         "pdj": 0,
         "fan2": 0,
         "rings2": 0,
-        "twintrian": 0.294003
+        "twintrian": 0.294003,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -410,7 +437,17 @@
         "pdj": 0,
         "fan2": 0,
         "rings2": 0.2741,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -476,7 +513,17 @@
         "pdj": 0,
         "fan2": 0,
         "rings2": 0,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -542,7 +589,17 @@
         "pdj": 0.386188,
         "fan2": 0,
         "rings2": 0,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -608,7 +665,17 @@
         "pdj": 0.108915,
         "fan2": 0,
         "rings2": 0,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -674,7 +741,17 @@
         "pdj": 0,
         "fan2": 0,
         "rings2": 0,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -740,7 +817,17 @@
         "pdj": 0,
         "fan2": 0,
         "rings2": 0,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -806,7 +893,17 @@
         "pdj": 0,
         "fan2": 0.383611,
         "rings2": 0,
-        "twintrian": 0.0384705
+        "twintrian": 0.0384705,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -872,7 +969,17 @@
         "pdj": 0,
         "fan2": 0,
         "rings2": 0,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -938,7 +1045,17 @@
         "pdj": 0,
         "fan2": 0,
         "rings2": 0.321403,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -1004,7 +1121,17 @@
         "pdj": 0,
         "fan2": 0,
         "rings2": 0,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     },
     {
@@ -1070,7 +1197,17 @@
         "pdj": 0,
         "fan2": 0.416107,
         "rings2": 0,
-        "twintrian": 0
+        "twintrian": 0,
+        "mobius": 0,
+        "supershape": 0,
+        "conic": 0,
+        "astroid": 0,
+        "lissajous": 0,
+        "vortex": 0,
+        "kaleidoscope": 0,
+        "droste": 0,
+        "golden_spiral": 0,
+        "interference": 0
       }
     }
   ],

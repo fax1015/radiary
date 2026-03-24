@@ -648,6 +648,10 @@ void AppWindow::SetupImGui() {
         exeDir / "assets" / "fonts" / "Rubik-Regular.ttf",
         exeDir.parent_path() / "assets" / "fonts" / "Rubik-Regular.ttf",
         exeDir.parent_path().parent_path() / "assets" / "fonts" / "Rubik-Regular.ttf",
+        std::filesystem::current_path() / "assets" / "fonts" / "Rubik-Medium.ttf",
+        exeDir / "assets" / "fonts" / "Rubik-Medium.ttf",
+        exeDir.parent_path() / "assets" / "fonts" / "Rubik-Medium.ttf",
+        exeDir.parent_path().parent_path() / "assets" / "fonts" / "Rubik-Medium.ttf",
         std::filesystem::current_path() / "third_party" / "imgui" / "misc" / "fonts" / "Karla-Regular.ttf"
     };
     const std::vector<std::filesystem::path> brandFontCandidates = {
@@ -666,6 +670,16 @@ void AppWindow::SetupImGui() {
         exeDir.parent_path() / "assets" / "fonts" / "MaterialSymbolsRounded.ttf",
         exeDir.parent_path().parent_path() / "assets" / "fonts" / "MaterialSymbolsRounded.ttf"
     };
+    const std::vector<std::filesystem::path> monospaceFontCandidates = {
+        std::filesystem::current_path() / "assets" / "fonts" / "JetBrainsMono-Regular.ttf",
+        exeDir / "assets" / "fonts" / "JetBrainsMono-Regular.ttf",
+        exeDir.parent_path() / "assets" / "fonts" / "JetBrainsMono-Regular.ttf",
+        exeDir.parent_path().parent_path() / "assets" / "fonts" / "JetBrainsMono-Regular.ttf",
+        std::filesystem::current_path() / "assets" / "fonts" / "JetBrainsMono-Medium.ttf",
+        exeDir / "assets" / "fonts" / "JetBrainsMono-Medium.ttf",
+        exeDir.parent_path() / "assets" / "fonts" / "JetBrainsMono-Medium.ttf",
+        exeDir.parent_path().parent_path() / "assets" / "fonts" / "JetBrainsMono-Medium.ttf"
+    };
     auto loadFont = [&](const std::vector<std::filesystem::path>& candidates, const float size, const ImFontConfig* config, const ImWchar* ranges = nullptr) -> ImFont* {
         for (const auto& candidate : candidates) {
             if (!std::filesystem::exists(candidate)) {
@@ -678,7 +692,9 @@ void AppWindow::SetupImGui() {
         return nullptr;
     };
 
-    uiFont_ = loadFont(fontCandidates, 16.0f, nullptr);
+    ImFontConfig uiConfig {};
+    uiConfig.GlyphOffset.y = 0.3f;
+    uiFont_ = loadFont(fontCandidates, 16.0f, &uiConfig);
     if (uiFont_ != nullptr) {
         io.FontDefault = uiFont_;
     }
@@ -689,6 +705,17 @@ void AppWindow::SetupImGui() {
     if (brandFont_ == nullptr) {
         brandFont_ = uiFont_;
     }
+    ImFontConfig monospaceConfig {};
+    monospaceConfig.GlyphExtraAdvanceX = -1.0f;
+    monospaceConfig.GlyphOffset.y = -0.4f;
+    ImFont* monospaceFont = loadFont(monospaceFontCandidates, 17.0f, &monospaceConfig);
+    if (uiFont_ != nullptr && io.FontDefault == nullptr) {
+        io.FontDefault = uiFont_;
+    }
+    if (io.FontDefault == nullptr) {
+        io.FontDefault = io.Fonts->AddFontDefault();
+    }
+    SetMonospaceFont(monospaceFont != nullptr ? monospaceFont : io.FontDefault);
 
     static const ImWchar iconRanges[] = {
         0xE034, 0xE045,
@@ -715,6 +742,7 @@ void AppWindow::SetupImGui() {
 
 void AppWindow::ShutdownImGui() {
     SetActionIconFont(nullptr);
+    SetMonospaceFont(nullptr);
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
