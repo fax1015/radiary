@@ -222,14 +222,18 @@ private:
     InspectorTarget inspectorTarget_ = InspectorTarget::FlameLayer;
     std::wstring statusText_ = L"Ready";
     std::wstring renderAdapterName_ = L"Unknown adapter";
+    std::chrono::steady_clock::time_point lastAutoSave_ {};
     Scene pendingUndoScene_ = scene_;
     bool hasPendingUndoScene_ = false;
+    bool sceneDirty_ = false;
+    bool sceneModifiedSinceAutoSave_ = false;
     bool viewportInteractionCaptured_ = false;
     bool layersPanelOpen_ = true;
     bool keyframeListPanelOpen_ = true;
     bool inspectorPanelOpen_ = true;
     bool playbackPanelOpen_ = true;
     bool previewPanelOpen_ = true;
+    bool effectsPanelOpen_ = true;
     bool cameraPanelOpen_ = true;
     bool viewportPanelOpen_ = true;
     bool settingsPanelOpen_ = false;
@@ -289,6 +293,11 @@ private:
     bool keyframeListPanelActive_ = false;
     bool inspectorPanelActive_ = false;
     bool playbackPanelActive_ = false;
+    bool cameraAspectLocked_ = false;
+    double cameraAspectLockedRatio_ = 16.0 / 9.0;
+    bool autoSaveEnabled_ = true;
+    int autoSaveIntervalSeconds_ = 60;
+    int undoHistoryLimit_ = 50;
     bool startupWindowPlacementLoaded_ = false;
     bool startupWindowMaximized_ = false;
     bool bootstrapUiFramePending_ = true;
@@ -334,6 +343,10 @@ private:
     double timelineViewCenterFrame_ = 0.0;
     double newSceneFrameRateDefault_ = 24.0;
     int newSceneEndFrameDefault_ = 120;
+    static constexpr int kMinAutoSaveIntervalSeconds = 15;
+    static constexpr int kMaxAutoSaveIntervalSeconds = 600;
+    static constexpr int kMinUndoHistoryLimit = 10;
+    static constexpr int kMaxUndoHistoryLimit = 200;
 
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
@@ -356,6 +369,7 @@ private:
     void LoadUserSettings();
     void SaveUserSettings() const;
     static std::filesystem::path UserLayoutPath();
+    static std::filesystem::path AutoSavePath();
     void ApplyUserSceneDefaults(Scene& scene) const;
     bool EnsureAppLogoLoaded();
     bool EnsureStartupLogoSvgLoaded();
@@ -378,6 +392,7 @@ private:
     void DrawInspectorPanel();
     void DrawTimelinePanel();
     void DrawPreviewPanel();
+    void DrawEffectsPanel();
     void DrawCameraPanel();
     void DrawViewportPanel();
     void OpenAllDockPanels();
@@ -390,6 +405,7 @@ private:
 
     void EnsureSelectionIsValid();
     void ResetScene(Scene scene);
+    void UpdateWindowTitle();
     void LoadPreset(std::size_t index);
     void MarkViewportDirty(PreviewResetReason reason = PreviewResetReason::SceneChanged);
     static PreviewResetReason DeterminePreviewResetReason(const Scene& before, const Scene& after);
@@ -603,6 +619,7 @@ private:
     void Undo();
     void Redo();
     void ClearPendingUndoCapture();
+    void EnforceUndoStackLimits();
     void CopySelectedLayer();
     void PasteCopiedLayer();
     void DuplicateSelectedLayer();

@@ -1548,6 +1548,13 @@ constexpr std::pair<KeyframeEasing, const char*> kKeyframeEasingNames[] = {
     {KeyframeEasing::Custom, "custom"}
 };
 
+constexpr std::pair<SymmetryMode, const char*> kSymmetryModeNames[] = {
+    {SymmetryMode::None, "none"},
+    {SymmetryMode::Bilateral, "bilateral"},
+    {SymmetryMode::Rotational, "rotational"},
+    {SymmetryMode::BilateralRotational, "bilateral_rotational"}
+};
+
 constexpr std::pair<VariationType, const char*> kVariationTypeNames[] = {
     {VariationType::Linear, "linear"},
     {VariationType::Sinusoidal, "sinusoidal"},
@@ -1656,6 +1663,9 @@ MaterialType MaterialTypeFromString(const std::string& value) { return EnumFromS
 
 std::string ToString(const KeyframeEasing easing) { return EnumToString(easing, kKeyframeEasingNames, "linear"); }
 KeyframeEasing KeyframeEasingFromString(const std::string& value) { return EnumFromString(value, kKeyframeEasingNames, KeyframeEasing::Linear); }
+
+std::string ToString(const SymmetryMode mode) { return EnumToString(mode, kSymmetryModeNames, "none"); }
+SymmetryMode SymmetryModeFromString(const std::string& value) { return EnumFromString(value, kSymmetryModeNames, SymmetryMode::None); }
 
 std::string ToString(const VariationType variation) { return EnumToString(variation, kVariationTypeNames, "linear"); }
 VariationType VariationTypeFromString(const std::string& value) { return EnumFromString(value, kVariationTypeNames, VariationType::Linear); }

@@ -1123,11 +1123,14 @@ bool AppWindow::RenderCpuViewportPreview(const ViewportRenderRequest& request) {
 }
 
 void AppWindow::RecordPreviewUpdate() {
+    constexpr double kMinPreviewFrameIntervalSeconds = 1.0 / 240.0;
+    constexpr double kMaxPreviewFps = 240.0;
     const auto now = std::chrono::steady_clock::now();
     if (lastPreviewUpdate_ != std::chrono::steady_clock::time_point {}) {
         const double deltaSeconds = std::chrono::duration<double>(now - lastPreviewUpdate_).count();
-        if (deltaSeconds > 0.0) {
-            previewFpsSmoothed_ = previewFpsSmoothed_ * 0.92 + (1.0 / deltaSeconds) * 0.08;
+        if (deltaSeconds >= kMinPreviewFrameIntervalSeconds) {
+            const double instantaneousFps = std::min(1.0 / deltaSeconds, kMaxPreviewFps);
+            previewFpsSmoothed_ = previewFpsSmoothed_ * 0.92 + instantaneousFps * 0.08;
         }
     }
     lastPreviewUpdate_ = now;

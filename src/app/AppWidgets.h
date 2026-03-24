@@ -68,6 +68,9 @@ enum class IconGlyph {
     NextKeyframe,
     Add,
     Remove,
+    Lock,
+    LockOpen,
+    SwapHoriz,
     ResetCamera,
     VisibilityOn,
     VisibilityOff

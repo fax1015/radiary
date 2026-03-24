@@ -10,8 +10,6 @@ using namespace radiary;
 
 namespace {
 
-constexpr std::size_t kHistoryLimit = 50;
-
 }  // namespace
 
 namespace radiary {
@@ -52,7 +50,11 @@ void AppWindow::ResetScene(Scene scene) {
     layerRenameBuffer_.clear();
     EnsureSelectionIsValid();
     ClearPendingUndoCapture();
+    sceneDirty_ = false;
+    sceneModifiedSinceAutoSave_ = false;
+    lastAutoSave_ = std::chrono::steady_clock::now();
     MarkViewportDirty(PreviewResetReason::SceneChanged);
+    UpdateWindowTitle();
 }
 
 void AppWindow::HandleShortcuts() {
@@ -142,10 +144,11 @@ void AppWindow::CaptureWidgetUndo(const Scene& beforeChange, const bool changed)
 
 void AppWindow::PushUndoState(const Scene& snapshot) {
     undoStack_.push_back(snapshot);
-    if (undoStack_.size() > kHistoryLimit) {
-        undoStack_.erase(undoStack_.begin());
-    }
+    EnforceUndoStackLimits();
     redoStack_.clear();
+    sceneDirty_ = true;
+    sceneModifiedSinceAutoSave_ = true;
+    UpdateWindowTitle();
 }
 
 bool AppWindow::CanUndo() const {
@@ -172,7 +175,10 @@ void AppWindow::Undo() {
     renamingLayerIndex_ = -1;
     focusLayerRename_ = false;
     layerRenameBuffer_.clear();
+    sceneDirty_ = true;
+    sceneModifiedSinceAutoSave_ = true;
     MarkViewportDirty(PreviewResetReason::SceneChanged);
+    UpdateWindowTitle();
     statusText_ = L"Undo";
 }
 
@@ -182,9 +188,7 @@ void AppWindow::Redo() {
     }
 
     undoStack_.push_back(scene_);
-    if (undoStack_.size() > kHistoryLimit) {
-        undoStack_.erase(undoStack_.begin());
-    }
+    EnforceUndoStackLimits();
     scene_ = redoStack_.back();
     redoStack_.pop_back();
     selectedTransformLayers_.clear();
@@ -195,13 +199,27 @@ void AppWindow::Redo() {
     renamingLayerIndex_ = -1;
     focusLayerRename_ = false;
     layerRenameBuffer_.clear();
+    sceneDirty_ = true;
+    sceneModifiedSinceAutoSave_ = true;
     MarkViewportDirty(PreviewResetReason::SceneChanged);
+    UpdateWindowTitle();
     statusText_ = L"Redo";
 }
 
 void AppWindow::ClearPendingUndoCapture() {
     hasPendingUndoScene_ = false;
     viewportInteractionCaptured_ = false;
+}
+
+void AppWindow::EnforceUndoStackLimits() {
+    undoHistoryLimit_ = std::clamp(undoHistoryLimit_, kMinUndoHistoryLimit, kMaxUndoHistoryLimit);
+    const std::size_t historyLimit = static_cast<std::size_t>(undoHistoryLimit_);
+    while (undoStack_.size() > historyLimit) {
+        undoStack_.erase(undoStack_.begin());
+    }
+    while (redoStack_.size() > historyLimit) {
+        redoStack_.erase(redoStack_.begin());
+    }
 }
 
 void AppWindow::NormalizeLayerSelections() {
@@ -707,6 +725,7 @@ void AppWindow::FinishLayerRename(const bool commit) {
             } else {
                 scene_.transforms[static_cast<std::size_t>(renamingLayerIndex_)].name = std::move(finalName);
             }
+            UpdateWindowTitle();
         }
     }
 
@@ -784,6 +803,7 @@ void AppWindow::LoadPreset(const std::size_t index) {
     presetIndex_ = index % presetLibrary_.Count();
     ResetScene(presetLibrary_.SceneAt(presetIndex_));
     currentScenePath_.clear();
+    UpdateWindowTitle();
     statusText_ = L"Loaded preset " + Utf8ToWide(scene_.name);
 }
 

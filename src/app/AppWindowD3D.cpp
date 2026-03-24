@@ -459,16 +459,22 @@ void AppWindow::LoadUserSettings() {
     TryParseBoolValue(values, "export_transparent_background", exportTransparentBackground_);
     TryParseBoolValue(values, "export_use_gpu", exportUseGpu_);
     TryParseBoolValue(values, "export_stable_flame_sampling", exportStableFlameSampling_);
+    TryParseBoolValue(values, "autosave_enabled", autoSaveEnabled_);
     TryParseBoolValue(values, "grid_visible", scene_.gridVisible);
 
     TryParseUintValue(values, "interactive_preview_iterations", interactivePreviewIterations_);
     TryParseUintValue(values, "scene_preview_iterations", scene_.previewIterations);
+    TryParseIntValue(values, "autosave_interval_seconds", autoSaveIntervalSeconds_);
+    TryParseIntValue(values, "undo_history_limit", undoHistoryLimit_);
     TryParseIntValue(values, "export_width", exportWidth_);
     TryParseIntValue(values, "export_height", exportHeight_);
     TryParseIntValue(values, "export_frame_start", exportFrameStart_);
     TryParseIntValue(values, "export_frame_end", exportFrameEnd_);
     TryParseDoubleValue(values, "new_scene_frame_rate", newSceneFrameRateDefault_);
     TryParseIntValue(values, "new_scene_end_frame", newSceneEndFrameDefault_);
+    autoSaveIntervalSeconds_ = std::clamp(autoSaveIntervalSeconds_, kMinAutoSaveIntervalSeconds, kMaxAutoSaveIntervalSeconds);
+    undoHistoryLimit_ = std::clamp(undoHistoryLimit_, kMinUndoHistoryLimit, kMaxUndoHistoryLimit);
+    EnforceUndoStackLimits();
 
     int exportFormat = static_cast<int>(exportFormat_);
     if (TryParseIntValue(values, "export_format", exportFormat)
@@ -553,6 +559,9 @@ void AppWindow::SaveUserSettings() const {
     stream << "show_status_overlay=" << (showStatusOverlay_ ? 1 : 0) << "\n";
     stream << "gpu_viewport_preview=" << (gpuFlamePreviewEnabled_ ? 1 : 0) << "\n";
     stream << "interactive_preview_iterations=" << interactivePreviewIterations_ << "\n";
+    stream << "autosave_enabled=" << (autoSaveEnabled_ ? 1 : 0) << "\n";
+    stream << "autosave_interval_seconds=" << autoSaveIntervalSeconds_ << "\n";
+    stream << "undo_history_limit=" << undoHistoryLimit_ << "\n";
     stream << "scene_preview_iterations=" << scene_.previewIterations << "\n";
     stream << "scene_mode=" << static_cast<int>(scene_.mode) << "\n";
     stream << "grid_visible=" << (scene_.gridVisible ? 1 : 0) << "\n";
@@ -724,7 +733,9 @@ void AppWindow::SetupImGui() {
         0xE412, 0xE412,
         0xE5C5, 0xE5C7,
         0xE89C, 0xE89C,
+        0xE897, 0xE898,
         0xE8B8, 0xE8B8,
+        0xE8D4, 0xE8D4,
         0xEB60, 0xEB60,
         0xF015, 0xF015,
         0xF09B, 0xF09B,

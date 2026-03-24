@@ -78,6 +78,8 @@ private:
         float flameRotateY = 0.0f;
         float flameRotateZ = 0.0f;
         float flameDepthAmount = 1.0f;
+        std::uint32_t symmetryMode = 0;
+        std::uint32_t symmetryOrder = 2;
         float flameCurveExposure = 1.0f;
         float flameCurveContrast = 1.0f;
         float flameCurveHighlights = 1.0f;
@@ -94,7 +96,7 @@ private:
         std::uint32_t randomSeedOffset = 0;
         std::uint32_t preserveOrbitState = 0;
         float farDepth = 24.0f;
-        float padding[1] {};
+        float padding[3] {};
     };
 
     struct OrbitStateGpu {

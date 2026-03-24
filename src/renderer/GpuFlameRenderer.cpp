@@ -246,6 +246,8 @@ bool GpuFlameRenderer::Render(
     params.flameRotateY = static_cast<float>(DegreesToRadians(scene.flameRender.rotationYDegrees));
     params.flameRotateZ = static_cast<float>(DegreesToRadians(scene.flameRender.rotationZDegrees));
     params.flameDepthAmount = static_cast<float>(scene.flameRender.depthAmount);
+    params.symmetryMode = static_cast<std::uint32_t>(scene.flameRender.symmetry);
+    params.symmetryOrder = static_cast<std::uint32_t>(std::clamp(scene.flameRender.symmetryOrder, 2, 12));
     params.flameCurveExposure = static_cast<float>(scene.flameRender.curveExposure);
     params.flameCurveContrast = static_cast<float>(scene.flameRender.curveContrast);
     params.flameCurveHighlights = static_cast<float>(scene.flameRender.curveHighlights);
@@ -360,6 +362,8 @@ std::uint64_t GpuFlameRenderer::ComputeSceneSignature(const Scene& scene) const 
     signature = mixDouble(signature, scene.flameRender.rotationYDegrees);
     signature = mixDouble(signature, scene.flameRender.rotationZDegrees);
     signature = mixDouble(signature, scene.flameRender.depthAmount);
+    signature = mix(signature, static_cast<std::uint64_t>(scene.flameRender.symmetry));
+    signature = mix(signature, static_cast<std::uint64_t>(scene.flameRender.symmetryOrder));
     signature = mix(signature, scene.backgroundColor.r);
     signature = mix(signature, scene.backgroundColor.g);
     signature = mix(signature, scene.backgroundColor.b);

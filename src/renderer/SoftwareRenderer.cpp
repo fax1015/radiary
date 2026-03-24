@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <random>
+#include <thread>
 #include <vector>
 
 #include "renderer/RenderMath.h"
@@ -19,6 +21,13 @@ struct Triangle2D {
     Color point {};
     double depth = 0.0;
 };
+
+unsigned ParallelWorkerCount(const int itemCount) {
+    if (itemCount <= 1) {
+        return 1u;
+    }
+    return std::max(1u, std::min<unsigned>(std::thread::hardware_concurrency(), static_cast<unsigned>(itemCount)));
+}
 
 double FlameReconstructionKernel(const int dx, const int dy) {
     if (dx == 0 && dy == 0) {
@@ -368,6 +377,18 @@ void BuildFrame(
     axisY = Normalize(Cross(axisZ, axisX));
 }
 
+void FillTriangleRows(
+    std::vector<std::uint32_t>& pixels,
+    const int width,
+    const int height,
+    const SoftwareRenderer::ProjectedPoint& a,
+    const SoftwareRenderer::ProjectedPoint& b,
+    const SoftwareRenderer::ProjectedPoint& c,
+    const Color& color,
+    const double alpha,
+    const int rowStart,
+    const int rowEnd);
+
 void FillTriangle(
     std::vector<std::uint32_t>& pixels,
     const int width,
@@ -377,6 +398,20 @@ void FillTriangle(
     const SoftwareRenderer::ProjectedPoint& c,
     const Color& color,
     const double alpha) {
+    FillTriangleRows(pixels, width, height, a, b, c, color, alpha, 0, height - 1);
+}
+
+void FillTriangleRows(
+    std::vector<std::uint32_t>& pixels,
+    const int width,
+    const int height,
+    const SoftwareRenderer::ProjectedPoint& a,
+    const SoftwareRenderer::ProjectedPoint& b,
+    const SoftwareRenderer::ProjectedPoint& c,
+    const Color& color,
+    const double alpha,
+    const int rowStart,
+    const int rowEnd) {
     const double minX = std::min({a.x, b.x, c.x});
     const double maxX = std::max({a.x, b.x, c.x});
     const double minY = std::min({a.y, b.y, c.y});
@@ -384,8 +419,8 @@ void FillTriangle(
 
     const int x0 = std::max(0, static_cast<int>(std::floor(minX)));
     const int x1 = std::min(width - 1, static_cast<int>(std::ceil(maxX)));
-    const int y0 = std::max(0, static_cast<int>(std::floor(minY)));
-    const int y1 = std::min(height - 1, static_cast<int>(std::ceil(maxY)));
+    const int y0 = std::max(rowStart, std::max(0, static_cast<int>(std::floor(minY))));
+    const int y1 = std::min(rowEnd, std::min(height - 1, static_cast<int>(std::ceil(maxY))));
 
     const double area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
     if (std::abs(area) < 1.0e-6) {
@@ -1448,49 +1483,74 @@ void SoftwareRenderer::ApplyDepthOfField(
         Vec2{-0.707, -0.707}
     };
 
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const std::size_t index = static_cast<std::size_t>(y * width + x);
-            const float depth = depthBuffer[index];
-            const float blurAmount = std::clamp((std::abs(depth - focusDepth) - focusRange) / std::max(0.02f, 1.0f - focusRange), 0.0f, 1.0f) * blurStrength;
-            if (blurAmount <= 0.001f) {
-                continue;
+    const auto processRows = [&](const int rowStart, const int rowEnd) {
+        for (int y = rowStart; y < rowEnd; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const std::size_t index = static_cast<std::size_t>(y * width + x);
+                const float depth = depthBuffer[index];
+                const float blurAmount = std::clamp((std::abs(depth - focusDepth) - focusRange) / std::max(0.02f, 1.0f - focusRange), 0.0f, 1.0f) * blurStrength;
+                if (blurAmount <= 0.001f) {
+                    continue;
+                }
+
+                const float radius = std::max(1.0f, blurAmount * static_cast<float>(maxRadius));
+                float r = 0.0f;
+                float g = 0.0f;
+                float b = 0.0f;
+                float a = 0.0f;
+                float weightSum = 0.0f;
+
+                const auto accumulate = [&](const int sx, const int sy, const float weight) {
+                    const int clampedX = std::clamp(sx, 0, width - 1);
+                    const int clampedY = std::clamp(sy, 0, height - 1);
+                    const Color color = UnpackBgra(source[static_cast<std::size_t>(clampedY * width + clampedX)]);
+                    r += static_cast<float>(color.r) * weight;
+                    g += static_cast<float>(color.g) * weight;
+                    b += static_cast<float>(color.b) * weight;
+                    a += static_cast<float>(color.a) * weight;
+                    weightSum += weight;
+                };
+
+                accumulate(x, y, 2.0f);
+                for (const Vec2& offset : kBlurOffsets) {
+                    accumulate(
+                        static_cast<int>(std::round(static_cast<double>(x) + offset.x * radius)),
+                        static_cast<int>(std::round(static_cast<double>(y) + offset.y * radius)),
+                        1.0f);
+                }
+
+                if (weightSum > 0.0f) {
+                    pixels[index] = ToBgra({
+                        static_cast<std::uint8_t>(std::clamp<int>(static_cast<int>(std::lround(r / weightSum)), 0, 255)),
+                        static_cast<std::uint8_t>(std::clamp<int>(static_cast<int>(std::lround(g / weightSum)), 0, 255)),
+                        static_cast<std::uint8_t>(std::clamp<int>(static_cast<int>(std::lround(b / weightSum)), 0, 255)),
+                        static_cast<std::uint8_t>(std::clamp<int>(static_cast<int>(std::lround(a / weightSum)), 0, 255))
+                    });
+                }
             }
+        }
+    };
 
-            const float radius = std::max(1.0f, blurAmount * static_cast<float>(maxRadius));
-            float r = 0.0f;
-            float g = 0.0f;
-            float b = 0.0f;
-            float a = 0.0f;
-            float weightSum = 0.0f;
+    const unsigned workerCount = ParallelWorkerCount(height);
+    if (workerCount <= 1u) {
+        processRows(0, height);
+        return;
+    }
 
-            const auto accumulate = [&](const int sx, const int sy, const float weight) {
-                const int clampedX = std::clamp(sx, 0, width - 1);
-                const int clampedY = std::clamp(sy, 0, height - 1);
-                const Color color = UnpackBgra(source[static_cast<std::size_t>(clampedY * width + clampedX)]);
-                r += static_cast<float>(color.r) * weight;
-                g += static_cast<float>(color.g) * weight;
-                b += static_cast<float>(color.b) * weight;
-                a += static_cast<float>(color.a) * weight;
-                weightSum += weight;
-            };
-
-            accumulate(x, y, 2.0f);
-            for (const Vec2& offset : kBlurOffsets) {
-                accumulate(
-                    static_cast<int>(std::round(static_cast<double>(x) + offset.x * radius)),
-                    static_cast<int>(std::round(static_cast<double>(y) + offset.y * radius)),
-                    1.0f);
-            }
-
-            if (weightSum > 0.0f) {
-                pixels[index] = ToBgra({
-                    static_cast<std::uint8_t>(std::clamp<int>(static_cast<int>(std::lround(r / weightSum)), 0, 255)),
-                    static_cast<std::uint8_t>(std::clamp<int>(static_cast<int>(std::lround(g / weightSum)), 0, 255)),
-                    static_cast<std::uint8_t>(std::clamp<int>(static_cast<int>(std::lround(b / weightSum)), 0, 255)),
-                    static_cast<std::uint8_t>(std::clamp<int>(static_cast<int>(std::lround(a / weightSum)), 0, 255))
-                });
-            }
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount);
+    const int rowsPerWorker = std::max(1, (height + static_cast<int>(workerCount) - 1) / static_cast<int>(workerCount));
+    for (unsigned workerIndex = 0; workerIndex < workerCount; ++workerIndex) {
+        const int rowStart = static_cast<int>(workerIndex) * rowsPerWorker;
+        const int rowEnd = std::min(height, rowStart + rowsPerWorker);
+        if (rowStart >= rowEnd) {
+            break;
+        }
+        workers.emplace_back(processRows, rowStart, rowEnd);
+    }
+    for (std::thread& worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
         }
     }
 }
@@ -1546,152 +1606,176 @@ void SoftwareRenderer::ApplyDenoising(
         // Ping-pong buffers
         const std::vector<std::uint32_t>& readBuffer = pass % 2 == 0 ? source : temp;
         std::vector<std::uint32_t>& writeBuffer = pass % 2 == 0 ? temp : source;
+        std::atomic<bool> abortRequested = false;
+        const auto processRows = [&](const int rowStart, const int rowEnd, const bool monitorAbort) {
+            for (int y = rowStart; y < rowEnd; ++y) {
+                if (abortRequested.load(std::memory_order_relaxed)) {
+                    return;
+                }
+                if (monitorAbort && shouldAbort && (y % 8) == 0 && shouldAbort()) {
+                    abortRequested.store(true, std::memory_order_relaxed);
+                    return;
+                }
+                for (int x = 0; x < width; ++x) {
+                    const std::size_t centerIndex = static_cast<std::size_t>(y * width + x);
+                    const Color centerColorRaw = UnpackBgra(readBuffer[centerIndex]);
+                    const float centerDepth = depthBuffer[centerIndex];
 
-        #pragma omp parallel for schedule(dynamic)
-        for (int y = 0; y < height; ++y) {
-            if (shouldAbort && shouldAbort()) {
-                continue;
-            }
-            for (int x = 0; x < width; ++x) {
-                const std::size_t centerIndex = static_cast<std::size_t>(y * width + x);
-                const Color centerColorRaw = UnpackBgra(readBuffer[centerIndex]);
-                const float centerDepth = depthBuffer[centerIndex];
-                
-                const double cr = centerColorRaw.r / 255.0;
-                const double cg = centerColorRaw.g / 255.0;
-                const double cb = centerColorRaw.b / 255.0;
-                const double ca = centerColorRaw.a / 255.0;
+                    const double cr = centerColorRaw.r / 255.0;
+                    const double cg = centerColorRaw.g / 255.0;
+                    const double cb = centerColorRaw.b / 255.0;
+                    const double ca = centerColorRaw.a / 255.0;
 
-                // Pass 1: Local Mean and Variance
-                double sumR = 0.0, sumG = 0.0, sumB = 0.0, sumA = 0.0;
-                double sumSqR = 0.0, sumSqG = 0.0, sumSqB = 0.0, sumSqA = 0.0;
-                double weightSum = 0.0;
+                    double sumR = 0.0, sumG = 0.0, sumB = 0.0, sumA = 0.0;
+                    double sumSqR = 0.0, sumSqG = 0.0, sumSqB = 0.0, sumSqA = 0.0;
+                    double weightSum = 0.0;
 
-                const int minY = std::max(0, y - radius);
-                const int maxY = std::min(height - 1, y + radius);
-                const int minX = std::max(0, x - radius);
-                const int maxX = std::min(width - 1, x + radius);
+                    const int minY = std::max(0, y - radius);
+                    const int maxY = std::min(height - 1, y + radius);
+                    const int minX = std::max(0, x - radius);
+                    const int maxX = std::min(width - 1, x + radius);
 
-                for (int sy = minY; sy <= maxY; ++sy) {
-                    for (int sx = minX; sx <= maxX; ++sx) {
-                        const std::size_t sampleIndex = static_cast<std::size_t>(sy * width + sx);
-                        const Color sampleColor = UnpackBgra(readBuffer[sampleIndex]);
+                    for (int sy = minY; sy <= maxY; ++sy) {
+                        for (int sx = minX; sx <= maxX; ++sx) {
+                            const std::size_t sampleIndex = static_cast<std::size_t>(sy * width + sx);
+                            const Color sampleColor = UnpackBgra(readBuffer[sampleIndex]);
 
-                        const double sr = sampleColor.r / 255.0;
-                        const double sg = sampleColor.g / 255.0;
-                        const double sb = sampleColor.b / 255.0;
-                        const double sa = sampleColor.a / 255.0;
+                            const double sr = sampleColor.r / 255.0;
+                            const double sg = sampleColor.g / 255.0;
+                            const double sb = sampleColor.b / 255.0;
+                            const double sa = sampleColor.a / 255.0;
 
-                        const double spatialWeight = spatialWeightsLarge[static_cast<std::size_t>((sy - y + radius) * (radius * 2 + 1) + (sx - x + radius))];
-                        
-                        // Only include actual flame pixels in the statistics to avoid biasing the mean towards the void
-                        const double weight = spatialWeight * (sa > 0.01 ? 1.0 : 0.001);
+                            const double spatialWeight = spatialWeightsLarge[static_cast<std::size_t>((sy - y + radius) * (radius * 2 + 1) + (sx - x + radius))];
+                            const double weight = spatialWeight * (sa > 0.01 ? 1.0 : 0.001);
 
-                        sumR += sr * weight;
-                        sumG += sg * weight;
-                        sumB += sb * weight;
-                        sumA += sa * weight;
-                        
-                        sumSqR += sr * sr * weight;
-                        sumSqG += sg * sg * weight;
-                        sumSqB += sb * sb * weight;
-                        sumSqA += sa * sa * weight;
+                            sumR += sr * weight;
+                            sumG += sg * weight;
+                            sumB += sb * weight;
+                            sumA += sa * weight;
 
-                        weightSum += weight;
+                            sumSqR += sr * sr * weight;
+                            sumSqG += sg * sg * weight;
+                            sumSqB += sb * sb * weight;
+                            sumSqA += sa * sa * weight;
+
+                            weightSum += weight;
+                        }
+                    }
+
+                    const double meanR = sumR / weightSum;
+                    const double meanG = sumG / weightSum;
+                    const double meanB = sumB / weightSum;
+                    const double meanA = sumA / weightSum;
+
+                    const double varR = std::max(0.0, (sumSqR / weightSum) - (meanR * meanR));
+                    const double varG = std::max(0.0, (sumSqG / weightSum) - (meanG * meanG));
+                    const double varB = std::max(0.0, (sumSqB / weightSum) - (meanB * meanB));
+                    const double varA = std::max(0.0, (sumSqA / weightSum) - (meanA * meanA));
+
+                    const double devR = std::sqrt(varR);
+                    const double devG = std::sqrt(varG);
+                    const double devB = std::sqrt(varB);
+                    const double devA = std::sqrt(varA);
+
+                    const double minR = meanR - devR * thresholdMult;
+                    const double minG = meanG - devG * thresholdMult;
+                    const double minB = meanB - devB * thresholdMult;
+                    const double minA = meanA - devA * thresholdMult;
+
+                    const double maxR = meanR + devR * thresholdMult;
+                    const double maxG = meanG + devG * thresholdMult;
+                    const double maxB = meanB + devB * thresholdMult;
+                    const double maxA = meanA + devA * thresholdMult;
+
+                    const double clampedCr = Clamp(cr, minR, maxR);
+                    const double clampedCg = Clamp(cg, minG, maxG);
+                    const double clampedCb = Clamp(cb, minB, maxB);
+                    const double clampedCa = Clamp(ca, minA, maxA);
+
+                    double blurSumR = 0.0, blurSumG = 0.0, blurSumB = 0.0, blurSumA = 0.0;
+                    double blurWeightSum = 0.0;
+
+                    const int bMinY = std::max(0, y - blurRadius);
+                    const int bMaxY = std::min(height - 1, y + blurRadius);
+                    const int bMinX = std::max(0, x - blurRadius);
+                    const int bMaxX = std::min(width - 1, x + blurRadius);
+
+                    for (int sy = bMinY; sy <= bMaxY; ++sy) {
+                        for (int sx = bMinX; sx <= bMaxX; ++sx) {
+                            const std::size_t sampleIndex = static_cast<std::size_t>(sy * width + sx);
+                            const Color sampleColorRaw = UnpackBgra(readBuffer[sampleIndex]);
+                            const float sampleDepth = depthBuffer[sampleIndex];
+
+                            const double sr = Clamp(sampleColorRaw.r / 255.0, minR, maxR);
+                            const double sg = Clamp(sampleColorRaw.g / 255.0, minG, maxG);
+                            const double sb = Clamp(sampleColorRaw.b / 255.0, minB, maxB);
+                            const double sa = Clamp(sampleColorRaw.a / 255.0, minA, maxA);
+
+                            const double spatialWeight = spatialWeightsSmall[static_cast<std::size_t>((sy - y + blurRadius) * (blurRadius * 2 + 1) + (sx - x + blurRadius))];
+
+                            const double depthDist = static_cast<double>(sampleDepth - centerDepth);
+                            const double depthWeight = std::exp(-(depthDist * depthDist) * invDepthVar);
+
+                            const double colorDistSq = (sr - clampedCr) * (sr - clampedCr) + (sg - clampedCg) * (sg - clampedCg) + (sb - clampedCb) * (sb - clampedCb);
+                            const double colorWeight = std::exp(-colorDistSq * invColorVar);
+
+                            const double weight = spatialWeight * depthWeight * colorWeight;
+                            blurSumR += sr * weight;
+                            blurSumG += sg * weight;
+                            blurSumB += sb * weight;
+                            blurSumA += sa * weight;
+                            blurWeightSum += weight;
+                        }
+                    }
+
+                    if (blurWeightSum > 1.0e-6) {
+                        const double finalR = Lerp(clampedCr, blurSumR / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
+                        const double finalG = Lerp(clampedCg, blurSumG / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
+                        const double finalB = Lerp(clampedCb, blurSumB / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
+                        const double finalA = Lerp(clampedCa, blurSumA / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
+
+                        writeBuffer[centerIndex] = ToBgra({
+                            static_cast<std::uint8_t>(std::clamp(std::round(finalR * 255.0), 0.0, 255.0)),
+                            static_cast<std::uint8_t>(std::clamp(std::round(finalG * 255.0), 0.0, 255.0)),
+                            static_cast<std::uint8_t>(std::clamp(std::round(finalB * 255.0), 0.0, 255.0)),
+                            static_cast<std::uint8_t>(std::clamp(std::round(finalA * 255.0), 0.0, 255.0))
+                        });
+                    } else {
+                        writeBuffer[centerIndex] = ToBgra({
+                            static_cast<std::uint8_t>(std::clamp(std::round(clampedCr * 255.0), 0.0, 255.0)),
+                            static_cast<std::uint8_t>(std::clamp(std::round(clampedCg * 255.0), 0.0, 255.0)),
+                            static_cast<std::uint8_t>(std::clamp(std::round(clampedCb * 255.0), 0.0, 255.0)),
+                            static_cast<std::uint8_t>(std::clamp(std::round(clampedCa * 255.0), 0.0, 255.0))
+                        });
                     }
                 }
+            }
+        };
 
-                const double meanR = sumR / weightSum;
-                const double meanG = sumG / weightSum;
-                const double meanB = sumB / weightSum;
-                const double meanA = sumA / weightSum;
-
-                const double varR = std::max(0.0, (sumSqR / weightSum) - (meanR * meanR));
-                const double varG = std::max(0.0, (sumSqG / weightSum) - (meanG * meanG));
-                const double varB = std::max(0.0, (sumSqB / weightSum) - (meanB * meanB));
-                const double varA = std::max(0.0, (sumSqA / weightSum) - (meanA * meanA));
-
-                const double devR = std::sqrt(varR);
-                const double devG = std::sqrt(varG);
-                const double devB = std::sqrt(varB);
-                const double devA = std::sqrt(varA);
-
-                const double minR = meanR - devR * thresholdMult;
-                const double minG = meanG - devG * thresholdMult;
-                const double minB = meanB - devB * thresholdMult;
-                const double minA = meanA - devA * thresholdMult;
-
-                const double maxR = meanR + devR * thresholdMult;
-                const double maxG = meanG + devG * thresholdMult;
-                const double maxB = meanB + devB * thresholdMult;
-                const double maxA = meanA + devA * thresholdMult;
-
-                const double clampedCr = Clamp(cr, minR, maxR);
-                const double clampedCg = Clamp(cg, minG, maxG);
-                const double clampedCb = Clamp(cb, minB, maxB);
-                const double clampedCa = Clamp(ca, minA, maxA);
-
-                // Pass 2: Blur with pre-clamped neighbors and depth edge-stopping
-                double blurSumR = 0.0, blurSumG = 0.0, blurSumB = 0.0, blurSumA = 0.0;
-                double blurWeightSum = 0.0;
-
-                const int bMinY = std::max(0, y - blurRadius);
-                const int bMaxY = std::min(height - 1, y + blurRadius);
-                const int bMinX = std::max(0, x - blurRadius);
-                const int bMaxX = std::min(width - 1, x + blurRadius);
-
-                for (int sy = bMinY; sy <= bMaxY; ++sy) {
-                    for (int sx = bMinX; sx <= bMaxX; ++sx) {
-                        const std::size_t sampleIndex = static_cast<std::size_t>(sy * width + sx);
-                        const Color sampleColorRaw = UnpackBgra(readBuffer[sampleIndex]);
-                        const float sampleDepth = depthBuffer[sampleIndex];
-
-                        // Clamp neighbor using the same local bounds to ignore its firefly status
-                        const double sr = Clamp(sampleColorRaw.r / 255.0, minR, maxR);
-                        const double sg = Clamp(sampleColorRaw.g / 255.0, minG, maxG);
-                        const double sb = Clamp(sampleColorRaw.b / 255.0, minB, maxB);
-                        const double sa = Clamp(sampleColorRaw.a / 255.0, minA, maxA);
-
-                        const double spatialWeight = spatialWeightsSmall[static_cast<std::size_t>((sy - y + blurRadius) * (blurRadius * 2 + 1) + (sx - x + blurRadius))];
-                        
-                        const double depthDist = static_cast<double>(sampleDepth - centerDepth);
-                        const double depthDistSq = depthDist * depthDist;
-                        const double depthWeight = std::exp(-depthDistSq * invDepthVar);
-                        
-                        const double colorDistSq = (sr - clampedCr) * (sr - clampedCr) + (sg - clampedCg) * (sg - clampedCg) + (sb - clampedCb) * (sb - clampedCb);
-                        const double colorWeight = std::exp(-colorDistSq * invColorVar);
-
-                        const double weight = spatialWeight * depthWeight * colorWeight;
-
-                        blurSumR += sr * weight;
-                        blurSumG += sg * weight;
-                        blurSumB += sb * weight;
-                        blurSumA += sa * weight;
-                        blurWeightSum += weight;
-                    }
+        const unsigned workerCount = ParallelWorkerCount(height);
+        if (workerCount <= 1u) {
+            processRows(0, height, true);
+        } else {
+            std::vector<std::thread> workers;
+            workers.reserve(workerCount);
+            const int rowsPerWorker = std::max(1, (height + static_cast<int>(workerCount) - 1) / static_cast<int>(workerCount));
+            for (unsigned workerIndex = 0; workerIndex < workerCount; ++workerIndex) {
+                const int rowStart = static_cast<int>(workerIndex) * rowsPerWorker;
+                const int rowEnd = std::min(height, rowStart + rowsPerWorker);
+                if (rowStart >= rowEnd) {
+                    break;
                 }
-
-                if (blurWeightSum > 1.0e-6) {
-                    const double finalR = Lerp(clampedCr, blurSumR / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
-                    const double finalG = Lerp(clampedCg, blurSumG / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
-                    const double finalB = Lerp(clampedCb, blurSumB / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
-                    const double finalA = Lerp(clampedCa, blurSumA / blurWeightSum, Clamp(scene.denoiser.strength * 1.5, 0.0, 1.0));
-
-                    writeBuffer[centerIndex] = ToBgra({
-                        static_cast<std::uint8_t>(std::clamp(std::round(finalR * 255.0), 0.0, 255.0)),
-                        static_cast<std::uint8_t>(std::clamp(std::round(finalG * 255.0), 0.0, 255.0)),
-                        static_cast<std::uint8_t>(std::clamp(std::round(finalB * 255.0), 0.0, 255.0)),
-                        static_cast<std::uint8_t>(std::clamp(std::round(finalA * 255.0), 0.0, 255.0))
-                    });
-                } else {
-                    writeBuffer[centerIndex] = ToBgra({
-                        static_cast<std::uint8_t>(std::clamp(std::round(clampedCr * 255.0), 0.0, 255.0)),
-                        static_cast<std::uint8_t>(std::clamp(std::round(clampedCg * 255.0), 0.0, 255.0)),
-                        static_cast<std::uint8_t>(std::clamp(std::round(clampedCb * 255.0), 0.0, 255.0)),
-                        static_cast<std::uint8_t>(std::clamp(std::round(clampedCa * 255.0), 0.0, 255.0))
-                    });
+                workers.emplace_back(processRows, rowStart, rowEnd, workerIndex == 0u);
+            }
+            for (std::thread& worker : workers) {
+                if (worker.joinable()) {
+                    worker.join();
                 }
             }
+        }
+
+        if (abortRequested.load(std::memory_order_relaxed)) {
+            return;
         }
     }
 
@@ -1832,9 +1916,58 @@ bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
     std::vector<PathPointSprite> points;
     BuildPathPrimitives(scene, width, height, fillTriangles, lines, points);
 
-    for (const PathTriangle& triangle : fillTriangles) {
-        FillTriangle(pixels, width, height, triangle.points[0], triangle.points[1], triangle.points[2], triangle.color, triangle.alpha);
+    std::atomic<bool> abortRequested = false;
+    const unsigned triangleWorkerCount = (fillTriangles.size() >= 32 && height >= 64) ? ParallelWorkerCount(height) : 1u;
+    const auto rasterizeTriangleRows = [&](const int rowStart, const int rowEnd, const bool monitorAbort) {
+        for (std::size_t triangleIndex = 0; triangleIndex < fillTriangles.size(); ++triangleIndex) {
+            if (abortRequested.load(std::memory_order_relaxed)) {
+                return;
+            }
+            if (monitorAbort && options.shouldAbort && (triangleIndex % 64u) == 0u && options.shouldAbort()) {
+                abortRequested.store(true, std::memory_order_relaxed);
+                return;
+            }
+
+            const PathTriangle& triangle = fillTriangles[triangleIndex];
+            FillTriangleRows(
+                pixels,
+                width,
+                height,
+                triangle.points[0],
+                triangle.points[1],
+                triangle.points[2],
+                triangle.color,
+                triangle.alpha,
+                rowStart,
+                rowEnd);
+        }
+    };
+
+    if (triangleWorkerCount <= 1u) {
+        rasterizeTriangleRows(0, height - 1, true);
+    } else {
+        std::vector<std::thread> workers;
+        workers.reserve(triangleWorkerCount);
+        const int rowsPerWorker = std::max(1, (height + static_cast<int>(triangleWorkerCount) - 1) / static_cast<int>(triangleWorkerCount));
+        for (unsigned workerIndex = 0; workerIndex < triangleWorkerCount; ++workerIndex) {
+            const int rowStart = static_cast<int>(workerIndex) * rowsPerWorker;
+            const int rowEnd = std::min(height, rowStart + rowsPerWorker) - 1;
+            if (rowStart > rowEnd) {
+                break;
+            }
+            workers.emplace_back(rasterizeTriangleRows, rowStart, rowEnd, workerIndex == 0u);
+        }
+        for (std::thread& worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
     }
+
+    if (abortRequested.load(std::memory_order_relaxed)) {
+        return false;
+    }
+
     for (const PathLine& line : lines) {
         DrawLineAA(pixels, width, height, line.start.x, line.start.y, line.end.x, line.end.y, line.color, line.alpha, line.thickness);
     }

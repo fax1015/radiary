@@ -168,6 +168,12 @@ bool AppWindow::SaveSceneToDialog(const bool saveAs) {
     }
 
     currentScenePath_ = path;
+    sceneDirty_ = false;
+    sceneModifiedSinceAutoSave_ = false;
+    lastAutoSave_ = std::chrono::steady_clock::now();
+    std::error_code removeError;
+    std::filesystem::remove(AutoSavePath(), removeError);
+    UpdateWindowTitle();
     statusText_ = L"Saved " + path.filename().wstring();
     return true;
 }
@@ -190,6 +196,10 @@ bool AppWindow::LoadSceneFromDialog() {
     if (auto scene = serializer_.Load(fileBuffer, error)) {
         ResetScene(*scene);
         currentScenePath_ = fileBuffer;
+        sceneDirty_ = false;
+        sceneModifiedSinceAutoSave_ = false;
+        lastAutoSave_ = std::chrono::steady_clock::now();
+        UpdateWindowTitle();
         statusText_ = L"Opened " + currentScenePath_.filename().wstring();
         return true;
     }

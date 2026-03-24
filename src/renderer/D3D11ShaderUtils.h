@@ -10,6 +10,8 @@ namespace radiary {
 UINT GetOptimizedD3D11ShaderCompileFlags(bool enableStrictness = false, bool preferFlowControl = false);
 UINT GetDevelopmentD3D11ShaderCompileFlags(bool enableStrictness = false, bool preferFlowControl = false);
 
+ID3DBlob* LoadPrecompiledShaderBlob(const wchar_t* csoFilename, std::string& error);
+
 ID3DBlob* CompileD3D11ShaderFromFile(
     const wchar_t* shaderFilename,
     const char* entryPoint,

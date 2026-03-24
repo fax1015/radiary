@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.26)
 
-project(Radiary VERSION 1.1.0 LANGUAGES CXX)
+project(Radiary VERSION 1.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,8 +10,17 @@ if (MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-set(RADIARY_FFMPEG_DIR "${CMAKE_SOURCE_DIR}/third_party/ffmpeg" CACHE PATH "Bundled FFmpeg directory")
-set(RADIARY_FFMPEG_EXE "${RADIARY_FFMPEG_DIR}/bin/ffmpeg.exe" CACHE FILEPATH "Bundled FFmpeg executable")
+set(RADIARY_FFMPEG_DEFAULT_DIR "${CMAKE_SOURCE_DIR}/third_party/ffmpeg")
+set(RADIARY_FFMPEG_DIR "${RADIARY_FFMPEG_DEFAULT_DIR}" CACHE PATH "Bundled FFmpeg directory")
+if (NOT EXISTS "${RADIARY_FFMPEG_DIR}" AND EXISTS "${RADIARY_FFMPEG_DEFAULT_DIR}")
+    set(RADIARY_FFMPEG_DIR "${RADIARY_FFMPEG_DEFAULT_DIR}" CACHE PATH "Bundled FFmpeg directory" FORCE)
+endif()
+
+set(RADIARY_FFMPEG_DEFAULT_EXE "${RADIARY_FFMPEG_DIR}/bin/ffmpeg.exe")
+set(RADIARY_FFMPEG_EXE "${RADIARY_FFMPEG_DEFAULT_EXE}" CACHE FILEPATH "Bundled FFmpeg executable")
+if (NOT EXISTS "${RADIARY_FFMPEG_EXE}" AND EXISTS "${RADIARY_FFMPEG_DEFAULT_EXE}")
+    set(RADIARY_FFMPEG_EXE "${RADIARY_FFMPEG_DEFAULT_EXE}" CACHE FILEPATH "Bundled FFmpeg executable" FORCE)
+endif()
 option(RADIARY_EMBED_FFMPEG "Embed bundled FFmpeg into Radiary.exe" ON)
 
 set(radiary_sources
@@ -63,30 +72,77 @@ set(radiary_shader_files
     src/renderer/shaders/GpuPostProcess.hlsl
 )
 
+set(radiary_compiled_shader_files)
+
+function(radiary_add_shader_variant shader_file entry_point shader_profile)
+    get_filename_component(shader_name "${shader_file}" NAME_WE)
+    set(output_file "${CMAKE_BINARY_DIR}/generated/shaders/${shader_name}_${entry_point}_${shader_profile}.cso")
+    add_custom_command(
+        OUTPUT "${output_file}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/generated/shaders"
+        COMMAND "${RADIARY_FXC_EXECUTABLE}" /nologo /T "${shader_profile}" /E "${entry_point}" /Fo "${output_file}" "${CMAKE_SOURCE_DIR}/${shader_file}"
+        DEPENDS "${CMAKE_SOURCE_DIR}/${shader_file}"
+        COMMENT "Compiling shader ${shader_name} (${entry_point}, ${shader_profile})"
+        VERBATIM)
+    list(APPEND radiary_compiled_shader_files "${output_file}")
+    set(radiary_compiled_shader_files "${radiary_compiled_shader_files}" PARENT_SCOPE)
+endfunction()
+
 if (WIN32)
     file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated/shaders")
+
+    execute_process(
+        COMMAND cmd /c "echo %ProgramFiles(x86)%"
+        OUTPUT_VARIABLE RADIARY_PROGRAM_FILES_X86
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if (RADIARY_PROGRAM_FILES_X86 STREQUAL "" OR RADIARY_PROGRAM_FILES_X86 STREQUAL "%ProgramFiles(x86)%")
+        set(RADIARY_PROGRAM_FILES_X86 "$ENV{ProgramFiles}")
+    endif()
+    file(TO_CMAKE_PATH "${RADIARY_PROGRAM_FILES_X86}" RADIARY_PROGRAM_FILES_X86)
+
+    set(RADIARY_WINDOWS_KITS_BIN_HINTS
+        "${RADIARY_PROGRAM_FILES_X86}/Windows Kits/10/bin/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/x64"
+        "${RADIARY_PROGRAM_FILES_X86}/Windows Kits/10/bin/x64")
+    find_program(RADIARY_FXC_EXECUTABLE NAMES fxc HINTS ${RADIARY_WINDOWS_KITS_BIN_HINTS})
+    if (RADIARY_FXC_EXECUTABLE)
+        radiary_add_shader_variant(src/renderer/shaders/GpuFlameRenderer.hlsl AccumulateCS cs_5_0)
+        radiary_add_shader_variant(src/renderer/shaders/GpuFlameRenderer.hlsl ToneMapCS cs_5_0)
+        radiary_add_shader_variant(src/renderer/shaders/GpuPathRenderer.hlsl MainVS vs_5_0)
+        radiary_add_shader_variant(src/renderer/shaders/GpuPathRenderer.hlsl MainPS ps_5_0)
+        radiary_add_shader_variant(src/renderer/shaders/GpuDofRenderer.hlsl MainCS cs_5_0)
+        radiary_add_shader_variant(src/renderer/shaders/GpuDenoiser.hlsl ComposeCS cs_5_0)
+        radiary_add_shader_variant(src/renderer/shaders/GpuDenoiser.hlsl FilterCS cs_5_0)
+        radiary_add_shader_variant(src/renderer/shaders/GpuPostProcess.hlsl PostProcessCS cs_5_0)
+        radiary_add_shader_variant(src/renderer/shaders/GpuPostProcess.hlsl BloomDownCS cs_5_0)
+        radiary_add_shader_variant(src/renderer/shaders/GpuPostProcess.hlsl BloomUpCS cs_5_0)
+    else()
+        message(WARNING "fxc.exe was not found; shader precompilation will be skipped.")
+    endif()
 
     set(RADIARY_RESOURCE_LINES "")
     set(RADIARY_APP_ICON_PNG "${CMAKE_SOURCE_DIR}/assets/ui/app-icon.png")
     if (EXISTS "${RADIARY_APP_ICON_PNG}")
         find_program(RADIARY_POWERSHELL_EXECUTABLE NAMES pwsh powershell REQUIRED)
         set(RADIARY_APP_ICON_ICO "${CMAKE_BINARY_DIR}/generated/RadiaryAppIcon.ico")
-        execute_process(
-            COMMAND
-                "${RADIARY_POWERSHELL_EXECUTABLE}"
-                -NoProfile
-                -ExecutionPolicy Bypass
-                -File "${CMAKE_SOURCE_DIR}/cmake/ConvertPngToIco.ps1"
-                -InputPath "${RADIARY_APP_ICON_PNG}"
-                -OutputPath "${RADIARY_APP_ICON_ICO}"
-            RESULT_VARIABLE RADIARY_ICON_RESULT
-            OUTPUT_VARIABLE RADIARY_ICON_STDOUT
-            ERROR_VARIABLE RADIARY_ICON_STDERR)
-        if (NOT RADIARY_ICON_RESULT EQUAL 0)
-            message(FATAL_ERROR
-                "Failed to convert ${RADIARY_APP_ICON_PNG} to .ico\n"
-                "stdout:\n${RADIARY_ICON_STDOUT}\n"
-                "stderr:\n${RADIARY_ICON_STDERR}")
+        if (NOT EXISTS "${RADIARY_APP_ICON_ICO}" OR "${RADIARY_APP_ICON_PNG}" IS_NEWER_THAN "${RADIARY_APP_ICON_ICO}")
+            execute_process(
+                COMMAND
+                    "${RADIARY_POWERSHELL_EXECUTABLE}"
+                    -NoProfile
+                    -ExecutionPolicy Bypass
+                    -File "${CMAKE_SOURCE_DIR}/cmake/ConvertPngToIco.ps1"
+                    -InputPath "${RADIARY_APP_ICON_PNG}"
+                    -OutputPath "${RADIARY_APP_ICON_ICO}"
+                RESULT_VARIABLE RADIARY_ICON_RESULT
+                OUTPUT_VARIABLE RADIARY_ICON_STDOUT
+                ERROR_VARIABLE RADIARY_ICON_STDERR)
+            if (NOT RADIARY_ICON_RESULT EQUAL 0)
+                message(FATAL_ERROR
+                    "Failed to convert ${RADIARY_APP_ICON_PNG} to .ico\n"
+                    "stdout:\n${RADIARY_ICON_STDOUT}\n"
+                    "stderr:\n${RADIARY_ICON_STDERR}")
+            endif()
         endif()
 
         file(TO_CMAKE_PATH "${RADIARY_APP_ICON_ICO}" RADIARY_APP_ICON_RESOURCE_PATH)
@@ -110,6 +166,11 @@ if (WIN32)
 endif()
 
 add_executable(Radiary WIN32 ${radiary_sources})
+
+if (radiary_compiled_shader_files)
+    add_custom_target(RadiaryShaders ALL DEPENDS ${radiary_compiled_shader_files})
+    add_dependencies(Radiary RadiaryShaders)
+endif()
 
 target_include_directories(Radiary PRIVATE
     src
@@ -169,6 +230,9 @@ target_link_libraries(Radiary PRIVATE windowscodecs comdlg32 ole32 dwmapi d3d11 
 install(TARGETS Radiary RUNTIME DESTINATION .)
 install(DIRECTORY assets DESTINATION .)
 install(FILES ${radiary_shader_files} DESTINATION shaders)
+if (radiary_compiled_shader_files)
+    install(FILES ${radiary_compiled_shader_files} DESTINATION shaders)
+endif()
 install(FILES README.md DESTINATION .)
 
 add_custom_command(TARGET Radiary POST_BUILD
@@ -179,6 +243,13 @@ foreach(shader_file IN LISTS radiary_shader_files)
     add_custom_command(TARGET Radiary POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/${shader_file}"
+            "$<TARGET_FILE_DIR:Radiary>/shaders")
+endforeach()
+
+foreach(compiled_shader_file IN LISTS radiary_compiled_shader_files)
+    add_custom_command(TARGET Radiary POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${compiled_shader_file}"
             "$<TARGET_FILE_DIR:Radiary>/shaders")
 endforeach()
 

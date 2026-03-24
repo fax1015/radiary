@@ -670,6 +670,12 @@ ImWchar IconGlyphCodepoint(const IconGlyph glyph) {
         return 0xE145;
     case IconGlyph::Remove:
         return 0xE15B;
+    case IconGlyph::Lock:
+        return 0xE897;
+    case IconGlyph::LockOpen:
+        return 0xE898;
+    case IconGlyph::SwapHoriz:
+        return 0xE8D4;
     case IconGlyph::ResetCamera:
         return 0xE412;
     case IconGlyph::VisibilityOn:
@@ -847,29 +853,55 @@ bool ComboWithMaterialArrow(const char* label, int* currentItem, const char* con
     return changed;
 }
 
+std::string ScalarWidgetLabelId(const char* label) {
+    if (label == nullptr) {
+        return "##scalar";
+    }
+    const char* visibleTextEnd = ImGui::FindRenderedTextEnd(label);
+    if (visibleTextEnd != nullptr && *visibleTextEnd != '\0') {
+        return visibleTextEnd;
+    }
+    return std::string("##") + label;
+}
+
+void DrawScalarWidgetLabel(const ImRect& frameBounds, const char* label) {
+    if (label == nullptr) {
+        return;
+    }
+    const char* visibleTextEnd = ImGui::FindRenderedTextEnd(label);
+    if (visibleTextEnd == nullptr || visibleTextEnd == label) {
+        return;
+    }
+    ImGui::RenderText(
+        ImVec2(frameBounds.Max.x + ImGui::GetStyle().ItemInnerSpacing.x, frameBounds.Min.y + ImGui::GetStyle().FramePadding.y),
+        label,
+        visibleTextEnd,
+        false);
+}
+
 bool SliderScalarWithInput(const char* label, const ImGuiDataType dataType, void* value, const void* minimum, const void* maximum, const char* format, const ImGuiSliderFlags flags) {
-    const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec2 frameMin = ImGui::GetCursorScreenPos();
-    const ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
     const float frameWidth = ImGui::CalcItemWidth();
-    const ImRect frameBounds(frameMin, ImVec2(frameMin.x + frameWidth, frameMin.y + labelSize.y + style.FramePadding.y * 2.0f));
+    const ImRect frameBounds(frameMin, ImVec2(frameMin.x + frameWidth, frameMin.y + ImGui::GetFrameHeight()));
+    const std::string widgetLabel = ScalarWidgetLabelId(label);
     PushMonospaceFont();
-    const bool changed = ImGui::SliderScalar(label, dataType, value, minimum, maximum, format, flags | ImGuiSliderFlags_AlwaysClamp);
+    const bool changed = ImGui::SliderScalar(widgetLabel.c_str(), dataType, value, minimum, maximum, format, flags | ImGuiSliderFlags_AlwaysClamp);
     PopMonospaceFont();
     const bool affordanceChanged = HandleScalarInputAffordances(frameBounds, dataType, value, minimum, maximum, format);
+    DrawScalarWidgetLabel(frameBounds, label);
     return changed || affordanceChanged;
 }
 
 bool DragScalarWithInput(const char* label, const ImGuiDataType dataType, void* value, const float speed, const void* minimum, const void* maximum, const char* format, const ImGuiSliderFlags flags) {
-    const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec2 frameMin = ImGui::GetCursorScreenPos();
-    const ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
     const float frameWidth = ImGui::CalcItemWidth();
-    const ImRect frameBounds(frameMin, ImVec2(frameMin.x + frameWidth, frameMin.y + labelSize.y + style.FramePadding.y * 2.0f));
+    const ImRect frameBounds(frameMin, ImVec2(frameMin.x + frameWidth, frameMin.y + ImGui::GetFrameHeight()));
+    const std::string widgetLabel = ScalarWidgetLabelId(label);
     PushMonospaceFont();
-    const bool changed = ImGui::DragScalar(label, dataType, value, speed, minimum, maximum, format, flags);
+    const bool changed = ImGui::DragScalar(widgetLabel.c_str(), dataType, value, speed, minimum, maximum, format, flags);
     PopMonospaceFont();
     const bool affordanceChanged = HandleScalarInputAffordances(frameBounds, dataType, value, minimum, maximum, format);
+    DrawScalarWidgetLabel(frameBounds, label);
     return changed || affordanceChanged;
 }
 
@@ -1019,6 +1051,24 @@ void DrawIconGlyph(ImDrawList* drawList, const ImRect& rect, const IconGlyph gly
         break;
     case IconGlyph::Remove:
         line(0.24f, 0.50f, 0.76f, 0.50f);
+        break;
+    case IconGlyph::Lock:
+        drawList->AddRect(point(0.28f, 0.46f), point(0.72f, 0.80f), color, 4.0f, 0, stroke);
+        bezier(0.36f, 0.46f, 0.36f, 0.24f, 0.64f, 0.24f, 0.64f, 0.46f);
+        line(0.50f, 0.58f, 0.50f, 0.70f);
+        break;
+    case IconGlyph::LockOpen:
+        drawList->AddRect(point(0.28f, 0.46f), point(0.72f, 0.80f), color, 4.0f, 0, stroke);
+        bezier(0.62f, 0.46f, 0.62f, 0.24f, 0.40f, 0.24f, 0.40f, 0.40f);
+        line(0.50f, 0.58f, 0.50f, 0.70f);
+        break;
+    case IconGlyph::SwapHoriz:
+        line(0.20f, 0.34f, 0.72f, 0.34f);
+        line(0.72f, 0.34f, 0.60f, 0.22f);
+        line(0.72f, 0.34f, 0.60f, 0.46f);
+        line(0.80f, 0.66f, 0.28f, 0.66f);
+        line(0.28f, 0.66f, 0.40f, 0.54f);
+        line(0.28f, 0.66f, 0.40f, 0.78f);
         break;
     case IconGlyph::ResetCamera:
         drawList->AddRect(point(0.22f, 0.34f), point(0.78f, 0.78f), color, 4.0f, 0, stroke);

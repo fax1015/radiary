@@ -15,6 +15,7 @@
 #include <cfloat>
 #include <cstdio>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -135,6 +136,37 @@ SIZE WindowSizeForClientSize(HWND window, const int clientWidth, const int clien
 }  // namespace
 
 namespace radiary {
+
+std::filesystem::path AppWindow::AutoSavePath() {
+    wchar_t* appData = nullptr;
+    std::size_t appDataLength = 0;
+    if (_wdupenv_s(&appData, &appDataLength, L"APPDATA") == 0 && appData != nullptr && appData[0] != L'\0') {
+        const std::filesystem::path autoSavePath = std::filesystem::path(appData) / L"Radiary" / L"autosave.radiary";
+        std::free(appData);
+        return autoSavePath;
+    }
+    std::free(appData);
+    return GetExecutableDirectory() / L"autosave.radiary";
+}
+
+void AppWindow::UpdateWindowTitle() {
+    if (window_ == nullptr) {
+        return;
+    }
+
+    std::wstring title = L"Radiary";
+    if (!scene_.name.empty()) {
+        title += L" - " + Utf8ToWide(scene_.name);
+    } else if (!currentScenePath_.empty()) {
+        title += L" - " + currentScenePath_.filename().wstring();
+    } else {
+        title += L" - Untitled";
+    }
+    if (sceneDirty_) {
+        title += L" \u25CF";
+    }
+    SetWindowTextW(window_, title.c_str());
+}
 
 
 bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
@@ -264,6 +296,25 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     if (presetLibrary_.Count() == 0) {
         ApplyUserSceneDefaults(scene_);
     }
+    if (std::filesystem::exists(AutoSavePath())) {
+        std::string recoveryError;
+        if (const std::optional<Scene> recovered = serializer_.Load(AutoSavePath(), recoveryError); recovered.has_value()) {
+            const int result = MessageBoxW(
+                window_,
+                L"Unsaved work was recovered from a previous session.\nRestore it?",
+                L"Radiary - Crash Recovery",
+                MB_YESNO | MB_ICONQUESTION);
+            if (result == IDYES) {
+                ResetScene(*recovered);
+                sceneDirty_ = true;
+                sceneModifiedSinceAutoSave_ = true;
+                statusText_ = L"Recovered unsaved work";
+            }
+            std::error_code removeError;
+            std::filesystem::remove(AutoSavePath(), removeError);
+        }
+    }
+    UpdateWindowTitle();
 
     if (startupWindowPlacementLoaded_) {
         const int width = std::max(640, static_cast<int>(startupWindowRect_.right - startupWindowRect_.left));
@@ -301,19 +352,19 @@ bool AppWindow::Create(HINSTANCE instance, const int showCommand) {
     ApplyStyle();
 
     if (gpuFlamePreviewEnabled_) {
-        runAnimatedLoadingTask(0.50f, "Compiling flame shader...", [this]() {
+        runAnimatedLoadingTask(0.50f, "Loading flame shader...", [this]() {
             return EnsureGpuFlameRendererInitialized();
         });
 
-        runAnimatedLoadingTask(0.65f, "Compiling path shader...", [this]() {
+        runAnimatedLoadingTask(0.65f, "Loading path shader...", [this]() {
             return EnsureGpuPathRendererInitialized(gpuPathRenderer_, L"GPU path renderer");
         });
 
-        runAnimatedLoadingTask(0.75f, "Compiling grid shader...", [this]() {
+        runAnimatedLoadingTask(0.75f, "Loading grid shader...", [this]() {
             return EnsureGpuPathRendererInitialized(gpuGridRenderer_, L"GPU grid renderer");
         });
 
-        runAnimatedLoadingTask(0.85f, "Compiling DOF shader...", [this]() {
+        runAnimatedLoadingTask(0.85f, "Loading DOF shader...", [this]() {
             return EnsureGpuDofRendererInitialized();
         });
     }
@@ -353,6 +404,8 @@ int AppWindow::Run() {
         }
     }
 
+    std::error_code removeError;
+    std::filesystem::remove(AutoSavePath(), removeError);
     SaveUserSettings();
     StopRenderThread();
     ShutdownImGui();
@@ -762,6 +815,19 @@ bool AppWindow::RenderTick() {
 
     ApplyPendingResize();
     ProcessPendingExport();
+    if (autoSaveEnabled_ && sceneModifiedSinceAutoSave_) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastAutoSave_ > std::chrono::seconds(autoSaveIntervalSeconds_)) {
+            const std::filesystem::path autoSavePath = AutoSavePath();
+            std::error_code createError;
+            std::filesystem::create_directories(autoSavePath.parent_path(), createError);
+            std::string autoSaveError;
+            if (serializer_.Save(scene_, autoSavePath, autoSaveError)) {
+                lastAutoSave_ = now;
+                sceneModifiedSinceAutoSave_ = false;
+            }
+        }
+    }
     RenderFrame();
     return true;
 }
@@ -960,6 +1026,7 @@ void AppWindow::RenderFrame() {
     DrawInspectorPanel();
     DrawTimelinePanel();
     DrawPreviewPanel();
+    DrawEffectsPanel();
     DrawCameraPanel();
     DrawViewportPanel();
     DrawSettingsPanel();

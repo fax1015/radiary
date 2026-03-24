@@ -85,6 +85,13 @@ enum class KeyframeOwnerType : std::uint8_t {
     Path
 };
 
+enum class SymmetryMode : std::uint8_t {
+    None,
+    Bilateral,
+    Rotational,
+    BilateralRotational
+};
+
 enum class VariationType : std::uint8_t {
     Linear,
     Sinusoidal,
@@ -172,6 +179,8 @@ struct FlameRenderSettings {
     double rotationYDegrees = 0.0;
     double rotationZDegrees = 0.0;
     double depthAmount = 1.0;
+    SymmetryMode symmetry = SymmetryMode::None;
+    int symmetryOrder = 2;
     double curveExposure = 1.0;
     double curveContrast = 1.0;
     double curveHighlights = 1.0;
@@ -388,6 +397,8 @@ std::string ToString(MaterialType type);
 MaterialType MaterialTypeFromString(const std::string& value);
 std::string ToString(KeyframeEasing easing);
 KeyframeEasing KeyframeEasingFromString(const std::string& value);
+std::string ToString(SymmetryMode mode);
+SymmetryMode SymmetryModeFromString(const std::string& value);
 std::string ToString(VariationType variation);
 VariationType VariationTypeFromString(const std::string& value);
 std::string ToString(ThicknessProfile profile);

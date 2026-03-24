@@ -391,6 +391,8 @@ void WriteFlameRenderSettings(std::ostream& stream, const FlameRenderSettings& f
     stream << indent << "\"rotationYDegrees\": " << flameRender.rotationYDegrees << ",\n";
     stream << indent << "\"rotationZDegrees\": " << flameRender.rotationZDegrees << ",\n";
     stream << indent << "\"depthAmount\": " << flameRender.depthAmount << ",\n";
+    stream << indent << "\"symmetry\": \"" << ToString(flameRender.symmetry) << "\",\n";
+    stream << indent << "\"symmetryOrder\": " << flameRender.symmetryOrder << ",\n";
     stream << indent << "\"curveExposure\": " << flameRender.curveExposure << ",\n";
     stream << indent << "\"curveContrast\": " << flameRender.curveContrast << ",\n";
     stream << indent << "\"curveHighlights\": " << flameRender.curveHighlights << ",\n";
@@ -738,6 +740,8 @@ void LoadScenePose(const JsonValue& poseValue, ScenePose& pose) {
         pose.flameRender.rotationYDegrees = Number(*flameRender, "rotationYDegrees", pose.flameRender.rotationYDegrees);
         pose.flameRender.rotationZDegrees = Number(*flameRender, "rotationZDegrees", pose.flameRender.rotationZDegrees);
         pose.flameRender.depthAmount = Number(*flameRender, "depthAmount", pose.flameRender.depthAmount);
+        pose.flameRender.symmetry = SymmetryModeFromString(String(*flameRender, "symmetry", ToString(pose.flameRender.symmetry)));
+        pose.flameRender.symmetryOrder = std::clamp(static_cast<int>(Number(*flameRender, "symmetryOrder", pose.flameRender.symmetryOrder)), 2, 12);
         pose.flameRender.curveExposure = Number(*flameRender, "curveExposure", pose.flameRender.curveExposure);
         pose.flameRender.curveContrast = Number(*flameRender, "curveContrast", pose.flameRender.curveContrast);
         pose.flameRender.curveHighlights = Number(*flameRender, "curveHighlights", pose.flameRender.curveHighlights);
@@ -916,6 +920,8 @@ std::optional<Scene> SceneSerializer::Load(const std::filesystem::path& path, st
         scene.flameRender.rotationYDegrees = Number(*flameRender, "rotationYDegrees", scene.flameRender.rotationYDegrees);
         scene.flameRender.rotationZDegrees = Number(*flameRender, "rotationZDegrees", scene.flameRender.rotationZDegrees);
         scene.flameRender.depthAmount = Number(*flameRender, "depthAmount", scene.flameRender.depthAmount);
+        scene.flameRender.symmetry = SymmetryModeFromString(String(*flameRender, "symmetry", ToString(scene.flameRender.symmetry)));
+        scene.flameRender.symmetryOrder = std::clamp(static_cast<int>(Number(*flameRender, "symmetryOrder", scene.flameRender.symmetryOrder)), 2, 12);
         scene.flameRender.curveExposure = Number(*flameRender, "curveExposure", scene.flameRender.curveExposure);
         scene.flameRender.curveContrast = Number(*flameRender, "curveContrast", scene.flameRender.curveContrast);
         scene.flameRender.curveHighlights = Number(*flameRender, "curveHighlights", scene.flameRender.curveHighlights);

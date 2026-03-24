@@ -15,6 +15,8 @@ cbuffer RenderParams : register(b0)
     float FlameRotateY;
     float FlameRotateZ;
     float FlameDepthAmount;
+    uint SymmetryMode;
+    uint SymmetryOrder;
     float FlameCurveExposure;
     float FlameCurveContrast;
     float FlameCurveHighlights;
@@ -191,6 +193,376 @@ float WideSplatKernel(float distance)
     if (distance >= supportRadius)
         return 0.0;
     return pow(1.0 - distance / supportRadius, 1.75);
+}
+
+float3 RotateSymmetryPoint(float3 samplePoint, float radians)
+{
+    float cosine = cos(radians);
+    float sine = sin(radians);
+    return float3(
+        samplePoint.x * cosine - samplePoint.y * sine,
+        samplePoint.x * sine + samplePoint.y * cosine,
+        samplePoint.z);
+}
+
+void EmitProjectedFlameSample(
+    float3 samplePoint,
+    uint3 sampleColor,
+    float yawCos,
+    float yawSin,
+    float pitchCos,
+    float pitchSin,
+    float flameCosX,
+    float flameSinX,
+    float flameCosY,
+    float flameSinY,
+    float flameCosZ,
+    float flameSinZ,
+    float frameMinX,
+    float frameMinY,
+    float frameWidth,
+    float frameHeight,
+    float frameScale)
+{
+    float radius = sqrt(samplePoint.x * samplePoint.x + samplePoint.y * samplePoint.y);
+    float angle = atan2(samplePoint.y, samplePoint.x);
+    float depth = samplePoint.z * WorldScale * 0.72 * max(0.0, FlameDepthAmount);
+    float lateralOffset = depth * (0.18 + radius * 0.06);
+    float3 world = float3(
+        samplePoint.x * WorldScale + cos(angle + samplePoint.z * 0.3) * lateralOffset,
+        samplePoint.y * WorldScale + sin(angle - samplePoint.z * 0.25) * lateralOffset * 0.82,
+        depth);
+    world = float3(world.x, world.y * flameCosX - world.z * flameSinX, world.y * flameSinX + world.z * flameCosX);
+    world = float3(world.x * flameCosY + world.z * flameSinY, world.y, -world.x * flameSinY + world.z * flameCosY);
+    world = float3(world.x * flameCosZ - world.y * flameSinZ, world.x * flameSinZ + world.y * flameCosZ, world.z);
+
+    float3 rotated = float3(world.x * yawCos + world.z * yawSin, world.y, -world.x * yawSin + world.z * yawCos);
+    rotated = float3(rotated.x, rotated.y * pitchCos - rotated.z * pitchSin, rotated.y * pitchSin + rotated.z * pitchCos);
+    if (!IsFinitePoint3(rotated))
+        return;
+    rotated.z += Distance;
+    if (rotated.z <= 0.15)
+        return;
+
+    float perspective = 240.0 * frameScale * Zoom2D / rotated.z;
+    if (!isfinite(perspective))
+        return;
+    float screenX = frameMinX + frameWidth * 0.5 + PanX * frameScale + rotated.x * perspective;
+    float screenY = frameMinY + frameHeight * 0.5 + PanY * frameScale - rotated.y * perspective;
+    if (screenX < -1.0 || screenY < -1.0 || screenX > (float)Width || screenY > (float)Height)
+        return;
+
+    float sampleWeightReal = clamp(pow(perspective / 30.0, 2.0), 0.35, 6.0);
+    float normalizedDepth = saturate((rotated.z - kDepthNear) / max(1.0e-5, FarDepth - kDepthNear));
+    int baseX = (int)floor(screenX);
+    int baseY = (int)floor(screenY);
+    float fracX = screenX - (float)baseX;
+    float fracY = screenY - (float)baseY;
+    float bilinearWeights[4] = {
+        (1.0 - fracX) * (1.0 - fracY),
+        fracX * (1.0 - fracY),
+        (1.0 - fracX) * fracY,
+        fracX * fracY
+    };
+    int2 offsets[4] = {
+        int2(0, 0),
+        int2(1, 0),
+        int2(0, 1),
+        int2(1, 1)
+    };
+
+    float sharpenedWeights[4] = {0.0, 0.0, 0.0, 0.0};
+    float sharpenedWeightSum = 0.0;
+    [unroll]
+    for (uint index = 0u; index < 4u; ++index)
+    {
+        sharpenedWeights[index] = pow(max(0.0, bilinearWeights[index]), 2.2);
+        sharpenedWeightSum += sharpenedWeights[index];
+    }
+    if (sharpenedWeightSum > 1.0e-6)
+    {
+        [unroll]
+        for (uint index = 0u; index < 4u; ++index)
+        {
+            sharpenedWeights[index] /= sharpenedWeightSum;
+        }
+    }
+    else
+    {
+        sharpenedWeights[0] = 1.0;
+    }
+
+    int centerX = (int)floor(screenX + 0.5);
+    int centerY = (int)floor(screenY + 0.5);
+    int2 adaptiveOffsets[9] = {
+        int2(-1, -1), int2(0, -1), int2(1, -1),
+        int2(-1, 0), int2(0, 0), int2(1, 0),
+        int2(-1, 1), int2(0, 1), int2(1, 1)
+    };
+
+    float localDensityAccum = 0.0;
+    float localDensityKernelSum = 0.0;
+    [unroll]
+    for (uint index = 0u; index < 9u; ++index)
+    {
+        float neighborDensityAccum = 0.0;
+        float3 ignoredColorAccum = float3(0.0, 0.0, 0.0);
+        float ignoredDepthAccum = 0.0;
+        int2 offset = adaptiveOffsets[index];
+        float kernel = LocalDensityKernel(offset.x, offset.y);
+        LoadAccumulation(
+            int2(centerX + offset.x, centerY + offset.y),
+            neighborDensityAccum,
+            ignoredColorAccum,
+            ignoredDepthAccum);
+        localDensityAccum += neighborDensityAccum * kernel;
+        localDensityKernelSum += kernel;
+    }
+
+    float localDensity = 0.0;
+    if (localDensityKernelSum > 1.0e-6)
+        localDensity = (localDensityAccum / localDensityKernelSum) / (float)kAccumulationScale;
+
+    float wideWeights[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    float wideWeightSum = 0.0;
+    [unroll]
+    for (uint index = 0u; index < 9u; ++index)
+    {
+        int2 offset = adaptiveOffsets[index];
+        int px = centerX + offset.x;
+        int py = centerY + offset.y;
+        float pixelCenterX = (float)px + 0.5;
+        float pixelCenterY = (float)py + 0.5;
+        float wx = WideSplatKernel(abs(screenX - pixelCenterX));
+        float wy = WideSplatKernel(abs(screenY - pixelCenterY));
+        wideWeights[index] = wx * wy;
+        wideWeightSum += wideWeights[index];
+    }
+    if (wideWeightSum > 1.0e-6)
+    {
+        [unroll]
+        for (uint index = 0u; index < 9u; ++index)
+        {
+            wideWeights[index] /= wideWeightSum;
+        }
+    }
+    else
+    {
+        wideWeights[4] = 1.0;
+    }
+
+    float narrowWeights[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    [unroll]
+    for (uint index = 0u; index < 4u; ++index)
+    {
+        int px = baseX + offsets[index].x;
+        int py = baseY + offsets[index].y;
+        int gridX = px - (centerX - 1);
+        int gridY = py - (centerY - 1);
+        if (gridX < 0 || gridX >= 3 || gridY < 0 || gridY >= 3)
+            continue;
+        narrowWeights[gridY * 3 + gridX] += sharpenedWeights[index];
+    }
+
+    float wideBlend = LowDensitySplatBlend(localDensity);
+    float finalWeights[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    float finalWeightSum = 0.0;
+    [unroll]
+    for (uint index = 0u; index < 9u; ++index)
+    {
+        finalWeights[index] = lerp(narrowWeights[index], wideWeights[index], wideBlend);
+        finalWeightSum += finalWeights[index];
+    }
+    if (finalWeightSum > 1.0e-6)
+    {
+        [unroll]
+        for (uint index = 0u; index < 9u; ++index)
+        {
+            finalWeights[index] /= finalWeightSum;
+        }
+    }
+    else
+    {
+        finalWeights[4] = 1.0;
+    }
+
+    float densityScale = EdgeFavoringScale(localDensity);
+    uint sampleWeight = max(1u, (uint)round(sampleWeightReal * densityScale * (float)kAccumulationScale));
+
+    float visibleWeightSum = 0.0;
+    uint bestIndex = 4u;
+    float bestWeight = -1.0;
+    [unroll]
+    for (uint index = 0u; index < 9u; ++index)
+    {
+        int2 offset = adaptiveOffsets[index];
+        int px = centerX + offset.x;
+        int py = centerY + offset.y;
+        if (px < 0 || py < 0 || px >= (int)Width || py >= (int)Height)
+            continue;
+        visibleWeightSum += finalWeights[index];
+        if (finalWeights[index] > bestWeight)
+        {
+            bestWeight = finalWeights[index];
+            bestIndex = index;
+        }
+    }
+
+    if (visibleWeightSum <= 1.0e-6)
+        return;
+
+    uint distributedWeight = 0u;
+    uint weights[9] = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    [unroll]
+    for (uint index = 0u; index < 9u; ++index)
+    {
+        int2 offset = adaptiveOffsets[index];
+        int px = centerX + offset.x;
+        int py = centerY + offset.y;
+        if (px < 0 || py < 0 || px >= (int)Width || py >= (int)Height)
+            continue;
+        float normalizedWeight = finalWeights[index] / visibleWeightSum;
+        weights[index] = (uint)floor((float)sampleWeight * normalizedWeight);
+        distributedWeight += weights[index];
+    }
+    weights[bestIndex] += sampleWeight - distributedWeight;
+
+    [unroll]
+    for (uint index = 0u; index < 9u; ++index)
+    {
+        uint localWeight = weights[index];
+        uint localDepth = (uint)round(normalizedDepth * 65535.0) * localWeight;
+        int2 offset = adaptiveOffsets[index];
+        AccumulateSampleToPixel(
+            centerX + offset.x,
+            centerY + offset.y,
+            localWeight,
+            sampleColor,
+            localDepth);
+    }
+}
+
+void EmitSymmetrySamples(
+    float3 samplePoint,
+    uint3 sampleColor,
+    float yawCos,
+    float yawSin,
+    float pitchCos,
+    float pitchSin,
+    float flameCosX,
+    float flameSinX,
+    float flameCosY,
+    float flameSinY,
+    float flameCosZ,
+    float flameSinZ,
+    float frameMinX,
+    float frameMinY,
+    float frameWidth,
+    float frameHeight,
+    float frameScale)
+{
+    const bool includeBilateral = SymmetryMode == 1u || SymmetryMode == 3u;
+    const bool includeRotational = SymmetryMode == 2u || SymmetryMode == 3u;
+    const uint order = max(SymmetryOrder, 2u);
+    if (!includeRotational)
+    {
+        EmitProjectedFlameSample(
+            samplePoint,
+            sampleColor,
+            yawCos,
+            yawSin,
+            pitchCos,
+            pitchSin,
+            flameCosX,
+            flameSinX,
+            flameCosY,
+            flameSinY,
+            flameCosZ,
+            flameSinZ,
+            frameMinX,
+            frameMinY,
+            frameWidth,
+            frameHeight,
+            frameScale);
+        if (includeBilateral)
+        {
+            float3 mirrored = float3(-samplePoint.x, samplePoint.y, samplePoint.z);
+            if (abs(mirrored.x - samplePoint.x) > 1.0e-6 || abs(mirrored.y - samplePoint.y) > 1.0e-6)
+            {
+                EmitProjectedFlameSample(
+                    mirrored,
+                    sampleColor,
+                    yawCos,
+                    yawSin,
+                    pitchCos,
+                    pitchSin,
+                    flameCosX,
+                    flameSinX,
+                    flameCosY,
+                    flameSinY,
+                    flameCosZ,
+                    flameSinZ,
+                    frameMinX,
+                    frameMinY,
+                    frameWidth,
+                    frameHeight,
+                    frameScale);
+            }
+        }
+        return;
+    }
+
+    [loop]
+    for (uint index = 0u; index < order; ++index)
+    {
+        float3 rotatedPoint = index == 0u
+            ? samplePoint
+            : RotateSymmetryPoint(samplePoint, (2.0 * kPi * (float)index) / (float)order);
+        EmitProjectedFlameSample(
+            rotatedPoint,
+            sampleColor,
+            yawCos,
+            yawSin,
+            pitchCos,
+            pitchSin,
+            flameCosX,
+            flameSinX,
+            flameCosY,
+            flameSinY,
+            flameCosZ,
+            flameSinZ,
+            frameMinX,
+            frameMinY,
+            frameWidth,
+            frameHeight,
+            frameScale);
+
+        if (includeBilateral)
+        {
+            float3 mirrored = float3(-rotatedPoint.x, rotatedPoint.y, rotatedPoint.z);
+            if (abs(mirrored.x - rotatedPoint.x) > 1.0e-6 || abs(mirrored.y - rotatedPoint.y) > 1.0e-6)
+            {
+                EmitProjectedFlameSample(
+                    mirrored,
+                    sampleColor,
+                    yawCos,
+                    yawSin,
+                    pitchCos,
+                    pitchSin,
+                    flameCosX,
+                    flameSinX,
+                    flameCosY,
+                    flameSinY,
+                    flameCosZ,
+                    flameSinZ,
+                    frameMinX,
+                    frameMinY,
+                    frameWidth,
+                    frameHeight,
+                    frameScale);
+            }
+        }
+    }
 }
 
 
@@ -732,34 +1104,6 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
             continue;
         }
 
-        radius = sqrt(samplePoint.x * samplePoint.x + samplePoint.y * samplePoint.y);
-        angle = atan2(samplePoint.y, samplePoint.x);
-        float depth = samplePoint.z * WorldScale * 0.72 * max(0.0, FlameDepthAmount);
-        float lateralOffset = depth * (0.18 + radius * 0.06);
-        float3 world = float3(
-            samplePoint.x * WorldScale + cos(angle + samplePoint.z * 0.3) * lateralOffset,
-            samplePoint.y * WorldScale + sin(angle - samplePoint.z * 0.25) * lateralOffset * 0.82,
-            depth);
-        world = float3(world.x, world.y * flameCosX - world.z * flameSinX, world.y * flameSinX + world.z * flameCosX);
-        world = float3(world.x * flameCosY + world.z * flameSinY, world.y, -world.x * flameSinY + world.z * flameCosY);
-        world = float3(world.x * flameCosZ - world.y * flameSinZ, world.x * flameSinZ + world.y * flameCosZ, world.z);
-
-        float3 rotated = float3(world.x * yawCos + world.z * yawSin, world.y, -world.x * yawSin + world.z * yawCos);
-        rotated = float3(rotated.x, rotated.y * pitchCos - rotated.z * pitchSin, rotated.y * pitchSin + rotated.z * pitchCos);
-        if (!IsFinitePoint3(rotated))
-            continue;
-        rotated.z += Distance;
-        if (rotated.z <= 0.15)
-            continue;
-
-        float perspective = 240.0 * frameScale * Zoom2D / rotated.z;
-        if (!isfinite(perspective))
-            continue;
-        float screenX = frameMinX + frameWidth * 0.5 + PanX * frameScale + rotated.x * perspective;
-        float screenY = frameMinY + frameHeight * 0.5 + PanY * frameScale - rotated.y * perspective;
-        if (screenX < -1.0 || screenY < -1.0 || screenX > (float)Width || screenY > (float)Height)
-            continue;
-
         uint4 sampleColor;
         if (layer.UseCustomColor > 0.5)
         {
@@ -774,197 +1118,24 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
             uint paletteIndex = min((uint)255, (uint)floor(clamp(colorIndex, 0.0, 1.0) * 255.0));
             sampleColor = Palette[paletteIndex];
         }
-        float sampleWeightReal = clamp(pow(perspective / 30.0, 2.0), 0.35, 6.0);
-        float normalizedDepth = saturate((rotated.z - kDepthNear) / max(1.0e-5, FarDepth - kDepthNear));
-        int baseX = (int)floor(screenX);
-        int baseY = (int)floor(screenY);
-        float fracX = screenX - (float)baseX;
-        float fracY = screenY - (float)baseY;
-        float bilinearWeights[4] = {
-            (1.0 - fracX) * (1.0 - fracY),
-            fracX * (1.0 - fracY),
-            (1.0 - fracX) * fracY,
-            fracX * fracY
-        };
-        int2 offsets[4] = {
-            int2(0, 0),
-            int2(1, 0),
-            int2(0, 1),
-            int2(1, 1)
-        };
-
-        float sharpenedWeights[4] = {0.0, 0.0, 0.0, 0.0};
-        float sharpenedWeightSum = 0.0;
-        [unroll]
-        for (uint index = 0u; index < 4u; ++index)
-        {
-            sharpenedWeights[index] = pow(max(0.0, bilinearWeights[index]), 2.2);
-            sharpenedWeightSum += sharpenedWeights[index];
-        }
-        if (sharpenedWeightSum > 1.0e-6)
-        {
-            [unroll]
-            for (uint index = 0u; index < 4u; ++index)
-            {
-                sharpenedWeights[index] /= sharpenedWeightSum;
-            }
-        }
-        else
-        {
-            sharpenedWeights[0] = 1.0;
-        }
-
-
-        int centerX = (int)floor(screenX + 0.5);
-        int centerY = (int)floor(screenY + 0.5);
-        int2 adaptiveOffsets[9] = {
-            int2(-1, -1), int2(0, -1), int2(1, -1),
-            int2(-1, 0), int2(0, 0), int2(1, 0),
-            int2(-1, 1), int2(0, 1), int2(1, 1)
-        };
-
-        float localDensityAccum = 0.0;
-        float localDensityKernelSum = 0.0;
-        [unroll]
-        for (uint index = 0u; index < 9u; ++index)
-        {
-            float neighborDensityAccum = 0.0;
-            float3 ignoredColorAccum = float3(0.0, 0.0, 0.0);
-            float ignoredDepthAccum = 0.0;
-            int2 offset = adaptiveOffsets[index];
-            float kernel = LocalDensityKernel(offset.x, offset.y);
-            LoadAccumulation(
-                int2(centerX + offset.x, centerY + offset.y),
-                neighborDensityAccum,
-                ignoredColorAccum,
-                ignoredDepthAccum);
-            localDensityAccum += neighborDensityAccum * kernel;
-            localDensityKernelSum += kernel;
-        }
-
-        float localDensity = 0.0;
-        if (localDensityKernelSum > 1.0e-6)
-            localDensity = (localDensityAccum / localDensityKernelSum) / (float)kAccumulationScale;
-
-        float wideWeights[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-        float wideWeightSum = 0.0;
-        [unroll]
-        for (uint index = 0u; index < 9u; ++index)
-        {
-            int2 offset = adaptiveOffsets[index];
-            int px = centerX + offset.x;
-            int py = centerY + offset.y;
-            float pixelCenterX = (float)px + 0.5;
-            float pixelCenterY = (float)py + 0.5;
-            float wx = WideSplatKernel(abs(screenX - pixelCenterX));
-            float wy = WideSplatKernel(abs(screenY - pixelCenterY));
-            wideWeights[index] = wx * wy;
-            wideWeightSum += wideWeights[index];
-        }
-        if (wideWeightSum > 1.0e-6)
-        {
-            [unroll]
-            for (uint index = 0u; index < 9u; ++index)
-            {
-                wideWeights[index] /= wideWeightSum;
-            }
-        }
-        else
-        {
-            wideWeights[4] = 1.0;
-        }
-
-        float narrowWeights[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-        [unroll]
-        for (uint index = 0u; index < 4u; ++index)
-        {
-            int px = baseX + offsets[index].x;
-            int py = baseY + offsets[index].y;
-            int gridX = px - (centerX - 1);
-            int gridY = py - (centerY - 1);
-            if (gridX < 0 || gridX >= 3 || gridY < 0 || gridY >= 3)
-                continue;
-            narrowWeights[gridY * 3 + gridX] += sharpenedWeights[index];
-        }
-
-        float wideBlend = LowDensitySplatBlend(localDensity);
-        float finalWeights[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-        float finalWeightSum = 0.0;
-        [unroll]
-        for (uint index = 0u; index < 9u; ++index)
-        {
-            finalWeights[index] = lerp(narrowWeights[index], wideWeights[index], wideBlend);
-            finalWeightSum += finalWeights[index];
-        }
-        if (finalWeightSum > 1.0e-6)
-        {
-            [unroll]
-            for (uint index = 0u; index < 9u; ++index)
-            {
-                finalWeights[index] /= finalWeightSum;
-            }
-        }
-        else
-        {
-            finalWeights[4] = 1.0;
-        }
-
-        float densityScale = EdgeFavoringScale(localDensity);
-        uint sampleWeight = max(1u, (uint)round(sampleWeightReal * densityScale * (float)kAccumulationScale));
-
-        float visibleWeightSum = 0.0;
-        uint bestIndex = 4u;
-        float bestWeight = -1.0;
-        [unroll]
-        for (uint index = 0u; index < 9u; ++index)
-        {
-            int2 offset = adaptiveOffsets[index];
-            int px = centerX + offset.x;
-            int py = centerY + offset.y;
-            if (px < 0 || py < 0 || px >= (int)Width || py >= (int)Height)
-                continue;
-            visibleWeightSum += finalWeights[index];
-            if (finalWeights[index] > bestWeight)
-            {
-                bestWeight = finalWeights[index];
-                bestIndex = index;
-            }
-        }
-
-        if (visibleWeightSum <= 1.0e-6)
-        {
-            continue;
-        }
-
-        uint distributedWeight = 0u;
-        uint weights[9] = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
-        [unroll]
-        for (uint index = 0u; index < 9u; ++index)
-        {
-            int2 offset = adaptiveOffsets[index];
-            int px = centerX + offset.x;
-            int py = centerY + offset.y;
-            if (px < 0 || py < 0 || px >= (int)Width || py >= (int)Height)
-                continue;
-            float normalizedWeight = finalWeights[index] / visibleWeightSum;
-            weights[index] = (uint)floor((float)sampleWeight * normalizedWeight);
-            distributedWeight += weights[index];
-        }
-        weights[bestIndex] += sampleWeight - distributedWeight;
-
-        [unroll]
-        for (uint index = 0u; index < 9u; ++index)
-        {
-            uint localWeight = weights[index];
-            uint localDepth = (uint)round(normalizedDepth * 65535.0) * localWeight;
-            int2 offset = adaptiveOffsets[index];
-            AccumulateSampleToPixel(
-                centerX + offset.x,
-                centerY + offset.y,
-                localWeight,
-                sampleColor.xyz,
-                localDepth);
-        }
+        EmitSymmetrySamples(
+            samplePoint,
+            sampleColor.xyz,
+            yawCos,
+            yawSin,
+            pitchCos,
+            pitchSin,
+            flameCosX,
+            flameSinX,
+            flameCosY,
+            flameSinY,
+            flameCosZ,
+            flameSinZ,
+            frameMinX,
+            frameMinY,
+            frameWidth,
+            frameHeight,
+            frameScale);
     }
 
     if (PreserveOrbitState != 0u)

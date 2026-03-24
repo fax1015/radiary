@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 
 namespace radiary {
 
@@ -24,6 +25,38 @@ std::filesystem::path ResolveShaderPath(const wchar_t* shaderFilename) {
 #endif
 
     return executablePath / shaderDirectory / shaderFilename;
+}
+
+std::wstring AsciiToWide(const char* value) {
+    std::wstring wide;
+    if (value == nullptr) {
+        return wide;
+    }
+    while (*value != '\0') {
+        wide.push_back(static_cast<wchar_t>(*value));
+        ++value;
+    }
+    return wide;
+}
+
+std::wstring MakePrecompiledShaderFilename(
+    const wchar_t* shaderFilename,
+    const char* entryPoint,
+    const char* target) {
+    const std::filesystem::path shaderPath(shaderFilename);
+    std::wstring filename = shaderPath.stem().wstring();
+    filename += L"_";
+    filename += AsciiToWide(entryPoint);
+    filename += L"_";
+    filename += AsciiToWide(target);
+    filename += L".cso";
+    return filename;
+}
+
+bool ShouldForceRuntimeShaderCompilation() {
+    char value[8] {};
+    const DWORD length = GetEnvironmentVariableA("RADIARY_FORCE_RUNTIME_SHADER_COMPILE", value, static_cast<DWORD>(std::size(value)));
+    return length > 0 && value[0] != '\0' && value[0] != '0';
 }
 
 }  // namespace
@@ -54,12 +87,53 @@ UINT GetDevelopmentD3D11ShaderCompileFlags(const bool enableStrictness, const bo
 #endif
 }
 
+ID3DBlob* LoadPrecompiledShaderBlob(const wchar_t* csoFilename, std::string& error) {
+    const std::filesystem::path shaderPath = ResolveShaderPath(csoFilename);
+    std::ifstream stream(shaderPath, std::ios::binary | std::ios::ate);
+    if (!stream) {
+        error = "Precompiled shader not found: " + shaderPath.string();
+        return nullptr;
+    }
+
+    const std::streamsize size = stream.tellg();
+    if (size <= 0) {
+        error = "Precompiled shader is empty: " + shaderPath.string();
+        return nullptr;
+    }
+    stream.seekg(0, std::ios::beg);
+
+    ID3DBlob* shaderBlob = nullptr;
+    const HRESULT result = D3DCreateBlob(static_cast<SIZE_T>(size), &shaderBlob);
+    if (FAILED(result) || shaderBlob == nullptr) {
+        error = FormatD3D11StageError("D3DCreateBlob(precompiled shader)", result);
+        return nullptr;
+    }
+
+    if (!stream.read(static_cast<char*>(shaderBlob->GetBufferPointer()), size)) {
+        shaderBlob->Release();
+        error = "Failed to read precompiled shader: " + shaderPath.string();
+        return nullptr;
+    }
+
+    error.clear();
+    return shaderBlob;
+}
+
 ID3DBlob* CompileD3D11ShaderFromFile(
     const wchar_t* shaderFilename,
     const char* entryPoint,
     const char* target,
     const UINT compileFlags,
     std::string& error) {
+    const std::wstring csoFilename = MakePrecompiledShaderFilename(shaderFilename, entryPoint, target);
+    if (!ShouldForceRuntimeShaderCompilation()) {
+        std::string precompiledError;
+        if (ID3DBlob* precompiledBlob = LoadPrecompiledShaderBlob(csoFilename.c_str(), precompiledError)) {
+            error.clear();
+            return precompiledBlob;
+        }
+    }
+
     const std::filesystem::path shaderPath = ResolveShaderPath(shaderFilename);
     ID3DBlob* shaderBlob = nullptr;
     ID3DBlob* errorBlob = nullptr;
