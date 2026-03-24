@@ -531,7 +531,9 @@ void AppWindow::DrawToolbar() {
 
     if (DrawActionButton("##new_scene", "New", IconGlyph::NewScene, ActionTone::Slate)) {
         PushUndoState(scene_);
-        Scene newScene = CreateDefaultScene();
+        Scene newScene;
+        newScene.name = "Untitled";
+        newScene.animatePath = false;
         ApplyUserSceneDefaults(newScene);
         ResetScene(std::move(newScene));
         currentScenePath_.clear();
@@ -1111,30 +1113,57 @@ void AppWindow::DrawExportPanel() {
         }
 
         ImGui::SeparatorText("Render");
-        constexpr std::uint32_t kMinExportIterations = 20000u;
-        constexpr std::uint32_t kMaxExportIterations = 100000000u;
+        const std::uint32_t exportBaselineIterations = CurrentPreviewSampleBaseline();
+        const std::uint32_t exportDensityMatchedBaseline = CurrentExportDensityMatchedBaseline();
+        exportIterations_ = CurrentExportIterationCount();
+        constexpr float kMinExportIterationScale = 1.0f;
+        constexpr float kMaxExportIterationScale = 8.0f;
         if (BeginPropertyGrid("##export_render_grid")) {
             DrawPropertyRow(
                 "Use GPU",
                 [&]() {
                     return ImGui::Checkbox("##export_use_gpu", &exportUseGpu_);
                 },
-                "Falls back to CPU if the GPU export path is unavailable.");
+                "CPU fallback if unavailable.");
             DrawPropertyRow(
-                "Iterations",
+                "Preview baseline",
                 [&]() {
-                    exportIterations_ = std::clamp(exportIterations_, kMinExportIterations, kMaxExportIterations);
-                    const bool changed = ImGui::InputScalar(
-                        "##export_iterations",
-                        ImGuiDataType_U32,
-                        &exportIterations_,
-                        &kMinExportIterations,
-                        &kMinExportIterations,
-                        "%u");
-                    exportIterations_ = std::clamp(exportIterations_, kMinExportIterations, kMaxExportIterations);
-                    return changed;
-                },
-                "Higher values increase render time with diminishing quality returns.");
+                    PushMonospaceFont();
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("%u", exportBaselineIterations);
+                    PopMonospaceFont();
+                    return false;
+                });
+            DrawPropertyRow(
+                "Resolution baseline",
+                [&]() {
+                    PushMonospaceFont();
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("%u", exportDensityMatchedBaseline);
+                    PopMonospaceFont();
+                    return false;
+                });
+            DrawPropertyRow(
+                "Sample scale",
+                [&]() {
+                    exportIterationScale_ = std::clamp(exportIterationScale_, kMinExportIterationScale, kMaxExportIterationScale);
+                    return SliderScalarWithInput(
+                        "##export_iteration_scale",
+                        ImGuiDataType_Float,
+                        &exportIterationScale_,
+                        &kMinExportIterationScale,
+                        &kMaxExportIterationScale,
+                        "%.1fx");
+                });
+            DrawPropertyRow(
+                "Export iterations",
+                [&]() {
+                    PushMonospaceFont();
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("%u", exportIterations_);
+                    PopMonospaceFont();
+                    return false;
+                });
             ImGui::EndTable();
         }
 
@@ -3406,7 +3435,7 @@ void AppWindow::DrawViewportPanel() {
     }
 
     const bool viewportDirtyBeforeInteraction = IsViewportDirty();
-    HandleViewportInteraction(allowViewportRender && hovered);
+    HandleViewportInteraction(allowViewportRender && hovered, width, height);
     const bool viewportDirtiedByInteraction = IsViewportDirty() && !viewportDirtyBeforeInteraction;
 
     if (allowViewportRender && IsViewportDirty() && (!attemptedViewportRender || viewportDirtiedByInteraction)) {

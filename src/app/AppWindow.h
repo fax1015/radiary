@@ -258,6 +258,7 @@ private:
     int exportWidth_ = 1920;
     int exportHeight_ = 1080;
     std::uint32_t exportIterations_ = 480000;
+    float exportIterationScale_ = 1.0f;
     int exportFrameStart_ = 0;
     int exportFrameEnd_ = 120;
     ExportFormat exportFormat_ = ExportFormat::Png;
@@ -593,7 +594,7 @@ private:
     void StartRenderThread();
     void StopRenderThread();
     void RenderViewportIfNeeded(int width, int height);
-    void HandleViewportInteraction(bool hovered);
+    void HandleViewportInteraction(bool hovered, int width, int height);
     void HandleShortcuts();
     void CaptureWidgetUndo(const Scene& beforeChange, bool changed);
     void PushUndoState(const Scene& snapshot);
@@ -643,6 +644,9 @@ private:
     bool SaveSceneToDialog(bool saveAs);
     bool LoadSceneFromDialog();
     void OpenExportPanel();
+    std::uint32_t CurrentPreviewSampleBaseline() const;
+    std::uint32_t CurrentExportDensityMatchedBaseline() const;
+    std::uint32_t CurrentExportIterationCount() const;
     void ProcessPendingExport();
     bool ExecuteExportRequest(const ExportRequest& request);
     bool UpdateExportProgress(float progress, const std::wstring& detail);
@@ -671,7 +675,7 @@ private:
     };
     GpuFlameRenderOptions MakeExportGpuFlameRenderOptions(const Scene& scene, bool transparent, const ExportRenderState* renderState) const;
     bool RenderSceneToPixels(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, bool useGpu, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr);
-    bool RenderSceneToPixelsCpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr) const;
+    bool RenderSceneToPixelsCpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr);
     bool RenderSceneToPixelsGpu(const Scene& sourceScene, int width, int height, std::uint32_t iterations, bool transparentBackground, bool hideGrid, std::vector<std::uint32_t>& pixels, const ExportRenderState* renderState = nullptr);
     void InvalidateExportViewportPreview();
     bool PumpExportOverlay();

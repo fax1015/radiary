@@ -11,6 +11,7 @@ namespace radiary::render_math {
 constexpr double kProjectionNearDepth = 0.15;
 constexpr double kDepthRangePadding = 24.0;
 constexpr double kProjectionScale = 240.0;
+constexpr double kProjectionReferenceFrameHeight = 720.0;
 
 struct CameraProjectionPoint {
     double x = 0.0;
@@ -19,6 +20,38 @@ struct CameraProjectionPoint {
     double perspective = 0.0;
     bool visible = false;
 };
+
+struct CameraFrameProjection {
+    double minX = 0.0;
+    double minY = 0.0;
+    double width = 1.0;
+    double height = 1.0;
+    double scale = 1.0;
+};
+
+inline CameraFrameProjection ComputeCameraFrameProjection(
+    const CameraState& camera,
+    const int width,
+    const int height) {
+    const double safeWidth = std::max(1.0, static_cast<double>(width));
+    const double safeHeight = std::max(1.0, static_cast<double>(height));
+    const double aspect = std::max(0.001, camera.frameWidth) / std::max(0.001, camera.frameHeight);
+
+    double frameWidth = safeWidth;
+    double frameHeight = frameWidth / aspect;
+    if (frameHeight > safeHeight) {
+        frameHeight = safeHeight;
+        frameWidth = frameHeight * aspect;
+    }
+
+    return {
+        (safeWidth - frameWidth) * 0.5,
+        (safeHeight - frameHeight) * 0.5,
+        std::max(1.0, frameWidth),
+        std::max(1.0, frameHeight),
+        std::max(1.0, frameHeight) / kProjectionReferenceFrameHeight
+    };
+}
 
 inline Vec3 RotateIntoCameraView(const Vec3& point, const CameraState& camera) {
     const double yawCos = std::cos(camera.yaw);
@@ -54,14 +87,15 @@ inline CameraProjectionPoint ProjectCameraPoint(
         return {};
     }
 
-    const double perspective = kProjectionScale * camera.zoom2D / rotated.z;
+    const CameraFrameProjection frame = ComputeCameraFrameProjection(camera, width, height);
+    const double perspective = kProjectionScale * frame.scale * camera.zoom2D / rotated.z;
     if (!std::isfinite(perspective)) {
         return {};
     }
 
     return {
-        width * 0.5 + camera.panX + rotated.x * perspective,
-        height * 0.5 + camera.panY - rotated.y * perspective,
+        frame.minX + frame.width * 0.5 + camera.panX * frame.scale + rotated.x * perspective,
+        frame.minY + frame.height * 0.5 + camera.panY * frame.scale - rotated.y * perspective,
         rotated.z,
         perspective,
         true

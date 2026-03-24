@@ -10,6 +10,7 @@ cbuffer RenderParams : register(b0)
     float PanX;
     float PanY;
     float Zoom2D;
+    float CameraAspect;
     float FlameRotateX;
     float FlameRotateY;
     float FlameRotateZ;
@@ -30,7 +31,7 @@ cbuffer RenderParams : register(b0)
     uint RandomSeedOffset;
     uint PreserveOrbitState;
     float FarDepth;
-    float Padding[2];
+    float Padding[1];
 };
 
 struct TransformGpu
@@ -71,6 +72,7 @@ static const uint kBurnInIterations = 24u;
 static const uint kAccumulationScale = 4u;
 static const float kDepthNear = 0.15f;
 static const float kOrbitResetRadius = 1000000.0f;
+static const float kProjectionReferenceFrameHeight = 720.0f;
 
 uint NextRandom(inout uint state)
 {
@@ -110,6 +112,20 @@ bool IsOrbitOutOfRange(float2 sample)
 bool IsOrbitOutOfRange3(float3 sample)
 {
     return abs(sample.x) > kOrbitResetRadius || abs(sample.y) > kOrbitResetRadius || abs(sample.z) > kOrbitResetRadius;
+}
+
+void ComputeCameraFrame(out float frameMinX, out float frameMinY, out float frameWidth, out float frameHeight, out float frameScale)
+{
+    frameWidth = (float)Width;
+    frameHeight = frameWidth / max(0.001, CameraAspect);
+    if (frameHeight > (float)Height)
+    {
+        frameHeight = (float)Height;
+        frameWidth = frameHeight * max(0.001, CameraAspect);
+    }
+    frameMinX = ((float)Width - frameWidth) * 0.5;
+    frameMinY = ((float)Height - frameHeight) * 0.5;
+    frameScale = max(1.0, frameHeight) / kProjectionReferenceFrameHeight;
 }
 
 float ReconstructionKernel(int dx, int dy)
@@ -629,6 +645,12 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     float flameSinY = sin(FlameRotateY);
     float flameCosZ = cos(FlameRotateZ);
     float flameSinZ = sin(FlameRotateZ);
+    float frameMinX;
+    float frameMinY;
+    float frameWidth;
+    float frameHeight;
+    float frameScale;
+    ComputeCameraFrame(frameMinX, frameMinY, frameWidth, frameHeight, frameScale);
 
     [loop]
     for (uint iteration = 0; iteration < iterationsPerThread + kBurnInIterations; ++iteration)
@@ -730,11 +752,11 @@ void AccumulateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         if (rotated.z <= 0.15)
             continue;
 
-        float perspective = 240.0 * Zoom2D / rotated.z;
+        float perspective = 240.0 * frameScale * Zoom2D / rotated.z;
         if (!isfinite(perspective))
             continue;
-        float screenX = Width * 0.5 + PanX + rotated.x * perspective;
-        float screenY = Height * 0.5 + PanY - rotated.y * perspective;
+        float screenX = frameMinX + frameWidth * 0.5 + PanX * frameScale + rotated.x * perspective;
+        float screenY = frameMinY + frameHeight * 0.5 + PanY * frameScale - rotated.y * perspective;
         if (screenX < -1.0 || screenY < -1.0 || screenX > (float)Width || screenY > (float)Height)
             continue;
 

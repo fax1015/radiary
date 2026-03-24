@@ -73,6 +73,7 @@ private:
         float panX = 0.0f;
         float panY = 0.0f;
         float zoom2D = 1.0f;
+        float cameraAspect = 16.0f / 9.0f;
         float flameRotateX = 0.0f;
         float flameRotateY = 0.0f;
         float flameRotateZ = 0.0f;
@@ -93,7 +94,7 @@ private:
         std::uint32_t randomSeedOffset = 0;
         std::uint32_t preserveOrbitState = 0;
         float farDepth = 24.0f;
-        float padding[2] {};
+        float padding[1] {};
     };
 
     struct OrbitStateGpu {

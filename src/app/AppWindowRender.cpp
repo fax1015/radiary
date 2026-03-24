@@ -3,9 +3,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "imgui.h"
 #include "imgui_internal.h"
+
+#include "renderer/RenderMath.h"
 
 using namespace radiary;
 
@@ -444,22 +447,42 @@ bool AppWindow::RenderGpuFlameScene(
     if (!EnsureGpuFlameRendererInitialized()) {
         return false;
     }
-    if (options.pumpOverlay) {
-        if (exportCancelRequested_ || !PumpExportOverlay()) {
+    const std::uint32_t totalIterations = std::max<std::uint32_t>(options.iterations, 1u);
+    const std::uint32_t maxBatchIterations = options.pumpOverlay
+        ? std::clamp(totalIterations / 8u, 262144u, 2097152u)
+        : totalIterations;
+
+    std::uint64_t completedIterations = 0u;
+    bool firstBatch = true;
+    while (completedIterations < totalIterations) {
+        if (options.pumpOverlay && (exportCancelRequested_ || !PumpExportOverlay())) {
             return false;
         }
+
+        const std::uint32_t batchIterations = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(static_cast<std::uint64_t>(maxBatchIterations), static_cast<std::uint64_t>(totalIterations) - completedIterations));
+        const std::uint32_t targetIterations = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(
+                static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()),
+                completedIterations + static_cast<std::uint64_t>(batchIterations)));
+        if (!gpuFlameRenderer_.Render(
+                scene,
+                width,
+                height,
+                targetIterations,
+                options.transparent,
+                firstBatch ? options.clearAccumulationForFrame : false,
+                firstBatch && options.preserveTemporalState,
+                firstBatch && options.resetTemporalState)) {
+            return false;
+        }
+
+        completedIterations = firstBatch
+            ? static_cast<std::uint64_t>(batchIterations)
+            : completedIterations + static_cast<std::uint64_t>(batchIterations);
+        firstBatch = false;
     }
-    if (!gpuFlameRenderer_.Render(
-            scene,
-            width,
-            height,
-            options.iterations,
-            options.transparent,
-            options.clearAccumulationForFrame,
-            options.preserveTemporalState,
-            options.resetTemporalState)) {
-        return false;
-    }
+
     if (options.pumpOverlay && !PumpExportOverlay()) {
         return false;
     }
@@ -1202,7 +1225,7 @@ void AppWindow::RenderViewportIfNeeded(const int width, const int height) {
     ExecuteViewportRenderRequest(request, setup);
 }
 
-void AppWindow::HandleViewportInteraction(const bool hovered) {
+void AppWindow::HandleViewportInteraction(const bool hovered, const int width, const int height) {
     ImGuiIO& io = ImGui::GetIO();
     ImGuiContext& g = *ImGui::GetCurrentContext();
     ImGuiWindow* currentWindow = ImGui::GetCurrentWindow();
@@ -1244,6 +1267,8 @@ void AppWindow::HandleViewportInteraction(const bool hovered) {
             viewportInteractionCaptured_ = true;
         }
     };
+    const render_math::CameraFrameProjection frame = render_math::ComputeCameraFrameProjection(scene_.camera, width, height);
+    const double inverseFrameScale = 1.0 / std::max(1.0e-6, frame.scale);
 
     if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         captureViewportUndo();
@@ -1254,8 +1279,8 @@ void AppWindow::HandleViewportInteraction(const bool hovered) {
     }
     if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
         captureViewportUndo();
-        scene_.camera.panX += io.MouseDelta.x;
-        scene_.camera.panY += io.MouseDelta.y;
+        scene_.camera.panX += io.MouseDelta.x * inverseFrameScale;
+        scene_.camera.panY += io.MouseDelta.y * inverseFrameScale;
         AutoKeyCurrentFrame();
         MarkViewportDirty(PreviewResetReason::CameraChanged);
     }

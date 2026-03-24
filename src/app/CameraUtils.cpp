@@ -194,17 +194,10 @@ Scene PrepareSceneForExport(
     const bool hideGrid) {
     Scene exportScene = sourceScene;
     exportScene.gridVisible = hideGrid ? false : exportScene.gridVisible;
-
-    if (previewWidth <= 0 || previewHeight <= 0) {
-        return exportScene;
-    }
-
-    const ImVec2 previewFrameSize = FitCameraFrameToBounds(sourceScene.camera, static_cast<float>(previewWidth), static_cast<float>(previewHeight));
-    const ImVec2 exportFrameSize = FitCameraFrameToBounds(sourceScene.camera, static_cast<float>(std::max(1, exportWidth)), static_cast<float>(std::max(1, exportHeight)));
-    const double widthScale = static_cast<double>(std::max(1.0f, exportFrameSize.x)) / static_cast<double>(std::max(1.0f, previewFrameSize.x));
-    const double heightScale = static_cast<double>(std::max(1.0f, exportFrameSize.y)) / static_cast<double>(std::max(1.0f, previewFrameSize.y));
-    exportScene.camera.panX *= widthScale;
-    exportScene.camera.panY *= heightScale;
+    (void)previewWidth;
+    (void)previewHeight;
+    (void)exportWidth;
+    (void)exportHeight;
     return exportScene;
 }
 

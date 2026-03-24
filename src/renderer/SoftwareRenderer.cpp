@@ -1780,6 +1780,9 @@ bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
             return false;
         }
         for (int y = 0; y < height; ++y) {
+            if (options.shouldAbort && (y % 16) == 0 && options.shouldAbort()) {
+                return false;
+            }
             for (int x = 0; x < width; ++x) {
                 const std::size_t i = static_cast<std::size_t>(y * width + x);
                 const FlamePixel pixel = ReconstructFlamePixel(flamePixels, width, height, x, y);

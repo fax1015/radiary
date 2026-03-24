@@ -10,6 +10,7 @@
 #include <cwchar>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -105,6 +106,41 @@ void WriteS32(std::ostream& stream, const std::int32_t value) {
 }  // namespace
 
 namespace radiary {
+std::uint32_t AppWindow::CurrentPreviewSampleBaseline() const {
+    std::uint32_t baseline = previewProgress_.displayedIterations;
+    if (baseline == 0) {
+        baseline = previewProgress_.targetIterations;
+    }
+    if (baseline == 0) {
+        baseline = scene_.previewIterations;
+    }
+    return std::max<std::uint32_t>(baseline, 1u);
+}
+
+std::uint32_t AppWindow::CurrentExportDensityMatchedBaseline() const {
+    const std::uint32_t previewBaseline = CurrentPreviewSampleBaseline();
+    const int previewWidth = std::max(1, UploadedViewportWidth());
+    const int previewHeight = std::max(1, UploadedViewportHeight());
+    const int exportWidth = std::max(1, exportWidth_);
+    const int exportHeight = std::max(1, exportHeight_);
+
+    const ImVec2 previewFrameSize = FitCameraFrameToBounds(scene_.camera, static_cast<float>(previewWidth), static_cast<float>(previewHeight));
+    const ImVec2 exportFrameSize = FitCameraFrameToBounds(scene_.camera, static_cast<float>(exportWidth), static_cast<float>(exportHeight));
+    const double previewFrameArea = std::max(1.0, static_cast<double>(std::max(1.0f, previewFrameSize.x)) * static_cast<double>(std::max(1.0f, previewFrameSize.y)));
+    const double exportFrameArea = std::max(1.0, static_cast<double>(std::max(1.0f, exportFrameSize.x)) * static_cast<double>(std::max(1.0f, exportFrameSize.y)));
+    const double densityScale = exportFrameArea / previewFrameArea;
+    const std::uint64_t scaled = static_cast<std::uint64_t>(std::llround(static_cast<double>(previewBaseline) * densityScale));
+    return static_cast<std::uint32_t>(std::clamp<std::uint64_t>(scaled, 1u, static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())));
+}
+
+std::uint32_t AppWindow::CurrentExportIterationCount() const {
+    constexpr std::uint32_t kMinExportIterations = 20000u;
+    constexpr std::uint32_t kMaxExportIterations = std::numeric_limits<std::uint32_t>::max();
+    const double scaled = static_cast<double>(CurrentExportDensityMatchedBaseline()) * static_cast<double>(exportIterationScale_);
+    const auto rounded = static_cast<std::uint64_t>(std::llround(scaled));
+    return static_cast<std::uint32_t>(std::clamp<std::uint64_t>(rounded, kMinExportIterations, kMaxExportIterations));
+}
+
 bool AppWindow::SaveSceneToDialog(const bool saveAs) {
     std::filesystem::path path = currentScenePath_;
     if (saveAs || path.empty()) {
@@ -173,7 +209,8 @@ void AppWindow::OpenExportPanel() {
         exportHeight_ = 1080;
         ConstrainExportResolutionToCamera(scene_.camera, exportWidth_, exportHeight_, true);
     }
-    exportIterations_ = std::max<std::uint32_t>(scene_.previewIterations, 1u);
+    exportIterationScale_ = 1.0f;
+    exportIterations_ = CurrentExportIterationCount();
     exportFrameStart_ = scene_.timelineStartFrame;
     exportFrameEnd_ = scene_.timelineEndFrame;
     exportPanelOpen_ = true;
@@ -217,6 +254,7 @@ bool AppWindow::ExportViewportToDialog() {
     pendingExportRequest_.path = fileBuffer;
     pendingExportRequest_.width = exportWidth_;
     pendingExportRequest_.height = exportHeight_;
+    exportIterations_ = CurrentExportIterationCount();
     pendingExportRequest_.iterations = exportIterations_;
     pendingExportRequest_.transparentBackground = exportPng && exportTransparentBackground_;
     pendingExportRequest_.hideGrid = exportHideGrid_;
@@ -260,7 +298,7 @@ bool AppWindow::RenderSceneToPixelsCpu(
     const bool transparentBackground,
     const bool hideGrid,
     std::vector<std::uint32_t>& pixels,
-    const ExportRenderState* renderState) const {
+    const ExportRenderState* renderState) {
     Scene exportScene = BuildExportRenderScene(sourceScene, width, height, hideGrid);
     exportScene.previewIterations = std::max<std::uint32_t>(iterations, 1u);
     SoftwareRenderer localRenderer;
@@ -276,8 +314,11 @@ bool AppWindow::RenderSceneToPixelsCpu(
     renderOptions.renderGrid = !hideGrid;
     renderOptions.transparentBackground = transparentBackground;
     renderOptions.preserveFlameState = renderState != nullptr && renderState->preserveTemporalFlameState;
-    exportRenderer.RenderViewport(exportScene, std::max(1, width), std::max(1, height), pixels, renderOptions);
-    return !pixels.empty();
+    renderOptions.shouldAbort = [this]() {
+        return exportCancelRequested_ || !PumpExportOverlay();
+    };
+    return exportRenderer.RenderViewport(exportScene, std::max(1, width), std::max(1, height), pixels, renderOptions)
+        && !pixels.empty();
 }
 
 void AppWindow::InvalidateExportViewportPreview() {

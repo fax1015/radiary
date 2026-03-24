@@ -241,6 +241,7 @@ bool GpuFlameRenderer::Render(
     params.panX = static_cast<float>(scene.camera.panX);
     params.panY = static_cast<float>(scene.camera.panY);
     params.zoom2D = static_cast<float>(scene.camera.zoom2D);
+    params.cameraAspect = static_cast<float>(std::max(0.001, scene.camera.frameWidth) / std::max(0.001, scene.camera.frameHeight));
     params.flameRotateX = static_cast<float>(DegreesToRadians(scene.flameRender.rotationXDegrees));
     params.flameRotateY = static_cast<float>(DegreesToRadians(scene.flameRender.rotationYDegrees));
     params.flameRotateZ = static_cast<float>(DegreesToRadians(scene.flameRender.rotationZDegrees));
@@ -353,6 +354,8 @@ std::uint64_t GpuFlameRenderer::ComputeSceneSignature(const Scene& scene) const 
     signature = mixDouble(signature, scene.camera.panX);
     signature = mixDouble(signature, scene.camera.panY);
     signature = mixDouble(signature, scene.camera.zoom2D);
+    signature = mixDouble(signature, scene.camera.frameWidth);
+    signature = mixDouble(signature, scene.camera.frameHeight);
     signature = mixDouble(signature, scene.flameRender.rotationXDegrees);
     signature = mixDouble(signature, scene.flameRender.rotationYDegrees);
     signature = mixDouble(signature, scene.flameRender.rotationZDegrees);
