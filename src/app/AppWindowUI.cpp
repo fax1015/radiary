@@ -19,10 +19,15 @@ using namespace radiary;
 
 namespace {
 
-constexpr float kOverlayPanelMarginX = 16.0f;
+constexpr float kOverlayPanelMarginX = 12.0f;
 constexpr float kOverlayPanelMarginY = 12.0f;
+constexpr float kStatusPanelPaddingX = 12.0f;
+constexpr float kStatusPanelPaddingY = 10.0f;
+constexpr float kStatusPanelHeaderPaddingY = 8.0f;
+constexpr float kStatusPanelSeparatorHeight = 1.0f;
+constexpr float kStatusPanelMinWrapWidth = 240.0f;
 constexpr float kDefaultToolbarHeight = 52.0f;
-constexpr float kDefaultBottomPanelHeight = 196.0f;
+constexpr float kDefaultBottomPanelHeight = 180.0f;
 constexpr float kDefaultLeftPanelWidth = 463.0f;
 constexpr float kDefaultRightPanelWidth = 508.0f;
 constexpr float kWidePreviewGridMinWidth = 620.0f;
@@ -114,6 +119,30 @@ bool DrawPropertyRow(const char* label, const DrawWidget& drawWidget, const char
         ImGui::PopStyleColor();
     }
     return changed;
+}
+
+struct StatusOverlayLayout {
+    ImVec2 size {};
+    ImVec2 titleSize {};
+    ImVec2 bodySize {};
+    float textAvailableWidth = 0.0f;
+    float headerHeight = 0.0f;
+};
+
+StatusOverlayLayout BuildStatusOverlayLayout(const std::string& bodyText, const float maxPanelWidth) {
+    StatusOverlayLayout layout;
+    layout.titleSize = ImGui::CalcTextSize("Status");
+    layout.headerHeight = layout.titleSize.y + kStatusPanelHeaderPaddingY * 2.0f;
+
+    layout.bodySize = ImGui::CalcTextSize(bodyText.c_str(), nullptr, true);
+    layout.size.x = std::min(
+        maxPanelWidth,
+        std::max(
+            layout.titleSize.x + kStatusPanelPaddingX * 2.0f,
+            layout.bodySize.x + kStatusPanelPaddingX * 2.0f));
+    layout.textAvailableWidth = std::max(1.0f, layout.size.x - kStatusPanelPaddingX * 2.0f);
+    layout.size.y = layout.headerHeight + kStatusPanelSeparatorHeight + layout.bodySize.y + kStatusPanelPaddingY * 2.0f;
+    return layout;
 }
 
 }  // namespace
@@ -2278,9 +2307,22 @@ void AppWindow::DrawTimelinePanel() {
     playbackPanelActive_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
     DrawDockPanelTabContextMenu("Playback", playbackPanelOpen_);
     const Scene defaultScene = CreateDefaultScene();
-    const float playbackTopGap = 1.0f;
-    const float playbackSectionGap = 3.0f;
-    ImGui::Dummy(ImVec2(0.0f, playbackTopGap));
+    const float playbackSectionGap = 0;
+    const float playbackHeaderTopMargin = 0;
+    const float playbackHeaderHeight = std::max(1.0f, kDefaultToolbarHeight - ImGui::GetStyle().WindowPadding.y * 1.5f);
+    ImGui::Dummy(ImVec2(0.0f, playbackHeaderTopMargin));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImGui::GetStyle().WindowPadding.x, 0.0f));
+    ImGui::BeginChild(
+        "PlaybackToolbarScroll",
+        ImVec2(0.0f, playbackHeaderHeight),
+        false,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavFocus);
+    ImGui::PopStyleVar();
+    ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && io.MouseWheel != 0.0f) {
+        ImGui::SetScrollX(ImGui::GetScrollX() - io.MouseWheel * toolbarScrollStep_);
+    }
+
     const auto drawHeaderDivider = []() {
         DrawSubtleToolbarDivider(8.0f);
     };
@@ -2414,9 +2456,8 @@ void AppWindow::DrawTimelinePanel() {
         + ImGui::CalcTextSize("FPS").x + kTimelineLabelGap + kTimelineFpsWidth
         + kTimelinePairGap
         + ImGui::CalcTextSize("Frame").x + kTimelineLabelGap + kTimelineValueWidth;
-    const float currentToolbarX = ImGui::GetCursorPosX();
-    const float rightAlignedToolbarX = std::max(currentToolbarX, ImGui::GetWindowContentRegionMax().x - rightToolbarWidth);
-    ImGui::SameLine(rightAlignedToolbarX);
+    (void)rightToolbarWidth;
+    drawHeaderDivider();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%s", playbackSummary);
     drawHeaderDivider();
@@ -2462,6 +2503,7 @@ void AppWindow::DrawTimelinePanel() {
         MarkViewportDirty(PreviewResetReason::SceneChanged);
     }
     CaptureWidgetUndo(beforeTimeline, timelineChanged);
+    ImGui::EndChild();
 
     ImGui::Dummy(ImVec2(0.0f, playbackSectionGap));
     struct TimelineLaneInfo {
@@ -3122,6 +3164,18 @@ void AppWindow::DrawViewportPanel() {
     }
 
     const UiTheme& theme = GetUiTheme();
+    const std::string statusLine = WideToUtf8(statusText_)
+        + " | Mode "
+        + ToString(scene_.mode)
+        + " | Preview "
+        + std::to_string(std::max(1, UploadedViewportWidth()))
+        + "x"
+        + std::to_string(std::max(1, UploadedViewportHeight()));
+    const StatusOverlayLayout minStatusLayout = BuildStatusOverlayLayout(statusLine, kStatusPanelMinWrapWidth + kStatusPanelPaddingX * 2.0f);
+    const ImVec2 viewportMinSize(
+        minStatusLayout.size.x + kOverlayPanelMarginX * 2.0f,
+        minStatusLayout.size.y + kOverlayPanelMarginY * 2.0f);
+    ImGui::SetNextWindowSizeConstraints(viewportMinSize, ImVec2(FLT_MAX, FLT_MAX));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, theme.panelBackgroundInset);
     ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
@@ -3224,6 +3278,10 @@ void AppWindow::DrawViewportPanel() {
         }
     }
 
+    if (showStatusOverlay_ && imageMax.x > imageMin.x && imageMax.y > imageMin.y) {
+        DrawStatusBar(imageMin, imageMax);
+    }
+
     const bool viewportDirtyBeforeInteraction = IsViewportDirty();
     HandleViewportInteraction(allowViewportRender && hovered);
     const bool viewportDirtiedByInteraction = IsViewportDirty() && !viewportDirtyBeforeInteraction;
@@ -3235,32 +3293,66 @@ void AppWindow::DrawViewportPanel() {
     ImGui::End();
 }
 
-void AppWindow::DrawStatusBar() {
-    if (ImGuiWindow* viewportWindow = ImGui::FindWindowByName("Viewport")) {
-        const ImVec2 margin(16.0f, 12.0f);
-        const ImVec2 statusAnchor(viewportWindow->InnerRect.Max.x - margin.x, viewportWindow->InnerRect.Min.y + margin.y);
-        const float maxWidth = std::max(1.0f, viewportWindow->InnerRect.GetWidth() - margin.x * 2.0f);
-        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
-        ImGui::SetNextWindowPos(statusAnchor, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-        ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(maxWidth, FLT_MAX));
+void AppWindow::DrawStatusBar(const ImVec2& viewportMin, const ImVec2& viewportMax) {
+    const ImRect viewportRect(viewportMin, viewportMax);
+    if (viewportRect.GetWidth() <= 1.0f || viewportRect.GetHeight() <= 1.0f) {
+        return;
     }
 
-    ImGui::Begin(
+    const UiTheme& theme = GetUiTheme();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    if (drawList == nullptr) {
+        return;
+    }
+
+    const std::string bodyText = WideToUtf8(statusText_)
+        + " | Mode "
+        + ToString(scene_.mode)
+        + " | Preview "
+        + std::to_string(std::max(1, UploadedViewportWidth()))
+        + "x"
+        + std::to_string(std::max(1, UploadedViewportHeight()));
+    const float maxPanelWidth = std::max(1.0f, viewportRect.GetWidth() - kOverlayPanelMarginX * 2.0f);
+    const StatusOverlayLayout layout = BuildStatusOverlayLayout(bodyText, maxPanelWidth);
+
+    const ImVec2 panelMin(
+        std::max(viewportRect.Min.x + kOverlayPanelMarginX, viewportRect.Max.x - kOverlayPanelMarginX - layout.size.x),
+        viewportRect.Min.y + kOverlayPanelMarginY);
+    const ImVec2 panelMax(panelMin.x + layout.size.x, panelMin.y + layout.size.y);
+    const ImVec2 headerMax(panelMax.x, panelMin.y + layout.headerHeight);
+    const float separatorY = headerMax.y;
+
+    drawList->PushClipRect(viewportRect.Min, viewportRect.Max, true);
+    drawList->AddRectFilled(panelMin, panelMax, ImGui::GetColorU32(theme.panelBackgroundElevated), theme.roundingLarge);
+    drawList->AddRectFilled(panelMin, headerMax, ImGui::GetColorU32(theme.panelBackgroundAlt), theme.roundingLarge, ImDrawFlags_RoundCornersTop);
+    drawList->AddLine(
+        ImVec2(panelMin.x, separatorY),
+        ImVec2(panelMax.x, separatorY),
+        ImGui::GetColorU32(theme.border),
+        kStatusPanelSeparatorHeight);
+    drawList->AddRect(panelMin, panelMax, ImGui::GetColorU32(theme.border), theme.roundingLarge, 0, 1.0f);
+
+    const ImVec2 titlePos(panelMin.x + kStatusPanelPaddingX, panelMin.y + kStatusPanelHeaderPaddingY);
+    const ImVec2 bodyPos(panelMin.x + kStatusPanelPaddingX, separatorY + kStatusPanelPaddingY);
+    ImGui::PushStyleColor(ImGuiCol_Text, theme.text);
+    ImGui::RenderTextEllipsis(
+        drawList,
+        titlePos,
+        ImVec2(panelMax.x - kStatusPanelPaddingX, headerMax.y),
+        panelMax.x - kStatusPanelPaddingX,
         "Status",
         nullptr,
-        ImGuiWindowFlags_NoCollapse
-            | ImGuiWindowFlags_NoDocking
-            | ImGuiWindowFlags_NoMove
-            | ImGuiWindowFlags_NoResize
-            | ImGuiWindowFlags_NoSavedSettings
-            | ImGuiWindowFlags_NoScrollbar
-            | ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::TextUnformatted(WideToUtf8(statusText_).c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("| Mode %s", ToString(scene_.mode).c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("| Preview %dx%d", std::max(1, UploadedViewportWidth()), std::max(1, UploadedViewportHeight()));
-    ImGui::End();
+        &layout.titleSize);
+    ImGui::RenderTextEllipsis(
+        drawList,
+        bodyPos,
+        ImVec2(panelMax.x - kStatusPanelPaddingX, panelMax.y - kStatusPanelPaddingY),
+        panelMax.x - kStatusPanelPaddingX,
+        bodyText.c_str(),
+        nullptr,
+        &layout.bodySize);
+    ImGui::PopStyleColor();
+    drawList->PopClipRect();
 }
 
 }  // namespace radiary

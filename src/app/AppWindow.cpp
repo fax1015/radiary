@@ -962,9 +962,6 @@ void AppWindow::RenderFrame() {
     DrawPreviewPanel();
     DrawCameraPanel();
     DrawViewportPanel();
-    if (showStatusOverlay_ && viewportPanelOpen_) {
-        DrawStatusBar();
-    }
     DrawSettingsPanel();
     DrawExportPanel();
     DrawEasingPanel();

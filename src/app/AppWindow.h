@@ -378,7 +378,7 @@ private:
     void OpenAllDockPanels();
     void DrawDockPanelVisibilityMenuItems();
     void DrawDockPanelTabContextMenu(const char* panelName, bool& panelOpen);
-    void DrawStatusBar();
+    void DrawStatusBar(const ImVec2& viewportMin, const ImVec2& viewportMax);
     void DrawSettingsPanel();
     void DrawExportPanel();
     void DrawEasingPanel();
