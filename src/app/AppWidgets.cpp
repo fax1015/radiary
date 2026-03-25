@@ -610,6 +610,7 @@ void ApplyRadiaryStyle(ImGuiStyle& style) {
     style.Colors[ImGuiCol_TabDimmedSelectedOverline] = WithAlpha(theme.accent, 0.72f);
     style.Colors[ImGuiCol_DockingPreview] = WithAlpha(theme.accent, 0.24f);
     style.Colors[ImGuiCol_DockingEmptyBg] = theme.appBackgroundBottom;
+    style.Colors[ImGuiCol_ModalWindowDimBg] = theme.overlayScrim;
     style.Colors[ImGuiCol_Text] = theme.text;
     style.Colors[ImGuiCol_TextDisabled] = theme.textDim;
     style.Colors[ImGuiCol_TextSelectedBg] = WithAlpha(theme.accent, 0.28f);

@@ -17,6 +17,10 @@
 #include "imgui_internal.h"
 #include "misc/cpp/imgui_stdlib.h"
 
+#ifndef RADIARY_APP_VERSION
+#define RADIARY_APP_VERSION "dev"
+#endif
+
 using namespace radiary;
 
 namespace {
@@ -36,6 +40,8 @@ constexpr float kWidePreviewGridMinWidth = 620.0f;
 constexpr float kWideCameraGridMinWidth = 620.0f;
 constexpr float kWideCameraActionsMinWidth = 340.0f;
 constexpr float kWideInspectorMinWidth = 600.0f;
+constexpr char kAboutPopupId[] = "About Radiary";
+constexpr char kRadiaryAppVersion[] = RADIARY_APP_VERSION;
 
 struct VariationCategory {
     const char* name = "";
@@ -542,6 +548,7 @@ void AppWindow::DrawToolbar() {
     };
 
     const float brandLogoSize = ImGui::GetFrameHeight();
+    ImGui::BeginGroup();
     if (appLogoSrv_ != nullptr) {
         const float brandRowStartY = ImGui::GetCursorPosY();
         ImGui::Image(reinterpret_cast<ImTextureID>(appLogoSrv_.Get()), ImVec2(brandLogoSize, brandLogoSize));
@@ -556,6 +563,11 @@ void AppWindow::DrawToolbar() {
     ImGui::TextUnformatted("Radiary");
     if (brandFont_ != nullptr) {
         ImGui::PopFont();
+    }
+    ImGui::EndGroup();
+
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        aboutPopupOpenRequested_ = true;
     }
 
     ImGui::SameLine(0.0f, 12.0f);
@@ -732,6 +744,218 @@ void AppWindow::DrawToolbar() {
     ImGui::EndChild();
     ImGui::End();
     ImGui::PopStyleVar(2);
+}
+
+void AppWindow::DrawAboutPopup() {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (viewport == nullptr) {
+        return;
+    }
+    const float aboutPopupWidth = std::clamp(viewport->Size.x - 32.0f, 320.0f, 440.0f);
+
+    if (aboutPopupOpenRequested_) {
+        ImGui::OpenPopup(kAboutPopupId);
+        aboutPopupOpenRequested_ = false;
+        aboutPopupPhysicsInitialized_ = false;
+        aboutPopupGrabActive_ = false;
+        aboutPopupVelocityX_ = 0.0f;
+        aboutPopupVelocityY_ = 0.0f;
+    }
+
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!io.MouseDown[ImGuiMouseButton_Left]) {
+        aboutPopupGrabActive_ = false;
+    }
+    const bool aboutPopupCanDetectGrab = aboutPopupPhysicsInitialized_
+        && aboutPopupLastWindowHeight_ > 0.0f
+        && aboutPopupLastTitleBarHeight_ > 0.0f;
+    const ImRect aboutPopupTitleBarRect(
+        ImVec2(aboutPopupPosX_, aboutPopupPosY_),
+        ImVec2(aboutPopupPosX_ + aboutPopupWidth, aboutPopupPosY_ + aboutPopupLastTitleBarHeight_));
+    const bool aboutPopupGrabAttempt = aboutPopupCanDetectGrab
+        && io.MouseDown[ImGuiMouseButton_Left]
+        && aboutPopupTitleBarRect.Contains(io.MousePos);
+    if (aboutPopupGrabAttempt) {
+        aboutPopupGrabActive_ = true;
+    }
+    if (aboutPopupGrabActive_) {
+        aboutPopupVelocityX_ = 0.0f;
+        aboutPopupVelocityY_ = 0.0f;
+    }
+    const bool aboutPopupAnimating = std::abs(aboutPopupVelocityX_) > 0.0f || std::abs(aboutPopupVelocityY_) > 0.0f;
+    const bool aboutPopupPhysicsSuppressed = aboutPopupGrabActive_ && io.MouseDown[ImGuiMouseButton_Left];
+
+    ImGui::SetNextWindowViewport(viewport->ID);
+    if (aboutPopupPhysicsInitialized_ && aboutPopupAnimating && !aboutPopupPhysicsSuppressed) {
+        ImGui::SetNextWindowPos(ImVec2(aboutPopupPosX_, aboutPopupPosY_), ImGuiCond_Always);
+    } else {
+        ImGui::SetNextWindowPos(
+            ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
+            ImGuiCond_Appearing,
+            ImVec2(0.5f, 0.5f));
+    }
+    ImGui::SetNextWindowSizeConstraints(ImVec2(aboutPopupWidth, 0.0f), ImVec2(aboutPopupWidth, FLT_MAX));
+    ImGui::SetNextWindowSize(ImVec2(aboutPopupWidth, 0.0f), ImGuiCond_Appearing);
+
+    PushFloatingPanelStyle();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22.0f, 20.0f));
+    if (ImGui::BeginPopupModal(
+            kAboutPopupId,
+            nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize)) {
+        const UiTheme& theme = GetUiTheme();
+        ImGuiWindow* popupWindow = ImGui::GetCurrentWindow();
+        ImGuiContext& g = *GImGui;
+        const float dt = std::clamp(io.DeltaTime > 0.0f ? io.DeltaTime : (1.0f / 60.0f), 1.0f / 240.0f, 1.0f / 20.0f);
+        if (!aboutPopupPhysicsInitialized_) {
+            aboutPopupPhysicsInitialized_ = true;
+            aboutPopupPosX_ = popupWindow->Pos.x;
+            aboutPopupPosY_ = popupWindow->Pos.y;
+            aboutPopupLastWindowPosX_ = popupWindow->Pos.x;
+            aboutPopupLastWindowPosY_ = popupWindow->Pos.y;
+        }
+
+        const bool popupMoving = g.MovingWindow == popupWindow;
+        aboutPopupLastWindowHeight_ = popupWindow->Size.y;
+        aboutPopupLastTitleBarHeight_ = popupWindow->TitleBarHeight;
+        if (popupMoving) {
+            aboutPopupGrabActive_ = true;
+            constexpr float kPopupReleaseVelocityScale = 0.42f;
+            aboutPopupVelocityX_ = ((popupWindow->Pos.x - aboutPopupLastWindowPosX_) / dt) * kPopupReleaseVelocityScale;
+            aboutPopupVelocityY_ = ((popupWindow->Pos.y - aboutPopupLastWindowPosY_) / dt) * kPopupReleaseVelocityScale;
+            aboutPopupPosX_ = popupWindow->Pos.x;
+            aboutPopupPosY_ = popupWindow->Pos.y;
+        } else if (aboutPopupAnimating && !aboutPopupPhysicsSuppressed) {
+            aboutPopupPosX_ += aboutPopupVelocityX_ * dt;
+            aboutPopupPosY_ += aboutPopupVelocityY_ * dt;
+
+            constexpr float kPopupViewportMargin = 8.0f;
+            constexpr float kPopupBounce = 0.82f;
+            constexpr float kPopupDrag = 0.982f;
+            constexpr float kPopupStopSpeed = 24.0f;
+            const float minX = viewport->Pos.x + kPopupViewportMargin;
+            const float minY = viewport->Pos.y + kPopupViewportMargin;
+            const float maxX = std::max(minX, viewport->Pos.x + viewport->Size.x - popupWindow->Size.x - kPopupViewportMargin);
+            const float maxY = std::max(minY, viewport->Pos.y + viewport->Size.y - popupWindow->Size.y - kPopupViewportMargin);
+
+            if (aboutPopupPosX_ < minX) {
+                aboutPopupPosX_ = minX;
+                aboutPopupVelocityX_ = std::abs(aboutPopupVelocityX_) * kPopupBounce;
+            } else if (aboutPopupPosX_ > maxX) {
+                aboutPopupPosX_ = maxX;
+                aboutPopupVelocityX_ = -std::abs(aboutPopupVelocityX_) * kPopupBounce;
+            }
+            if (aboutPopupPosY_ < minY) {
+                aboutPopupPosY_ = minY;
+                aboutPopupVelocityY_ = std::abs(aboutPopupVelocityY_) * kPopupBounce;
+            } else if (aboutPopupPosY_ > maxY) {
+                aboutPopupPosY_ = maxY;
+                aboutPopupVelocityY_ = -std::abs(aboutPopupVelocityY_) * kPopupBounce;
+            }
+
+            aboutPopupVelocityX_ *= kPopupDrag;
+            aboutPopupVelocityY_ *= kPopupDrag;
+            if (std::abs(aboutPopupVelocityX_) < kPopupStopSpeed) {
+                aboutPopupVelocityX_ = 0.0f;
+            }
+            if (std::abs(aboutPopupVelocityY_) < kPopupStopSpeed) {
+                aboutPopupVelocityY_ = 0.0f;
+            }
+
+            ImGui::SetWindowPos(ImVec2(aboutPopupPosX_, aboutPopupPosY_), ImGuiCond_Always);
+        } else {
+            aboutPopupPosX_ = popupWindow->Pos.x;
+            aboutPopupPosY_ = popupWindow->Pos.y;
+        }
+
+        const float contentStartX = ImGui::GetCursorPosX();
+        const float availableWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+        const float logoSize = std::clamp(availableWidth * 0.18f, 52.0f, 72.0f);
+        const auto centerNextItem = [&](const float itemWidth) {
+            ImGui::SetCursorPosX(contentStartX + std::max(0.0f, (availableWidth - itemWidth) * 0.5f));
+        };
+
+        if (appLogoSrv_ != nullptr) {
+            centerNextItem(logoSize);
+            ImGui::Image(reinterpret_cast<ImTextureID>(appLogoSrv_.Get()), ImVec2(logoSize, logoSize));
+        }
+
+        const char* brandLabel = "Radiary";
+        float brandTextWidth = 0.0f;
+        if (brandFont_ != nullptr) {
+            ImGui::PushFont(brandFont_);
+            brandTextWidth = ImGui::CalcTextSize(brandLabel).x;
+            ImGui::PopFont();
+        } else {
+            brandTextWidth = ImGui::CalcTextSize(brandLabel).x;
+        }
+        centerNextItem(brandTextWidth);
+        if (brandFont_ != nullptr) {
+            ImGui::PushFont(brandFont_);
+        }
+        ImGui::TextUnformatted(brandLabel);
+        if (brandFont_ != nullptr) {
+            ImGui::PopFont();
+        }
+
+        const std::string versionLabel = std::string("Version ") + kRadiaryAppVersion;
+        const float versionWidth = ImGui::CalcTextSize(versionLabel.c_str()).x;
+        centerNextItem(versionWidth);
+        ImGui::PushStyleColor(ImGuiCol_Text, theme.textMuted);
+        ImGui::TextUnformatted(versionLabel.c_str());
+        ImGui::PopStyleColor();
+
+        const char* summaryLabel = "Animated flame and path editor.";
+        const float summaryWidth = ImGui::CalcTextSize(summaryLabel).x;
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        centerNextItem(summaryWidth);
+        ImGui::PushStyleColor(ImGuiCol_Text, theme.textMuted);
+        ImGui::TextUnformatted(summaryLabel);
+        ImGui::PopStyleColor();
+
+        ImGui::Dummy(ImVec2(0.0f, 14.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme.roundingMedium);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 14.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.panelBackgroundAlt);
+        if (ImGui::BeginChild(
+                "##about_details",
+                ImVec2(0.0f, 0.0f),
+                ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders,
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, theme.textMuted);
+            ImGui::TextUnformatted("Preview");
+            ImGui::PopStyleColor();
+            ImGui::TextUnformatted(gpuFlamePreviewEnabled_ ? "GPU (D3D11)" : "CPU");
+
+            ImGui::Dummy(ImVec2(0.0f, 10.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, theme.textMuted);
+            ImGui::TextUnformatted("Renderer");
+            ImGui::PopStyleColor();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(WideToUtf8(renderAdapterName_).c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+
+        ImGui::Dummy(ImVec2(0.0f, 16.0f));
+        centerNextItem(132.0f);
+        if (ImGui::Button("Close", ImVec2(132.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        aboutPopupLastWindowPosX_ = aboutPopupPosX_;
+        aboutPopupLastWindowPosY_ = aboutPopupPosY_;
+        ImGui::EndPopup();
+    } else {
+        aboutPopupPhysicsInitialized_ = false;
+        aboutPopupGrabActive_ = false;
+        aboutPopupVelocityX_ = 0.0f;
+        aboutPopupVelocityY_ = 0.0f;
+    }
+    ImGui::PopStyleVar();
+    PopFloatingPanelStyle();
 }
 
 void AppWindow::DrawSettingsPanel() {
@@ -3276,7 +3500,6 @@ void AppWindow::DrawPreviewPanel() {
         ImGui::EndTable();
     }
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Open Effects for denoising, depth of field, and post-processing.");
     ImGui::PopTextWrapPos();
 
     const int previewWidth = std::max(1, UploadedViewportWidth());

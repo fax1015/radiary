@@ -272,6 +272,9 @@ private:
     bool cameraPanelOpen_ = true;
     bool viewportPanelOpen_ = true;
     bool settingsPanelOpen_ = false;
+    bool aboutPopupOpenRequested_ = false;
+    bool aboutPopupPhysicsInitialized_ = false;
+    bool aboutPopupGrabActive_ = false;
     bool exportPanelOpen_ = false;
     bool easingPanelOpen_ = false;
     bool exportRequestPending_ = false;
@@ -290,6 +293,14 @@ private:
     float toolbarScrollStep_ = 48.0f;
     float settingsButtonAnchorX_ = 0.0f;
     float settingsButtonAnchorY_ = 0.0f;
+    float aboutPopupPosX_ = 0.0f;
+    float aboutPopupPosY_ = 0.0f;
+    float aboutPopupVelocityX_ = 0.0f;
+    float aboutPopupVelocityY_ = 0.0f;
+    float aboutPopupLastWindowPosX_ = 0.0f;
+    float aboutPopupLastWindowPosY_ = 0.0f;
+    float aboutPopupLastWindowHeight_ = 0.0f;
+    float aboutPopupLastTitleBarHeight_ = 0.0f;
     float exportButtonAnchorX_ = 0.0f;
     float exportButtonAnchorY_ = 0.0f;
     float easingButtonAnchorX_ = 0.0f;
@@ -438,6 +449,7 @@ private:
     void DrawDockPanelVisibilityMenuItems();
     void DrawDockPanelTabContextMenu(const char* panelName, bool& panelOpen);
     void DrawStatusBar(const ImVec2& viewportMin, const ImVec2& viewportMax);
+    void DrawAboutPopup();
     void DrawSettingsPanel();
     void DrawExportPanel();
     void DrawEasingPanel();

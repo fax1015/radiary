@@ -185,6 +185,7 @@ target_compile_definitions(Radiary PRIVATE
     NOMINMAX
     WIN32_LEAN_AND_MEAN
     RADIARY_SHADER_DIR=L\"shaders\"
+    RADIARY_APP_VERSION=\"${PROJECT_VERSION}\"
 )
 
 if (MSVC)

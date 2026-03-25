@@ -1021,6 +1021,7 @@ void AppWindow::RenderFrame() {
     HandleShortcuts();
     DrawDockspace();
     DrawToolbar();
+    DrawAboutPopup();
     DrawLayersPanel();
     DrawKeyframeListPanel();
     DrawHistoryPanel();
