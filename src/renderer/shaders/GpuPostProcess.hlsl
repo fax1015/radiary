@@ -4,17 +4,31 @@ cbuffer PostProcessParams : register(b0)
     uint Height;
     float BloomIntensity;
     float BloomThreshold;
+    uint CurvesEnabled;
+    uint SharpenEnabled;
+    uint HueShiftEnabled;
+    uint ChromaticAberrationEnabled;
+    float CurveBlackPoint;
+    float CurveWhitePoint;
+    float CurveGamma;
+    float SharpenAmount;
+    float HueShiftDegrees;
     float ChromaticAberration;
     float VignetteIntensity;
     float VignetteRoundness;
-    uint AcesToneMap;
+    uint VignetteEnabled;
+    uint ToneMappingEnabled;
+    uint FilmGrainEnabled;
+    uint ColorTemperatureEnabled;
     float FilmGrain;
     float ColorTemperature;
     float SaturationBoost;
+    float Padding0;
+    uint SaturationEnabled;
     uint RandomSeed;
     uint MipWidth;
     uint MipHeight;
-    float2 Padding;
+    float4 Padding;
 };
 
 Texture2D<float4> InputTexture : register(t0);
@@ -71,6 +85,36 @@ float3 ColorTemperatureToRGB(float kelvin)
 float Luminance(float3 color)
 {
     return dot(color, float3(0.2126, 0.7152, 0.0722));
+}
+
+float3 RGBToHSV(float3 color)
+{
+    float4 k = float4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    float4 p = lerp(float4(color.bg, k.wz), float4(color.gb, k.xy), step(color.b, color.g));
+    float4 q = lerp(float4(p.xyw, color.r), float4(color.r, p.yzx), step(p.x, color.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-6;
+    return float3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+float3 HSVToRGB(float3 hsv)
+{
+    float3 p = abs(frac(hsv.xxx + float3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+    return hsv.z * lerp(float3(1.0, 1.0, 1.0), saturate(p - 1.0), hsv.y);
+}
+
+float3 ApplyCurves(float3 color)
+{
+    float blackPoint = min(CurveBlackPoint, CurveWhitePoint - 0.001);
+    float whitePoint = max(CurveWhitePoint, blackPoint + 0.001);
+    float gamma = max(CurveGamma, 0.05);
+    return pow(saturate((color - blackPoint.xxx) / (whitePoint - blackPoint).xxx), 1.0 / gamma);
+}
+
+float3 SampleInputRgb(int2 coord)
+{
+    coord = clamp(coord, int2(0, 0), int2(Width - 1, Height - 1));
+    return InputTexture.Load(int3(coord, 0)).rgb;
 }
 
 [numthreads(8, 8, 1)]
@@ -151,7 +195,7 @@ void PostProcessCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     float2 center = float2(0.5, 0.5);
 
     float3 color;
-    if (ChromaticAberration > 0.001)
+    if (ChromaticAberrationEnabled != 0u && ChromaticAberration > 0.001)
     {
         float2 dir = uv - center;
         float dist = length(dir);
@@ -170,6 +214,17 @@ void PostProcessCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         color = InputTexture.Load(int3(pixel, 0)).rgb;
     }
 
+    if (SharpenEnabled != 0u && SharpenAmount > 0.001)
+    {
+        float3 blurred =
+            (SampleInputRgb(pixel) * 4.0
+                + SampleInputRgb(pixel + int2(1, 0))
+                + SampleInputRgb(pixel + int2(-1, 0))
+                + SampleInputRgb(pixel + int2(0, 1))
+                + SampleInputRgb(pixel + int2(0, -1))) / 8.0;
+        color = lerp(color, color + (color - blurred), saturate(SharpenAmount));
+    }
+
     if (BloomIntensity > 0.001)
     {
         uint bloomW, bloomH;
@@ -179,26 +234,38 @@ void PostProcessCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         color += bloom * BloomIntensity;
     }
 
-    if (abs(ColorTemperature - 6500.0) > 10.0)
+    if (ColorTemperatureEnabled != 0u && abs(ColorTemperature - 6500.0) > 10.0)
     {
         float3 tempColor = ColorTemperatureToRGB(ColorTemperature);
         float3 neutral = ColorTemperatureToRGB(6500.0);
         color *= tempColor / max(neutral, float3(0.001, 0.001, 0.001));
     }
 
-    if (abs(SaturationBoost) > 0.001)
+    if (SaturationEnabled != 0u && abs(SaturationBoost) > 0.001)
     {
         float lum = Luminance(color);
         color = lerp(float3(lum, lum, lum), color, 1.0 + SaturationBoost);
         color = max(color, float3(0.0, 0.0, 0.0));
     }
 
-    if (AcesToneMap != 0u)
+    if (HueShiftEnabled != 0u && abs(HueShiftDegrees) > 0.001)
+    {
+        float3 hsv = RGBToHSV(saturate(color));
+        hsv.x = frac(hsv.x + HueShiftDegrees / 360.0);
+        color = HSVToRGB(hsv);
+    }
+
+    if (CurvesEnabled != 0u)
+    {
+        color = ApplyCurves(color);
+    }
+
+    if (ToneMappingEnabled != 0u)
     {
         color = ACESFilm(color);
     }
 
-    if (FilmGrain > 0.001)
+    if (FilmGrainEnabled != 0u && FilmGrain > 0.001)
     {
         uint seed = (dispatchThreadId.y * Width + dispatchThreadId.x) ^ RandomSeed;
         float grain = (RandomFloat(seed) - 0.5) * FilmGrain * 0.15;
@@ -207,7 +274,7 @@ void PostProcessCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         color += grain * grainScale;
     }
 
-    if (VignetteIntensity > 0.001)
+    if (VignetteEnabled != 0u && VignetteIntensity > 0.001)
     {
         float2 vignUv = uv - center;
         float aspectRatio = float(Width) / float(Height);

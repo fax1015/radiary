@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <wrl/client.h>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -177,6 +178,7 @@ private:
         GpuFrameInputs inputs {};
         GpuPassOutput resolvedFrame {};
         bool hasResolvedFrame = false;
+        PreviewRenderStage finalStage = PreviewRenderStage::Base;
     };
 
     struct GpuFlameRenderOptions {
@@ -186,6 +188,31 @@ private:
         bool preserveTemporalState = false;
         bool resetTemporalState = false;
         bool pumpOverlay = false;
+    };
+
+    struct HistoryEntry {
+        Scene snapshot {};
+        std::string label = "Scene";
+    };
+
+    struct HistogramCache {
+        std::array<float, 256> red {};
+        std::array<float, 256> green {};
+        std::array<float, 256> blue {};
+        std::array<float, 256> luminance {};
+        int width = 0;
+        int height = 0;
+        std::size_t sampleCount = 0;
+        double meanLuminance = 0.0;
+        double medianLuminance = 0.0;
+        double p95Luminance = 0.0;
+        double shadowClipPercent = 0.0;
+        double midtonePercent = 0.0;
+        double highlightClipPercent = 0.0;
+        bool valid = false;
+        PreviewPresentationState presentation {};
+        std::chrono::steady_clock::time_point sourceTimestamp {};
+        std::chrono::steady_clock::time_point lastRefreshAt {};
     };
 
     HINSTANCE instance_ = nullptr;
@@ -204,8 +231,8 @@ private:
     bool inSizeMove_ = false;
 
     Scene scene_ = CreateDefaultScene();
-    std::vector<Scene> undoStack_;
-    std::vector<Scene> redoStack_;
+    std::vector<HistoryEntry> undoStack_;
+    std::vector<HistoryEntry> redoStack_;
     GpuFlameRenderer gpuFlameRenderer_;
     GpuDofRenderer gpuDofRenderer_;
     GpuDenoiser gpuDenoiser_;
@@ -225,6 +252,7 @@ private:
     std::chrono::steady_clock::time_point lastAutoSave_ {};
     Scene pendingUndoScene_ = scene_;
     bool hasPendingUndoScene_ = false;
+    std::string currentHistoryLabel_ = "New Scene";
     bool sceneDirty_ = false;
     bool sceneModifiedSinceAutoSave_ = false;
     bool viewportInteractionCaptured_ = false;
@@ -234,6 +262,8 @@ private:
     bool playbackPanelOpen_ = true;
     bool previewPanelOpen_ = true;
     bool effectsPanelOpen_ = true;
+    bool histogramPanelOpen_ = false;
+    bool historyPanelOpen_ = true;
     bool cameraPanelOpen_ = true;
     bool viewportPanelOpen_ = true;
     bool settingsPanelOpen_ = false;
@@ -310,6 +340,7 @@ private:
     double fpsSmoothed_ = 60.0;
     std::chrono::steady_clock::time_point lastPreviewUpdate_ {};
     double previewFpsSmoothed_ = 60.0;
+    HistogramCache histogramCache_ {};
     bool viewportDirty_ = true;
     bool interactivePreview_ = false;
     bool asyncViewportRendering_ = true;
@@ -393,6 +424,8 @@ private:
     void DrawTimelinePanel();
     void DrawPreviewPanel();
     void DrawEffectsPanel();
+    void DrawHistogramPanel();
+    void DrawHistoryPanel();
     void DrawCameraPanel();
     void DrawViewportPanel();
     void OpenAllDockPanels();
@@ -432,6 +465,7 @@ private:
         bool useDenoiser,
         bool useDof,
         bool usePostProcess);
+    static PreviewRenderStage DetermineResolvedRenderStage(const Scene& scene);
     static std::wstring BuildGpuRendererUnavailableStatusMessage(
         const wchar_t* label,
         bool deviceReady,
@@ -532,6 +566,8 @@ private:
         bool useGpuPostProcessPreview);
     bool RunGpuDenoiserPass(const Scene& scene, int width, int height, const GpuFrameInputs& inputs, GpuPassOutput& output);
     bool RunGpuCompositePass(int width, int height, const GpuFrameInputs& inputs, GpuPassOutput& output);
+    static Scene MakeIsolatedEffectScene(const Scene& scene, EffectStackStage stage);
+    static PreviewRenderStage PreviewRenderStageForEffectStage(EffectStackStage stage);
     bool PrepareGpuEffectChainState(
         const Scene& scene,
         int width,
@@ -613,13 +649,16 @@ private:
     void HandleViewportInteraction(bool hovered, int width, int height);
     void HandleShortcuts();
     void CaptureWidgetUndo(const Scene& beforeChange, bool changed);
-    void PushUndoState(const Scene& snapshot);
+    void PushUndoState(const Scene& snapshot, std::string label = {});
     bool CanUndo() const;
     bool CanRedo() const;
     void Undo();
     void Redo();
     void ClearPendingUndoCapture();
     void EnforceUndoStackLimits();
+    void SetCurrentHistoryLabel(std::string label);
+    std::string DescribeSceneChange(const Scene& before, const Scene& after) const;
+    bool CaptureCurrentPreviewPixels(std::vector<std::uint32_t>& pixels, int& width, int& height);
     void CopySelectedLayer();
     void PasteCopiedLayer();
     void DuplicateSelectedLayer();

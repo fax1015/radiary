@@ -115,6 +115,260 @@ Color AddColors(const Color& a, const Color& b) {
     };
 }
 
+Scene MakeIsolatedEffectScene(const Scene& scene, const EffectStackStage stage) {
+    Scene isolated = scene;
+    isolated.denoiser.enabled = false;
+    isolated.depthOfField.enabled = false;
+    isolated.postProcess.enabled = false;
+    isolated.postProcess.curvesEnabled = false;
+    isolated.postProcess.sharpenEnabled = false;
+    isolated.postProcess.hueShiftEnabled = false;
+    isolated.postProcess.chromaticAberrationEnabled = false;
+    isolated.postProcess.vignetteEnabled = false;
+    isolated.postProcess.toneMappingEnabled = false;
+    isolated.postProcess.filmGrainEnabled = false;
+    isolated.postProcess.colorTemperatureEnabled = false;
+    isolated.postProcess.saturationEnabled = false;
+
+    switch (stage) {
+    case EffectStackStage::Denoiser:
+        isolated.denoiser = scene.denoiser;
+        break;
+    case EffectStackStage::DepthOfField:
+        isolated.depthOfField = scene.depthOfField;
+        break;
+    case EffectStackStage::Curves:
+        isolated.postProcess.curvesEnabled = scene.postProcess.curvesEnabled;
+        isolated.postProcess.curveBlackPoint = scene.postProcess.curveBlackPoint;
+        isolated.postProcess.curveWhitePoint = scene.postProcess.curveWhitePoint;
+        isolated.postProcess.curveGamma = scene.postProcess.curveGamma;
+        break;
+    case EffectStackStage::Sharpen:
+        isolated.postProcess.sharpenEnabled = scene.postProcess.sharpenEnabled;
+        isolated.postProcess.sharpenAmount = scene.postProcess.sharpenAmount;
+        break;
+    case EffectStackStage::HueShift:
+        isolated.postProcess.hueShiftEnabled = scene.postProcess.hueShiftEnabled;
+        isolated.postProcess.hueShiftDegrees = scene.postProcess.hueShiftDegrees;
+        break;
+    case EffectStackStage::PostProcess:
+        isolated.postProcess.enabled = scene.postProcess.enabled;
+        isolated.postProcess.bloomIntensity = scene.postProcess.bloomIntensity;
+        isolated.postProcess.bloomRadius = scene.postProcess.bloomRadius;
+        isolated.postProcess.bloomThreshold = scene.postProcess.bloomThreshold;
+        break;
+    case EffectStackStage::ChromaticAberration:
+        isolated.postProcess.chromaticAberrationEnabled = scene.postProcess.chromaticAberrationEnabled;
+        isolated.postProcess.chromaticAberration = scene.postProcess.chromaticAberration;
+        break;
+    case EffectStackStage::ColorTemperature:
+        isolated.postProcess.colorTemperatureEnabled = scene.postProcess.colorTemperatureEnabled;
+        isolated.postProcess.colorTemperature = scene.postProcess.colorTemperature;
+        break;
+    case EffectStackStage::Saturation:
+        isolated.postProcess.saturationEnabled = scene.postProcess.saturationEnabled;
+        isolated.postProcess.saturationBoost = scene.postProcess.saturationBoost;
+        break;
+    case EffectStackStage::ToneMapping:
+        isolated.postProcess.toneMappingEnabled = scene.postProcess.toneMappingEnabled;
+        isolated.postProcess.acesToneMap = scene.postProcess.acesToneMap;
+        break;
+    case EffectStackStage::FilmGrain:
+        isolated.postProcess.filmGrainEnabled = scene.postProcess.filmGrainEnabled;
+        isolated.postProcess.filmGrain = scene.postProcess.filmGrain;
+        break;
+    case EffectStackStage::Vignette:
+        isolated.postProcess.vignetteEnabled = scene.postProcess.vignetteEnabled;
+        isolated.postProcess.vignetteIntensity = scene.postProcess.vignetteIntensity;
+        isolated.postProcess.vignetteRoundness = scene.postProcess.vignetteRoundness;
+        break;
+    default:
+        break;
+    }
+
+    return isolated;
+}
+
+void ApplyOrderedEffects(
+    const Scene& scene,
+    std::vector<std::uint32_t>& pixels,
+    const int width,
+    const int height,
+    const std::function<bool()>& shouldAbort) {
+    std::vector<float> depthBuffer;
+    const bool needsDepth =
+        std::any_of(scene.effectStack.begin(), scene.effectStack.end(), [&](const EffectStackStage stage) {
+            return (stage == EffectStackStage::Denoiser || stage == EffectStackStage::DepthOfField)
+                && IsEffectStageEnabled(scene, stage);
+        });
+    if (needsDepth) {
+        SoftwareRenderer::BuildDepthMap(scene, width, height, depthBuffer);
+    }
+
+    for (const EffectStackStage stage : scene.effectStack) {
+        if (!IsEffectStageEnabled(scene, stage)) {
+            continue;
+        }
+
+        const Scene isolated = MakeIsolatedEffectScene(scene, stage);
+        switch (stage) {
+        case EffectStackStage::Denoiser:
+            SoftwareRenderer::ApplyDenoising(isolated, pixels, width, height, depthBuffer, shouldAbort);
+            break;
+        case EffectStackStage::DepthOfField:
+            SoftwareRenderer::ApplyDepthOfField(isolated, pixels, width, height, depthBuffer);
+            break;
+        case EffectStackStage::Curves:
+        case EffectStackStage::Sharpen:
+        case EffectStackStage::HueShift:
+        case EffectStackStage::PostProcess:
+        case EffectStackStage::ChromaticAberration:
+        case EffectStackStage::ColorTemperature:
+        case EffectStackStage::Saturation:
+        case EffectStackStage::ToneMapping:
+        case EffectStackStage::FilmGrain:
+        case EffectStackStage::Vignette:
+            SoftwareRenderer::ApplyPostProcess(isolated, pixels, width, height);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+Vec3 PixelToRgb(const std::uint32_t pixel) {
+    return {
+        static_cast<double>((pixel >> 16U) & 0xFFU) / 255.0,
+        static_cast<double>((pixel >> 8U) & 0xFFU) / 255.0,
+        static_cast<double>(pixel & 0xFFU) / 255.0
+    };
+}
+
+std::uint8_t PixelAlpha(const std::uint32_t pixel) {
+    return static_cast<std::uint8_t>((pixel >> 24U) & 0xFFU);
+}
+
+std::uint32_t RgbToPixel(const Vec3& color, const std::uint8_t alpha) {
+    return static_cast<std::uint32_t>(Clamp(std::round(color.z * 255.0), 0.0, 255.0))
+        | (static_cast<std::uint32_t>(Clamp(std::round(color.y * 255.0), 0.0, 255.0)) << 8U)
+        | (static_cast<std::uint32_t>(Clamp(std::round(color.x * 255.0), 0.0, 255.0)) << 16U)
+        | (static_cast<std::uint32_t>(alpha) << 24U);
+}
+
+double RgbLuminance(const Vec3& color) {
+    return color.x * 0.2126 + color.y * 0.7152 + color.z * 0.0722;
+}
+
+Vec3 ClampRgb(const Vec3& color) {
+    return {
+        Clamp(color.x, 0.0, 1.0),
+        Clamp(color.y, 0.0, 1.0),
+        Clamp(color.z, 0.0, 1.0)
+    };
+}
+
+Vec3 LerpRgb(const Vec3& a, const Vec3& b, const double t) {
+    return {
+        Lerp(a.x, b.x, t),
+        Lerp(a.y, b.y, t),
+        Lerp(a.z, b.z, t)
+    };
+}
+
+Vec3 ScaleRgb(const Vec3& color, const double factor) {
+    return {color.x * factor, color.y * factor, color.z * factor};
+}
+
+Vec3 DivideRgb(const Vec3& color, const double divisor) {
+    return divisor <= 1.0e-9 ? color : Vec3{color.x / divisor, color.y / divisor, color.z / divisor};
+}
+
+Vec3 HsvToRgb(const double hue, const double saturation, const double value) {
+    const double wrappedHue = std::fmod(std::fmod(hue, 360.0) + 360.0, 360.0);
+    const double c = value * saturation;
+    const double x = c * (1.0 - std::abs(std::fmod(wrappedHue / 60.0, 2.0) - 1.0));
+    const double m = value - c;
+    if (wrappedHue < 60.0) {
+        return {c + m, x + m, m};
+    }
+    if (wrappedHue < 120.0) {
+        return {x + m, c + m, m};
+    }
+    if (wrappedHue < 180.0) {
+        return {m, c + m, x + m};
+    }
+    if (wrappedHue < 240.0) {
+        return {m, x + m, c + m};
+    }
+    if (wrappedHue < 300.0) {
+        return {x + m, m, c + m};
+    }
+    return {c + m, m, x + m};
+}
+
+Vec3 RgbToHsv(const Vec3& color) {
+    const double maxValue = std::max({color.x, color.y, color.z});
+    const double minValue = std::min({color.x, color.y, color.z});
+    const double delta = maxValue - minValue;
+    double hue = 0.0;
+    if (delta > 1.0e-6) {
+        if (maxValue == color.x) {
+            hue = 60.0 * std::fmod((color.y - color.z) / delta, 6.0);
+        } else if (maxValue == color.y) {
+            hue = 60.0 * (((color.z - color.x) / delta) + 2.0);
+        } else {
+            hue = 60.0 * (((color.x - color.y) / delta) + 4.0);
+        }
+    }
+    if (hue < 0.0) {
+        hue += 360.0;
+    }
+    const double saturation = maxValue <= 1.0e-6 ? 0.0 : delta / maxValue;
+    return {hue, saturation, maxValue};
+}
+
+Vec3 ColorTemperatureToRgb(const double kelvin) {
+    const double temp = Clamp(kelvin, 1000.0, 15000.0) / 100.0;
+    double r = 1.0;
+    double g = 0.0;
+    double b = 0.0;
+    if (temp <= 66.0) {
+        g = Clamp(0.3900815787690196 * std::log(temp) - 0.6318414437886275, 0.0, 1.0);
+    } else {
+        r = Clamp(1.292936186062745 * std::pow(temp - 60.0, -0.1332047592), 0.0, 1.0);
+        g = Clamp(1.1298908608952941 * std::pow(temp - 60.0, -0.0755148492), 0.0, 1.0);
+    }
+    if (temp >= 66.0) {
+        b = 1.0;
+    } else if (temp > 19.0) {
+        b = Clamp(0.5432067891101961 * std::log(temp - 10.0) - 1.19625408914, 0.0, 1.0);
+    }
+    return {r, g, b};
+}
+
+Vec3 ApplyLevelsCurve(const Vec3& color, const PostProcessSettings& settings) {
+    const double blackPoint = std::min(settings.curveBlackPoint, settings.curveWhitePoint - 0.001);
+    const double whitePoint = std::max(settings.curveWhitePoint, blackPoint + 0.001);
+    const double gamma = std::max(settings.curveGamma, 0.05);
+    return {
+        std::pow(Clamp((color.x - blackPoint) / (whitePoint - blackPoint), 0.0, 1.0), 1.0 / gamma),
+        std::pow(Clamp((color.y - blackPoint) / (whitePoint - blackPoint), 0.0, 1.0), 1.0 / gamma),
+        std::pow(Clamp((color.z - blackPoint) / (whitePoint - blackPoint), 0.0, 1.0), 1.0 / gamma)
+    };
+}
+
+Vec3 ACESFilm(const Vec3& color) {
+    const auto mapChannel = [](const double x) {
+        const double a = 2.51;
+        const double b = 0.03;
+        const double c = 2.43;
+        const double d = 0.59;
+        const double e = 0.14;
+        return Clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+    };
+    return {mapChannel(color.x), mapChannel(color.y), mapChannel(color.z)};
+}
+
 double Hash1(const double value) {
     return std::sin(value * 127.1 + 311.7) * 43758.5453123;
 }
@@ -1783,6 +2037,126 @@ void SoftwareRenderer::ApplyDenoising(
     pixels = passes % 2 == 1 ? temp : source;
 }
 
+void SoftwareRenderer::ApplyPostProcess(const Scene& scene, std::vector<std::uint32_t>& pixels, const int width, const int height) {
+    const PostProcessSettings& pp = scene.postProcess;
+    if (!HasActivePostProcess(pp) || width <= 0 || height <= 0 || pixels.empty()) {
+        return;
+    }
+
+    const std::vector<std::uint32_t> source = pixels;
+    const auto sampleRgb = [&](const int x, const int y) {
+        const int clampedX = std::clamp(x, 0, width - 1);
+        const int clampedY = std::clamp(y, 0, height - 1);
+        return PixelToRgb(source[static_cast<std::size_t>(clampedY * width + clampedX)]);
+    };
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t index = static_cast<std::size_t>(y * width + x);
+            const std::uint8_t alpha = PixelAlpha(source[index]);
+            Vec3 color = sampleRgb(x, y);
+
+            if (pp.chromaticAberrationEnabled && pp.chromaticAberration > 0.001) {
+                const double u = (static_cast<double>(x) + 0.5) / static_cast<double>(width);
+                const double v = (static_cast<double>(y) + 0.5) / static_cast<double>(height);
+                const Vec2 center {0.5, 0.5};
+                const Vec2 dir {u - center.x, v - center.y};
+                const double dist = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+                const Vec2 offset = dir * (pp.chromaticAberration * 0.02 * dist);
+                const int rx = static_cast<int>((u + offset.x) * static_cast<double>(width));
+                const int ry = static_cast<int>((v + offset.y) * static_cast<double>(height));
+                const int bx = static_cast<int>((u - offset.x) * static_cast<double>(width));
+                const int by = static_cast<int>((v - offset.y) * static_cast<double>(height));
+                const Vec3 redSample = sampleRgb(rx, ry);
+                const Vec3 greenSample = sampleRgb(x, y);
+                const Vec3 blueSample = sampleRgb(bx, by);
+                color = {redSample.x, greenSample.y, blueSample.z};
+            }
+
+            if (pp.sharpenEnabled && pp.sharpenAmount > 0.001) {
+                const Vec3 blurred =
+                    DivideRgb(
+                        sampleRgb(x, y) * 4.0
+                        + sampleRgb(x - 1, y)
+                        + sampleRgb(x + 1, y)
+                        + sampleRgb(x, y - 1)
+                        + sampleRgb(x, y + 1),
+                        8.0);
+                color = LerpRgb(color, color + (color - blurred), Clamp(pp.sharpenAmount, 0.0, 1.0));
+            }
+
+            if (pp.enabled && pp.bloomIntensity > 0.001) {
+                Vec3 bloom {};
+                double totalWeight = 0.0;
+                for (int dy = -2; dy <= 2; ++dy) {
+                    for (int dx = -2; dx <= 2; ++dx) {
+                        const Vec3 sample = sampleRgb(x + dx, y + dy);
+                        const double lum = RgbLuminance(sample);
+                        if (lum <= pp.bloomThreshold) {
+                            continue;
+                        }
+                        const double kernel = 1.0 / (1.0 + static_cast<double>(dx * dx + dy * dy));
+                        bloom = bloom + sample * kernel;
+                        totalWeight += kernel;
+                    }
+                }
+                if (totalWeight > 1.0e-6) {
+                    color = color + ScaleRgb(DivideRgb(bloom, totalWeight), pp.bloomIntensity);
+                }
+            }
+
+            if (pp.colorTemperatureEnabled && std::abs(pp.colorTemperature - 6500.0) > 10.0) {
+                const Vec3 tempColor = ColorTemperatureToRgb(pp.colorTemperature);
+                const Vec3 neutral = ColorTemperatureToRgb(6500.0);
+                color = {
+                    color.x * tempColor.x / std::max(neutral.x, 0.001),
+                    color.y * tempColor.y / std::max(neutral.y, 0.001),
+                    color.z * tempColor.z / std::max(neutral.z, 0.001)
+                };
+            }
+
+            if (pp.saturationEnabled && std::abs(pp.saturationBoost) > 0.001) {
+                const double lum = RgbLuminance(color);
+                color = LerpRgb(Vec3{lum, lum, lum}, color, 1.0 + pp.saturationBoost);
+            }
+
+            if (pp.hueShiftEnabled && std::abs(pp.hueShiftDegrees) > 0.001) {
+                Vec3 hsv = RgbToHsv(ClampRgb(color));
+                hsv.x += pp.hueShiftDegrees;
+                color = HsvToRgb(hsv.x, hsv.y, hsv.z);
+            }
+
+            if (pp.curvesEnabled) {
+                color = ApplyLevelsCurve(color, pp);
+            }
+
+            if (pp.toneMappingEnabled && pp.acesToneMap) {
+                color = ACESFilm(color);
+            }
+
+            if (pp.filmGrainEnabled && pp.filmGrain > 0.001) {
+                const double grainSeed = std::sin((static_cast<double>(x) + 13.0) * 12.9898 + (static_cast<double>(y) + 7.0) * 78.233) * 43758.5453;
+                const double grain = (Fract(grainSeed) - 0.5) * pp.filmGrain * 0.15;
+                const double grainScale = 1.0 - Clamp(RgbLuminance(color) * 2.0, 0.0, 1.0);
+                color = color + Vec3{grain * grainScale, grain * grainScale, grain * grainScale};
+            }
+
+            if (pp.vignetteEnabled && pp.vignetteIntensity > 0.001) {
+                const double u = (static_cast<double>(x) + 0.5) / static_cast<double>(width);
+                const double v = (static_cast<double>(y) + 0.5) / static_cast<double>(height);
+                Vec2 vignetteUv {u - 0.5, v - 0.5};
+                const double aspectRatio = static_cast<double>(width) / static_cast<double>(height);
+                vignetteUv.x *= Lerp(1.0, aspectRatio, pp.vignetteRoundness);
+                const double vignetteDist = Length(vignetteUv) * 1.4142;
+                const double vignette = 1.0 - Smoothstep(0.4, 1.2, vignetteDist) * pp.vignetteIntensity;
+                color = color * vignette;
+            }
+
+            pixels[index] = RgbToPixel(ClampRgb(color), alpha);
+        }
+    }
+}
+
 SoftwareRenderer::ProjectedPoint SoftwareRenderer::Project(
     const Vec3& point,
     const CameraState& camera,
@@ -1795,6 +2169,123 @@ SoftwareRenderer::ProjectedPoint SoftwareRenderer::Project(
         projected.depth,
         projected.visible
     };
+}
+
+Vec3 PixelToRgb(const std::uint32_t pixel) {
+    return {
+        static_cast<double>((pixel >> 16U) & 0xFFU) / 255.0,
+        static_cast<double>((pixel >> 8U) & 0xFFU) / 255.0,
+        static_cast<double>(pixel & 0xFFU) / 255.0
+    };
+}
+
+std::uint8_t PixelAlpha(const std::uint32_t pixel) {
+    return static_cast<std::uint8_t>((pixel >> 24U) & 0xFFU);
+}
+
+std::uint32_t RgbToPixel(const Vec3& color, const std::uint8_t alpha) {
+    return static_cast<std::uint32_t>(Clamp(std::round(color.z * 255.0), 0.0, 255.0))
+        | (static_cast<std::uint32_t>(Clamp(std::round(color.y * 255.0), 0.0, 255.0)) << 8U)
+        | (static_cast<std::uint32_t>(Clamp(std::round(color.x * 255.0), 0.0, 255.0)) << 16U)
+        | (static_cast<std::uint32_t>(alpha) << 24U);
+}
+
+double RgbLuminance(const Vec3& color) {
+    return color.x * 0.2126 + color.y * 0.7152 + color.z * 0.0722;
+}
+
+Vec3 ClampRgb(const Vec3& color) {
+    return {
+        Clamp(color.x, 0.0, 1.0),
+        Clamp(color.y, 0.0, 1.0),
+        Clamp(color.z, 0.0, 1.0)
+    };
+}
+
+Vec3 HsvToRgb(const double hue, const double saturation, const double value) {
+    const double wrappedHue = std::fmod(std::fmod(hue, 360.0) + 360.0, 360.0);
+    const double c = value * saturation;
+    const double x = c * (1.0 - std::abs(std::fmod(wrappedHue / 60.0, 2.0) - 1.0));
+    const double m = value - c;
+    if (wrappedHue < 60.0) {
+        return {c + m, x + m, m};
+    }
+    if (wrappedHue < 120.0) {
+        return {x + m, c + m, m};
+    }
+    if (wrappedHue < 180.0) {
+        return {m, c + m, x + m};
+    }
+    if (wrappedHue < 240.0) {
+        return {m, x + m, c + m};
+    }
+    if (wrappedHue < 300.0) {
+        return {x + m, m, c + m};
+    }
+    return {c + m, m, x + m};
+}
+
+Vec3 RgbToHsv(const Vec3& color) {
+    const double maxValue = std::max({color.x, color.y, color.z});
+    const double minValue = std::min({color.x, color.y, color.z});
+    const double delta = maxValue - minValue;
+    double hue = 0.0;
+    if (delta > 1.0e-6) {
+        if (maxValue == color.x) {
+            hue = 60.0 * std::fmod((color.y - color.z) / delta, 6.0);
+        } else if (maxValue == color.y) {
+            hue = 60.0 * (((color.z - color.x) / delta) + 2.0);
+        } else {
+            hue = 60.0 * (((color.x - color.y) / delta) + 4.0);
+        }
+    }
+    if (hue < 0.0) {
+        hue += 360.0;
+    }
+    const double saturation = maxValue <= 1.0e-6 ? 0.0 : delta / maxValue;
+    return {hue, saturation, maxValue};
+}
+
+Vec3 ColorTemperatureToRgb(const double kelvin) {
+    const double temp = Clamp(kelvin, 1000.0, 15000.0) / 100.0;
+    double r = 1.0;
+    double g = 0.0;
+    double b = 0.0;
+    if (temp <= 66.0) {
+        g = Clamp(0.3900815787690196 * std::log(temp) - 0.6318414437886275, 0.0, 1.0);
+    } else {
+        r = Clamp(1.292936186062745 * std::pow(temp - 60.0, -0.1332047592), 0.0, 1.0);
+        g = Clamp(1.1298908608952941 * std::pow(temp - 60.0, -0.0755148492), 0.0, 1.0);
+    }
+    if (temp >= 66.0) {
+        b = 1.0;
+    } else if (temp > 19.0) {
+        b = Clamp(0.5432067891101961 * std::log(temp - 10.0) - 1.19625408914, 0.0, 1.0);
+    }
+    return {r, g, b};
+}
+
+Vec3 ApplyLevelsCurve(const Vec3& color, const PostProcessSettings& settings) {
+    const double blackPoint = std::min(settings.curveBlackPoint, settings.curveWhitePoint - 0.001);
+    const double whitePoint = std::max(settings.curveWhitePoint, blackPoint + 0.001);
+    const double gamma = std::max(settings.curveGamma, 0.05);
+    return {
+        std::pow(Clamp((color.x - blackPoint) / (whitePoint - blackPoint), 0.0, 1.0), 1.0 / gamma),
+        std::pow(Clamp((color.y - blackPoint) / (whitePoint - blackPoint), 0.0, 1.0), 1.0 / gamma),
+        std::pow(Clamp((color.z - blackPoint) / (whitePoint - blackPoint), 0.0, 1.0), 1.0 / gamma)
+    };
+}
+
+Vec3 ACESFilm(const Vec3& color) {
+    const auto mapChannel = [](const double x) {
+        const double a = 2.51;
+        const double b = 0.03;
+        const double c = 2.43;
+        const double d = 0.59;
+        const double e = 0.14;
+        return Clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+    };
+    return {mapChannel(color.x), mapChannel(color.y), mapChannel(color.z)};
 }
 
 double SoftwareRenderer::NormalizeProjectedDepth(const double depth, const CameraState& camera) {
@@ -1898,15 +2389,8 @@ bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
     }
 
     if (!options.renderPaths || scene.mode == SceneMode::Flame) {
-        if (!options.interactive && (scene.denoiser.enabled || scene.depthOfField.enabled)) {
-            std::vector<float> depthBuffer;
-            BuildDepthMap(scene, width, height, depthBuffer);
-            if (scene.denoiser.enabled) {
-                ApplyDenoising(scene, pixels, width, height, depthBuffer, options.shouldAbort);
-            }
-            if (scene.depthOfField.enabled) {
-                ApplyDepthOfField(scene, pixels, width, height, depthBuffer);
-            }
+        if (!options.interactive) {
+            ApplyOrderedEffects(scene, pixels, width, height, options.shouldAbort);
         }
         return true;
     }
@@ -1985,15 +2469,8 @@ bool SoftwareRenderer::RenderViewport(const Scene& scene, const int width, const
             point.size);
     }
 
-    if (!options.interactive && (scene.denoiser.enabled || scene.depthOfField.enabled)) {
-        std::vector<float> depthBuffer;
-        BuildDepthMap(scene, width, height, depthBuffer);
-        if (scene.denoiser.enabled) {
-            ApplyDenoising(scene, pixels, width, height, depthBuffer, options.shouldAbort);
-        }
-        if (scene.depthOfField.enabled) {
-            ApplyDepthOfField(scene, pixels, width, height, depthBuffer);
-        }
+    if (!options.interactive) {
+        ApplyOrderedEffects(scene, pixels, width, height, options.shouldAbort);
     }
 
     return true;

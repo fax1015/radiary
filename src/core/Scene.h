@@ -92,6 +92,38 @@ enum class SymmetryMode : std::uint8_t {
     BilateralRotational
 };
 
+enum class EffectStackStage : std::uint8_t {
+    Denoiser,
+    DepthOfField,
+    Curves,
+    Sharpen,
+    HueShift,
+    PostProcess,
+    ChromaticAberration,
+    ColorTemperature,
+    Saturation,
+    ToneMapping,
+    FilmGrain,
+    Vignette
+};
+
+constexpr std::size_t kEffectStackStageCount = 12;
+using EffectStackOrder = std::array<EffectStackStage, kEffectStackStageCount>;
+inline constexpr EffectStackOrder kDefaultEffectStackOrder = {
+    EffectStackStage::Denoiser,
+    EffectStackStage::DepthOfField,
+    EffectStackStage::Curves,
+    EffectStackStage::Sharpen,
+    EffectStackStage::HueShift,
+    EffectStackStage::PostProcess,
+    EffectStackStage::ChromaticAberration,
+    EffectStackStage::ColorTemperature,
+    EffectStackStage::Saturation,
+    EffectStackStage::ToneMapping,
+    EffectStackStage::FilmGrain,
+    EffectStackStage::Vignette
+};
+
 enum class VariationType : std::uint8_t {
     Linear,
     Sinusoidal,
@@ -204,12 +236,26 @@ struct PostProcessSettings {
     double bloomIntensity = 0.35;
     double bloomRadius = 0.8;
     double bloomThreshold = 0.6;
+    bool curvesEnabled = false;
+    double curveBlackPoint = 0.0;
+    double curveWhitePoint = 1.0;
+    double curveGamma = 1.0;
+    bool sharpenEnabled = false;
+    double sharpenAmount = 0.0;
+    bool hueShiftEnabled = false;
+    double hueShiftDegrees = 0.0;
+    bool chromaticAberrationEnabled = false;
     double chromaticAberration = 0.0;
+    bool vignetteEnabled = false;
     double vignetteIntensity = 0.0;
     double vignetteRoundness = 0.5;
+    bool toneMappingEnabled = false;
     bool acesToneMap = false;
+    bool filmGrainEnabled = false;
     double filmGrain = 0.0;
+    bool colorTemperatureEnabled = false;
     double colorTemperature = 6500.0;
+    bool saturationEnabled = false;
     double saturationBoost = 0.0;
 };
 
@@ -322,6 +368,7 @@ struct ScenePose {
     DepthOfFieldSettings depthOfField {};
     DenoiserSettings denoiser {};
     PostProcessSettings postProcess {};
+    EffectStackOrder effectStack = kDefaultEffectStackOrder;
     std::vector<TransformLayer> transforms;
     std::vector<PathSettings> paths;
     std::vector<GradientStop> gradientStops;
@@ -350,6 +397,7 @@ struct Scene {
     DepthOfFieldSettings depthOfField {};
     DenoiserSettings denoiser {};
     PostProcessSettings postProcess {};
+    EffectStackOrder effectStack = kDefaultEffectStackOrder;
     std::vector<TransformLayer> transforms;
     std::vector<PathSettings> paths;
     std::vector<GradientStop> gradientStops;
@@ -368,6 +416,9 @@ struct Scene {
 };
 
 std::vector<Color> BuildGradientPalette(const std::vector<GradientStop>& stops, std::size_t count);
+bool HasActivePostProcess(const PostProcessSettings& settings);
+bool IsEffectStageEnabled(const Scene& scene, EffectStackStage stage);
+void NormalizeEffectStackOrder(EffectStackOrder& order);
 Scene CreateDefaultScene();
 Scene CreatePresetScene(const std::string& presetName);
 Scene CreateRandomScene(std::uint32_t seed);
@@ -381,6 +432,8 @@ int FindKeyframeIndex(const Scene& scene, int frame, KeyframeOwnerType ownerType
 double TimelineSecondsForFrame(const Scene& scene, double frame);
 std::string ToString(SceneMode mode);
 SceneMode SceneModeFromString(const std::string& value);
+std::string ToString(EffectStackStage stage);
+EffectStackStage EffectStackStageFromString(const std::string& value);
 std::string ToString(SegmentMode mode);
 SegmentMode SegmentModeFromString(const std::string& value);
 std::string ToString(PathAxis axis);

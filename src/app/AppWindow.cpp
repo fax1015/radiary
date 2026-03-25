@@ -1023,10 +1023,12 @@ void AppWindow::RenderFrame() {
     DrawToolbar();
     DrawLayersPanel();
     DrawKeyframeListPanel();
+    DrawHistoryPanel();
     DrawInspectorPanel();
     DrawTimelinePanel();
     DrawPreviewPanel();
     DrawEffectsPanel();
+    DrawHistogramPanel();
     DrawCameraPanel();
     DrawViewportPanel();
     DrawSettingsPanel();

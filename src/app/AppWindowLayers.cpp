@@ -10,6 +10,10 @@ using namespace radiary;
 
 namespace {
 
+bool NearlyEqual(const double a, const double b, const double epsilon = 1.0e-6) {
+    return std::abs(a - b) <= epsilon;
+}
+
 }  // namespace
 
 namespace radiary {
@@ -127,7 +131,8 @@ void AppWindow::CaptureWidgetUndo(const Scene& beforeChange, const bool changed)
     }
 
     if (ImGui::IsItemDeactivatedAfterEdit()) {
-        PushUndoState(hasPendingUndoScene_ ? pendingUndoScene_ : beforeChange);
+        const Scene& undoScene = hasPendingUndoScene_ ? pendingUndoScene_ : beforeChange;
+        PushUndoState(undoScene, DescribeSceneChange(undoScene, scene_));
         hasPendingUndoScene_ = false;
         return;
     }
@@ -137,15 +142,192 @@ void AppWindow::CaptureWidgetUndo(const Scene& beforeChange, const bool changed)
     }
 
     if (changed && !ImGui::IsItemActive()) {
-        PushUndoState(hasPendingUndoScene_ ? pendingUndoScene_ : beforeChange);
+        const Scene& undoScene = hasPendingUndoScene_ ? pendingUndoScene_ : beforeChange;
+        PushUndoState(undoScene, DescribeSceneChange(undoScene, scene_));
         hasPendingUndoScene_ = false;
     }
 }
 
-void AppWindow::PushUndoState(const Scene& snapshot) {
-    undoStack_.push_back(snapshot);
+void AppWindow::SetCurrentHistoryLabel(std::string label) {
+    if (!label.empty()) {
+        currentHistoryLabel_ = std::move(label);
+    }
+}
+
+std::string AppWindow::DescribeSceneChange(const Scene& before, const Scene& after) const {
+    if (before.name != after.name) {
+        return "Rename Scene";
+    }
+    if (before.mode != after.mode) {
+        return "Change Scene Mode";
+    }
+    if (before.previewIterations != after.previewIterations) {
+        return "Change Render Iterations";
+    }
+    if (before.backgroundColor.r != after.backgroundColor.r
+        || before.backgroundColor.g != after.backgroundColor.g
+        || before.backgroundColor.b != after.backgroundColor.b
+        || before.backgroundColor.a != after.backgroundColor.a) {
+        return "Change Background";
+    }
+    if (!NearlyEqual(before.camera.frameWidth, after.camera.frameWidth) || !NearlyEqual(before.camera.frameHeight, after.camera.frameHeight)) {
+        return "Adjust Camera Framing";
+    }
+    if (!NearlyEqual(before.camera.distance, after.camera.distance)
+        || !NearlyEqual(before.camera.zoom2D, after.camera.zoom2D)
+        || !NearlyEqual(before.camera.panX, after.camera.panX)
+        || !NearlyEqual(before.camera.panY, after.camera.panY)
+        || !NearlyEqual(before.camera.yaw, after.camera.yaw)
+        || !NearlyEqual(before.camera.pitch, after.camera.pitch)) {
+        return "Adjust Camera";
+    }
+    if (before.denoiser.enabled != after.denoiser.enabled) {
+        return "Toggle Denoiser";
+    }
+    if (!NearlyEqual(before.denoiser.strength, after.denoiser.strength)) {
+        return "Adjust Denoiser";
+    }
+    if (before.depthOfField.enabled != after.depthOfField.enabled) {
+        return "Toggle Depth of Field";
+    }
+    if (!NearlyEqual(before.depthOfField.focusDepth, after.depthOfField.focusDepth)
+        || !NearlyEqual(before.depthOfField.focusRange, after.depthOfField.focusRange)
+        || !NearlyEqual(before.depthOfField.blurStrength, after.depthOfField.blurStrength)) {
+        return "Adjust Depth of Field";
+    }
+    if (before.postProcess.enabled != after.postProcess.enabled) {
+        return "Toggle Glow";
+    }
+    if (before.postProcess.curvesEnabled != after.postProcess.curvesEnabled) {
+        return "Toggle Curves";
+    }
+    if (!NearlyEqual(before.postProcess.curveBlackPoint, after.postProcess.curveBlackPoint)
+        || !NearlyEqual(before.postProcess.curveWhitePoint, after.postProcess.curveWhitePoint)
+        || !NearlyEqual(before.postProcess.curveGamma, after.postProcess.curveGamma)) {
+        return "Adjust Curves";
+    }
+    if (before.postProcess.sharpenEnabled != after.postProcess.sharpenEnabled) {
+        return "Toggle Sharpen";
+    }
+    if (!NearlyEqual(before.postProcess.sharpenAmount, after.postProcess.sharpenAmount)) {
+        return "Adjust Sharpen";
+    }
+    if (before.postProcess.hueShiftEnabled != after.postProcess.hueShiftEnabled) {
+        return "Toggle Hue Shift";
+    }
+    if (!NearlyEqual(before.postProcess.hueShiftDegrees, after.postProcess.hueShiftDegrees)) {
+        return "Adjust Hue Shift";
+    }
+    if (!NearlyEqual(before.postProcess.bloomIntensity, after.postProcess.bloomIntensity)
+        || !NearlyEqual(before.postProcess.bloomThreshold, after.postProcess.bloomThreshold)) {
+        return "Adjust Glow";
+    }
+    if (before.postProcess.chromaticAberrationEnabled != after.postProcess.chromaticAberrationEnabled) {
+        return "Toggle Chromatic Aberration";
+    }
+    if (!NearlyEqual(before.postProcess.chromaticAberration, after.postProcess.chromaticAberration)) {
+        return "Adjust Chromatic Aberration";
+    }
+    if (before.postProcess.vignetteEnabled != after.postProcess.vignetteEnabled) {
+        return "Toggle Vignette";
+    }
+    if (!NearlyEqual(before.postProcess.vignetteIntensity, after.postProcess.vignetteIntensity)
+        || !NearlyEqual(before.postProcess.vignetteRoundness, after.postProcess.vignetteRoundness)) {
+        return "Adjust Vignette";
+    }
+    if (before.postProcess.toneMappingEnabled != after.postProcess.toneMappingEnabled) {
+        return "Toggle Tone Mapping";
+    }
+    if (before.postProcess.filmGrainEnabled != after.postProcess.filmGrainEnabled) {
+        return "Toggle Film Grain";
+    }
+    if (!NearlyEqual(before.postProcess.filmGrain, after.postProcess.filmGrain)) {
+        return "Adjust Film Grain";
+    }
+    if (before.postProcess.colorTemperatureEnabled != after.postProcess.colorTemperatureEnabled) {
+        return "Toggle Temperature";
+    }
+    if (!NearlyEqual(before.postProcess.colorTemperature, after.postProcess.colorTemperature)) {
+        return "Adjust Temperature";
+    }
+    if (before.postProcess.saturationEnabled != after.postProcess.saturationEnabled) {
+        return "Toggle Saturation";
+    }
+    if (!NearlyEqual(before.postProcess.saturationBoost, after.postProcess.saturationBoost)) {
+        return "Adjust Saturation";
+    }
+    if (before.effectStack != after.effectStack) {
+        return "Reorder Effects";
+    }
+    if (before.transforms.size() != after.transforms.size() || before.paths.size() != after.paths.size()) {
+        return "Edit Layers";
+    }
+    if (before.keyframes.size() != after.keyframes.size()) {
+        return "Edit Keyframes";
+    }
+    if (before.selectedTransform >= 0
+        && before.selectedTransform < static_cast<int>(before.transforms.size())
+        && before.selectedTransform < static_cast<int>(after.transforms.size())) {
+        const TransformLayer& left = before.transforms[before.selectedTransform];
+        const TransformLayer& right = after.transforms[before.selectedTransform];
+        if (left.name != right.name
+            || left.visible != right.visible
+            || !NearlyEqual(left.weight, right.weight)
+            || !NearlyEqual(left.rotationDegrees, right.rotationDegrees)
+            || !NearlyEqual(left.scaleX, right.scaleX)
+            || !NearlyEqual(left.scaleY, right.scaleY)
+            || !NearlyEqual(left.translateX, right.translateX)
+            || !NearlyEqual(left.translateY, right.translateY)
+            || !NearlyEqual(left.shearX, right.shearX)
+            || !NearlyEqual(left.shearY, right.shearY)
+            || !NearlyEqual(left.colorIndex, right.colorIndex)
+            || left.useCustomColor != right.useCustomColor
+            || left.customColor.r != right.customColor.r
+            || left.customColor.g != right.customColor.g
+            || left.customColor.b != right.customColor.b
+            || left.customColor.a != right.customColor.a) {
+            return "Edit Flame Layer";
+        }
+    }
+    if (before.selectedPath >= 0
+        && before.selectedPath < static_cast<int>(before.paths.size())
+        && before.selectedPath < static_cast<int>(after.paths.size())) {
+        const PathSettings& left = before.paths[before.selectedPath];
+        const PathSettings& right = after.paths[before.selectedPath];
+        if (left.name != right.name
+            || left.visible != right.visible
+            || left.closed != right.closed
+            || !NearlyEqual(left.thickness, right.thickness)
+            || !NearlyEqual(left.taper, right.taper)
+            || !NearlyEqual(left.twist, right.twist)
+            || left.sampleCount != right.sampleCount
+            || left.repeatCount != right.repeatCount) {
+            return "Edit Path Layer";
+        }
+    }
+    if (!NearlyEqual(before.flameRender.rotationXDegrees, after.flameRender.rotationXDegrees)
+        || !NearlyEqual(before.flameRender.rotationYDegrees, after.flameRender.rotationYDegrees)
+        || !NearlyEqual(before.flameRender.rotationZDegrees, after.flameRender.rotationZDegrees)
+        || !NearlyEqual(before.flameRender.depthAmount, after.flameRender.depthAmount)
+        || before.flameRender.symmetry != after.flameRender.symmetry
+        || before.flameRender.symmetryOrder != after.flameRender.symmetryOrder
+        || !NearlyEqual(before.flameRender.curveExposure, after.flameRender.curveExposure)
+        || !NearlyEqual(before.flameRender.curveContrast, after.flameRender.curveContrast)
+        || !NearlyEqual(before.flameRender.curveHighlights, after.flameRender.curveHighlights)
+        || !NearlyEqual(before.flameRender.curveGamma, after.flameRender.curveGamma)) {
+        return "Adjust Flame Render";
+    }
+    return "Edit Scene";
+}
+
+void AppWindow::PushUndoState(const Scene& snapshot, std::string label) {
+    undoStack_.push_back({snapshot, currentHistoryLabel_});
     EnforceUndoStackLimits();
     redoStack_.clear();
+    if (label.empty()) {
+        label = DescribeSceneChange(snapshot, scene_);
+    }
+    currentHistoryLabel_ = std::move(label);
     sceneDirty_ = true;
     sceneModifiedSinceAutoSave_ = true;
     UpdateWindowTitle();
@@ -164,9 +346,11 @@ void AppWindow::Undo() {
         return;
     }
 
-    redoStack_.push_back(scene_);
-    scene_ = undoStack_.back();
+    redoStack_.push_back({scene_, currentHistoryLabel_});
+    const HistoryEntry entry = undoStack_.back();
+    scene_ = entry.snapshot;
     undoStack_.pop_back();
+    currentHistoryLabel_ = entry.label;
     selectedTransformLayers_.clear();
     selectedPathLayers_.clear();
     EnsureSelectionIsValid();
@@ -187,10 +371,12 @@ void AppWindow::Redo() {
         return;
     }
 
-    undoStack_.push_back(scene_);
+    undoStack_.push_back({scene_, currentHistoryLabel_});
     EnforceUndoStackLimits();
-    scene_ = redoStack_.back();
+    const HistoryEntry entry = redoStack_.back();
+    scene_ = entry.snapshot;
     redoStack_.pop_back();
+    currentHistoryLabel_ = entry.label;
     selectedTransformLayers_.clear();
     selectedPathLayers_.clear();
     EnsureSelectionIsValid();

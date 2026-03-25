@@ -72,6 +72,7 @@ public:
     static void BuildDepthMap(const Scene& scene, int width, int height, std::vector<float>& depthBuffer);
     static void ApplyDepthOfField(const Scene& scene, std::vector<std::uint32_t>& pixels, int width, int height, const std::vector<float>& depthBuffer);
     static void ApplyDenoising(const Scene& scene, std::vector<std::uint32_t>& pixels, int width, int height, const std::vector<float>& depthBuffer, const std::function<bool()>& shouldAbort);
+    static void ApplyPostProcess(const Scene& scene, std::vector<std::uint32_t>& pixels, int width, int height);
     static ProjectedPoint Project(const Vec3& point, const CameraState& camera, int width, int height);
     static double NormalizeProjectedDepth(double depth, const CameraState& camera);
     static Color ToneMap(const FlamePixel& pixel, const FlameRenderSettings& flameRender);

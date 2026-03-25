@@ -58,4 +58,36 @@ PreviewRenderStage DetermineResolvedRenderStage(
     return PreviewRenderStage::Base;
 }
 
+PreviewRenderStage DetermineResolvedRenderStage(const Scene& scene) {
+    PreviewRenderStage finalStage = PreviewRenderStage::Base;
+    for (const EffectStackStage stage : scene.effectStack) {
+        if (!IsEffectStageEnabled(scene, stage)) {
+            continue;
+        }
+        switch (stage) {
+        case EffectStackStage::Denoiser:
+            finalStage = PreviewRenderStage::Denoised;
+            break;
+        case EffectStackStage::DepthOfField:
+            finalStage = PreviewRenderStage::DepthOfField;
+            break;
+        case EffectStackStage::Curves:
+        case EffectStackStage::Sharpen:
+        case EffectStackStage::HueShift:
+        case EffectStackStage::PostProcess:
+        case EffectStackStage::ChromaticAberration:
+        case EffectStackStage::ColorTemperature:
+        case EffectStackStage::Saturation:
+        case EffectStackStage::ToneMapping:
+        case EffectStackStage::FilmGrain:
+        case EffectStackStage::Vignette:
+            finalStage = PreviewRenderStage::PostProcessed;
+            break;
+        default:
+            break;
+        }
+    }
+    return finalStage;
+}
+
 }  // namespace radiary

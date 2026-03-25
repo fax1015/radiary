@@ -176,6 +176,10 @@ radiary::PreviewRenderStage AppWindow::DetermineResolvedRenderStage(
     return ::radiary::DetermineResolvedRenderStage(useDenoiser, useDof, usePostProcess);
 }
 
+radiary::PreviewRenderStage AppWindow::DetermineResolvedRenderStage(const Scene& scene) {
+    return ::radiary::DetermineResolvedRenderStage(scene);
+}
+
 std::wstring AppWindow::BuildGpuRendererUnavailableStatusMessage(
     const wchar_t* label,
     const bool deviceReady,
@@ -211,6 +215,7 @@ Scene AppWindow::EvaluateSceneAtTimelineFrame(const double frame) const {
 
 Scene AppWindow::BuildRenderableScene(const Scene& scene) const {
     Scene renderScene = scene;
+    NormalizeEffectStackOrder(renderScene.effectStack);
     renderScene.transforms.erase(
         std::remove_if(renderScene.transforms.begin(), renderScene.transforms.end(), [](const TransformLayer& layer) {
             return !layer.visible;
@@ -228,6 +233,102 @@ Scene AppWindow::BuildRenderableScene(const Scene& scene) const {
         ? 0
         : std::clamp(renderScene.selectedPath, 0, static_cast<int>(renderScene.paths.size()) - 1);
     return renderScene;
+}
+
+Scene AppWindow::MakeIsolatedEffectScene(const Scene& scene, const EffectStackStage stage) {
+    Scene isolated = scene;
+    isolated.denoiser.enabled = false;
+    isolated.depthOfField.enabled = false;
+    isolated.postProcess.enabled = false;
+    isolated.postProcess.curvesEnabled = false;
+    isolated.postProcess.sharpenEnabled = false;
+    isolated.postProcess.hueShiftEnabled = false;
+    isolated.postProcess.chromaticAberrationEnabled = false;
+    isolated.postProcess.vignetteEnabled = false;
+    isolated.postProcess.toneMappingEnabled = false;
+    isolated.postProcess.filmGrainEnabled = false;
+    isolated.postProcess.colorTemperatureEnabled = false;
+    isolated.postProcess.saturationEnabled = false;
+
+    switch (stage) {
+    case EffectStackStage::Denoiser:
+        isolated.denoiser = scene.denoiser;
+        break;
+    case EffectStackStage::DepthOfField:
+        isolated.depthOfField = scene.depthOfField;
+        break;
+    case EffectStackStage::Curves:
+        isolated.postProcess.curvesEnabled = scene.postProcess.curvesEnabled;
+        isolated.postProcess.curveBlackPoint = scene.postProcess.curveBlackPoint;
+        isolated.postProcess.curveWhitePoint = scene.postProcess.curveWhitePoint;
+        isolated.postProcess.curveGamma = scene.postProcess.curveGamma;
+        break;
+    case EffectStackStage::Sharpen:
+        isolated.postProcess.sharpenEnabled = scene.postProcess.sharpenEnabled;
+        isolated.postProcess.sharpenAmount = scene.postProcess.sharpenAmount;
+        break;
+    case EffectStackStage::HueShift:
+        isolated.postProcess.hueShiftEnabled = scene.postProcess.hueShiftEnabled;
+        isolated.postProcess.hueShiftDegrees = scene.postProcess.hueShiftDegrees;
+        break;
+    case EffectStackStage::PostProcess:
+        isolated.postProcess.enabled = scene.postProcess.enabled;
+        isolated.postProcess.bloomIntensity = scene.postProcess.bloomIntensity;
+        isolated.postProcess.bloomRadius = scene.postProcess.bloomRadius;
+        isolated.postProcess.bloomThreshold = scene.postProcess.bloomThreshold;
+        break;
+    case EffectStackStage::ChromaticAberration:
+        isolated.postProcess.chromaticAberrationEnabled = scene.postProcess.chromaticAberrationEnabled;
+        isolated.postProcess.chromaticAberration = scene.postProcess.chromaticAberration;
+        break;
+    case EffectStackStage::ColorTemperature:
+        isolated.postProcess.colorTemperatureEnabled = scene.postProcess.colorTemperatureEnabled;
+        isolated.postProcess.colorTemperature = scene.postProcess.colorTemperature;
+        break;
+    case EffectStackStage::Saturation:
+        isolated.postProcess.saturationEnabled = scene.postProcess.saturationEnabled;
+        isolated.postProcess.saturationBoost = scene.postProcess.saturationBoost;
+        break;
+    case EffectStackStage::ToneMapping:
+        isolated.postProcess.toneMappingEnabled = scene.postProcess.toneMappingEnabled;
+        isolated.postProcess.acesToneMap = scene.postProcess.acesToneMap;
+        break;
+    case EffectStackStage::FilmGrain:
+        isolated.postProcess.filmGrainEnabled = scene.postProcess.filmGrainEnabled;
+        isolated.postProcess.filmGrain = scene.postProcess.filmGrain;
+        break;
+    case EffectStackStage::Vignette:
+        isolated.postProcess.vignetteEnabled = scene.postProcess.vignetteEnabled;
+        isolated.postProcess.vignetteIntensity = scene.postProcess.vignetteIntensity;
+        isolated.postProcess.vignetteRoundness = scene.postProcess.vignetteRoundness;
+        break;
+    default:
+        break;
+    }
+
+    return isolated;
+}
+
+PreviewRenderStage AppWindow::PreviewRenderStageForEffectStage(const EffectStackStage stage) {
+    switch (stage) {
+    case EffectStackStage::Denoiser:
+        return PreviewRenderStage::Denoised;
+    case EffectStackStage::DepthOfField:
+        return PreviewRenderStage::DepthOfField;
+    case EffectStackStage::Curves:
+    case EffectStackStage::Sharpen:
+    case EffectStackStage::HueShift:
+    case EffectStackStage::PostProcess:
+    case EffectStackStage::ChromaticAberration:
+    case EffectStackStage::ColorTemperature:
+    case EffectStackStage::Saturation:
+    case EffectStackStage::ToneMapping:
+    case EffectStackStage::FilmGrain:
+    case EffectStackStage::Vignette:
+        return PreviewRenderStage::PostProcessed;
+    default:
+        return PreviewRenderStage::Base;
+    }
 }
 
 Scene AppWindow::BuildExportRenderScene(const Scene& sourceScene, const int width, const int height, const bool hideGrid) const {
@@ -249,7 +350,7 @@ AppWindow::ViewportRenderRequest AppWindow::BuildViewportRenderRequest(
     request.scene = BuildRenderableScene(EvaluateSceneAtTimelineFrame(scene_.timelineFrame));
     request.useGpuDofPreview = useGpuViewportPreview && request.scene.depthOfField.enabled;
     request.useGpuDenoiserPreview = useGpuViewportPreview && request.scene.denoiser.enabled;
-    request.useGpuPostProcessPreview = useGpuViewportPreview && request.scene.postProcess.enabled;
+    request.useGpuPostProcessPreview = useGpuViewportPreview && HasActivePostProcess(request.scene.postProcess);
     request.previewIterations = ViewportPreviewIterations(
         request.scene,
         interactive,
@@ -302,21 +403,20 @@ AppWindow::ViewportRenderSetup AppWindow::DetermineViewportRenderSetup(const Vie
         && UploadedViewportHeight() > 0
         && (lastGpuPreviewDispatchAt_ != std::chrono::steady_clock::time_point {})
         && (setup.now - lastGpuPreviewDispatchAt_) < resizePreviewCadence;
+    const PreviewRenderStage targetStage = DetermineResolvedRenderStage(request.scene);
+    const bool needsResolvedEffects =
+        setup.allowGpuResolvePasses
+        && !setup.gpuAccumulationIncomplete
+        && previewProgress_.presentation.stage != targetStage;
     setup.needsGpuDofResolve =
         request.useGpuDofPreview
-        && setup.allowGpuResolvePasses
-        && !setup.gpuAccumulationIncomplete
-        && !IsPreviewPresentationStageAtLeast(previewProgress_.presentation, PreviewRenderStage::DepthOfField);
+        && needsResolvedEffects;
     setup.needsGpuDenoiserResolve =
         request.useGpuDenoiserPreview
-        && setup.allowGpuResolvePasses
-        && !setup.gpuAccumulationIncomplete
-        && !IsPreviewPresentationStageAtLeast(previewProgress_.presentation, PreviewRenderStage::Denoised);
+        && needsResolvedEffects;
     setup.needsGpuPostProcessResolve =
         request.useGpuPostProcessPreview
-        && setup.allowGpuResolvePasses
-        && !setup.gpuAccumulationIncomplete
-        && !IsPreviewPresentationStageAtLeast(previewProgress_.presentation, PreviewRenderStage::PostProcessed);
+        && needsResolvedEffects;
     return setup;
 }
 
@@ -360,7 +460,7 @@ bool AppWindow::ResolveGpuPostProcessOutput(
     if (postProcessed != nullptr) {
         *postProcessed = false;
     }
-    if (!scene.postProcess.enabled) {
+    if (!HasActivePostProcess(scene.postProcess)) {
         return output.colorSrv != nullptr || output.colorTexture != nullptr;
     }
     if (input.colorSrv == nullptr) {
@@ -373,6 +473,8 @@ bool AppWindow::ResolveGpuPostProcessOutput(
         return input.colorTexture != nullptr || input.colorSrv != nullptr;
     }
     output = gpuPostProcess_.Output();
+    output.depthSrv = input.depthSrv;
+    output.depthTexture = input.depthTexture;
     if (postProcessed != nullptr) {
         *postProcessed = true;
     }
@@ -811,28 +913,102 @@ bool AppWindow::PrepareGpuEffectChainState(
     const int width,
     const int height,
     const GpuFrameInputs& baseInputs,
-    const bool applyDenoiser,
-    const bool resolveFrame,
+    const bool /*applyDenoiser*/,
+    const bool /*resolveFrame*/,
     GpuEffectChainState& state) {
     state = {};
-    state.inputs = baseInputs;
-    if (applyDenoiser) {
-        if (!RunGpuDenoiserPass(scene, width, height, state.inputs, state.resolvedFrame)) {
-            return false;
-        }
-        state.inputs = {};
-        state.inputs.flameColor = state.resolvedFrame.colorSrv;
-        state.inputs.flameDepth = state.resolvedFrame.depthSrv;
-        state.hasResolvedFrame = true;
+    state.finalStage = PreviewRenderStage::Base;
+
+    const bool hasActiveEffects = std::any_of(scene.effectStack.begin(), scene.effectStack.end(), [&](const EffectStackStage stage) {
+        return IsEffectStageEnabled(scene, stage);
+    });
+    if (!hasActiveEffects) {
+        state.inputs = baseInputs;
         return true;
     }
 
-    if (resolveFrame) {
-        if (!RunGpuCompositePass(width, height, state.inputs, state.resolvedFrame)) {
+    const auto syncResolvedInputs = [&]() {
+        state.inputs = {};
+        state.inputs.flameColor = state.resolvedFrame.colorSrv;
+        state.inputs.flameDepth = state.resolvedFrame.depthSrv;
+    };
+    const auto ensureResolvedFrame = [&]() -> bool {
+        if (state.hasResolvedFrame) {
+            return true;
+        }
+        if (!RunGpuCompositePass(width, height, baseInputs, state.resolvedFrame)) {
             return false;
         }
         state.hasResolvedFrame = true;
+        syncResolvedInputs();
+        return true;
+    };
+    state.inputs = baseInputs;
+
+    for (const EffectStackStage stage : scene.effectStack) {
+        if (!IsEffectStageEnabled(scene, stage)) {
+            continue;
+        }
+
+        switch (stage) {
+        case EffectStackStage::Denoiser:
+            if (!RunGpuDenoiserPass(
+                    MakeIsolatedEffectScene(scene, stage),
+                    width,
+                    height,
+                    state.hasResolvedFrame ? state.inputs : baseInputs,
+                    state.resolvedFrame)) {
+                return false;
+            }
+            state.hasResolvedFrame = true;
+            syncResolvedInputs();
+            break;
+        case EffectStackStage::DepthOfField:
+            if (!RunGpuDofPass(
+                    MakeIsolatedEffectScene(scene, stage),
+                    width,
+                    height,
+                    state.hasResolvedFrame ? state.inputs : baseInputs,
+                    state.resolvedFrame)) {
+                return false;
+            }
+            state.hasResolvedFrame = true;
+            state.resolvedFrame.depthSrv = state.inputs.flameDepth;
+            state.resolvedFrame.depthTexture = nullptr;
+            syncResolvedInputs();
+            break;
+        case EffectStackStage::Curves:
+        case EffectStackStage::Sharpen:
+        case EffectStackStage::HueShift:
+        case EffectStackStage::PostProcess:
+        case EffectStackStage::ChromaticAberration:
+        case EffectStackStage::ColorTemperature:
+        case EffectStackStage::Saturation:
+        case EffectStackStage::ToneMapping:
+        case EffectStackStage::FilmGrain:
+        case EffectStackStage::Vignette:
+            if (!ensureResolvedFrame()) {
+                return false;
+            }
+            if (!ResolveGpuPostProcessOutput(
+                    MakeIsolatedEffectScene(scene, stage),
+                    width,
+                    height,
+                    state.resolvedFrame,
+                    state.resolvedFrame)) {
+                return false;
+            }
+            syncResolvedInputs();
+            break;
+        default:
+            break;
+        }
+
+        state.finalStage = PreviewRenderStageForEffectStage(stage);
     }
+    state.inputs = {};
+    state.inputs.flameColor = state.resolvedFrame.colorSrv;
+    state.inputs.flameDepth = state.resolvedFrame.depthSrv;
     return true;
 }
 
@@ -860,7 +1036,7 @@ bool AppWindow::TryRenderGpuEffectChain(
     const bool applyDof,
     const std::uint32_t displayedIterations,
     bool& handled) {
-    handled = applyDenoiser || applyDof;
+    handled = applyDenoiser || applyDof || request.useGpuPostProcessPreview;
     if (!handled) {
         return false;
     }
@@ -872,22 +1048,20 @@ bool AppWindow::TryRenderGpuEffectChain(
             request.height,
             baseInputs,
             applyDenoiser,
-            false,
+            request.useGpuPostProcessPreview,
             effectState)) {
         return false;
     }
-
-    if (applyDof) {
-        return RenderGpuDofPreview(request, setup, effectState.inputs, displayedIterations);
+    if (!effectState.hasResolvedFrame || effectState.resolvedFrame.colorSrv == nullptr) {
+        return false;
     }
-
     return SetDirectGpuPreview(
         request.width,
         request.height,
         MakePreviewPresentationState(
             PreviewRenderDevice::Gpu,
             PreviewContentForMode(request.scene.mode),
-            PreviewRenderStage::Denoised),
+            effectState.finalStage),
         displayedIterations,
         setup.now);
 }

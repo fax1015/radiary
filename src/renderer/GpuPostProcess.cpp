@@ -92,6 +92,12 @@ bool GpuPostProcess::Render(
         ++frameCounter_;
     }
     const PostProcessSettings& pp = scene.postProcess;
+    int targetOutputIndex = 0;
+    if (inputSrv == outputSrvs_[0]) {
+        targetOutputIndex = 1;
+    } else if (inputSrv == outputSrvs_[1]) {
+        targetOutputIndex = 0;
+    }
 
     ID3D11Buffer* constantBuffers[] = {paramsBuffer_};
     ID3D11ShaderResourceView* nullSrvs[2] = {nullptr, nullptr};
@@ -209,13 +215,26 @@ bool GpuPostProcess::Render(
         params.height = viewport.height;
         params.bloomIntensity = static_cast<float>(pp.bloomIntensity);
         params.bloomThreshold = static_cast<float>(pp.bloomThreshold);
+        params.curvesEnabled = pp.curvesEnabled ? 1u : 0u;
+        params.sharpenEnabled = pp.sharpenEnabled ? 1u : 0u;
+        params.hueShiftEnabled = pp.hueShiftEnabled ? 1u : 0u;
+        params.chromaticAberrationEnabled = pp.chromaticAberrationEnabled ? 1u : 0u;
+        params.curveBlackPoint = static_cast<float>(pp.curveBlackPoint);
+        params.curveWhitePoint = static_cast<float>(pp.curveWhitePoint);
+        params.curveGamma = static_cast<float>(pp.curveGamma);
+        params.sharpenAmount = static_cast<float>(pp.sharpenAmount);
+        params.hueShiftDegrees = static_cast<float>(pp.hueShiftDegrees);
         params.chromaticAberration = static_cast<float>(pp.chromaticAberration);
         params.vignetteIntensity = static_cast<float>(pp.vignetteIntensity);
         params.vignetteRoundness = static_cast<float>(pp.vignetteRoundness);
-        params.acesToneMap = pp.acesToneMap ? 1u : 0u;
+        params.vignetteEnabled = pp.vignetteEnabled ? 1u : 0u;
+        params.toneMappingEnabled = pp.toneMappingEnabled ? 1u : 0u;
+        params.filmGrainEnabled = pp.filmGrainEnabled ? 1u : 0u;
+        params.colorTemperatureEnabled = pp.colorTemperatureEnabled ? 1u : 0u;
         params.filmGrain = static_cast<float>(pp.filmGrain);
         params.colorTemperature = static_cast<float>(pp.colorTemperature);
         params.saturationBoost = static_cast<float>(pp.saturationBoost);
+        params.saturationEnabled = pp.saturationEnabled ? 1u : 0u;
         params.randomSeed = MakePostProcessRandomSeed(frameCounter_, randomSeedOverride);
 
         const char* failedStage = nullptr;
@@ -226,7 +245,7 @@ bool GpuPostProcess::Render(
         }
 
         ID3D11ShaderResourceView* srvs[] = {inputSrv, (pp.bloomIntensity > 0.001) ? bloomSrvs_[0] : nullptr};
-        ID3D11UnorderedAccessView* uavs[] = {outputUav_};
+        ID3D11UnorderedAccessView* uavs[] = {outputUavs_[targetOutputIndex]};
         deviceContext_->CSSetConstantBuffers(0, 1, constantBuffers);
         deviceContext_->CSSetShaderResources(0, 2, srvs);
         deviceContext_->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -239,6 +258,7 @@ bool GpuPostProcess::Render(
         deviceContext_->CSSetUnorderedAccessViews(0, 1, nullUavs, nullptr);
     }
 
+    currentOutputIndex_ = targetOutputIndex;
     lastError_.clear();
     return true;
 }
@@ -287,7 +307,7 @@ bool GpuPostProcess::CreateShaders() {
 }
 
 bool GpuPostProcess::EnsureResources(const int width, const int height) {
-    if (outputTexture_ != nullptr && outputWidth_ == width && outputHeight_ == height) {
+    if (outputTextures_[0] != nullptr && outputWidth_ == width && outputHeight_ == height) {
         return true;
     }
 
@@ -316,17 +336,19 @@ bool GpuPostProcess::EnsureResources(const int width, const int height) {
         "CreateUAV(postprocess output)",
         "CreateSRV(postprocess output)",
     };
-    if (!CreateTexture2DWithViews(
-            device_,
-            outputDesc,
-            outputStages,
-            &outputTexture_,
-            &outputUav_,
-            &outputSrv_,
-            failedStage,
-            result)) {
-        SetError(failedStage, result);
-        return false;
+    for (int outputIndex = 0; outputIndex < kOutputBufferCount; ++outputIndex) {
+        if (!CreateTexture2DWithViews(
+                device_,
+                outputDesc,
+                outputStages,
+                &outputTextures_[outputIndex],
+                &outputUavs_[outputIndex],
+                &outputSrvs_[outputIndex],
+                failedStage,
+                result)) {
+            SetError(failedStage, result);
+            return false;
+        }
     }
 
     int mipW = width;
@@ -364,6 +386,7 @@ bool GpuPostProcess::EnsureResources(const int width, const int height) {
 
     outputWidth_ = width;
     outputHeight_ = height;
+    currentOutputIndex_ = 0;
     return true;
 }
 
@@ -373,11 +396,14 @@ void GpuPostProcess::ReleaseResources() {
         if (bloomUavs_[i]) { bloomUavs_[i]->Release(); bloomUavs_[i] = nullptr; }
         if (bloomTextures_[i]) { bloomTextures_[i]->Release(); bloomTextures_[i] = nullptr; }
     }
-    if (outputSrv_) { outputSrv_->Release(); outputSrv_ = nullptr; }
-    if (outputUav_) { outputUav_->Release(); outputUav_ = nullptr; }
-    if (outputTexture_) { outputTexture_->Release(); outputTexture_ = nullptr; }
+    for (int outputIndex = 0; outputIndex < kOutputBufferCount; ++outputIndex) {
+        if (outputSrvs_[outputIndex]) { outputSrvs_[outputIndex]->Release(); outputSrvs_[outputIndex] = nullptr; }
+        if (outputUavs_[outputIndex]) { outputUavs_[outputIndex]->Release(); outputUavs_[outputIndex] = nullptr; }
+        if (outputTextures_[outputIndex]) { outputTextures_[outputIndex]->Release(); outputTextures_[outputIndex] = nullptr; }
+    }
     outputWidth_ = 0;
     outputHeight_ = 0;
+    currentOutputIndex_ = 0;
 }
 
 void GpuPostProcess::SetError(const char* stage, const HRESULT result) {

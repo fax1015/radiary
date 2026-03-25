@@ -416,13 +416,34 @@ void WritePostProcessSettings(std::ostream& stream, const PostProcessSettings& p
     stream << indent << "\"bloomIntensity\": " << pp.bloomIntensity << ",\n";
     stream << indent << "\"bloomRadius\": " << pp.bloomRadius << ",\n";
     stream << indent << "\"bloomThreshold\": " << pp.bloomThreshold << ",\n";
+    stream << indent << "\"curvesEnabled\": " << (pp.curvesEnabled ? "true" : "false") << ",\n";
+    stream << indent << "\"curveBlackPoint\": " << pp.curveBlackPoint << ",\n";
+    stream << indent << "\"curveWhitePoint\": " << pp.curveWhitePoint << ",\n";
+    stream << indent << "\"curveGamma\": " << pp.curveGamma << ",\n";
+    stream << indent << "\"sharpenEnabled\": " << (pp.sharpenEnabled ? "true" : "false") << ",\n";
+    stream << indent << "\"sharpenAmount\": " << pp.sharpenAmount << ",\n";
+    stream << indent << "\"hueShiftEnabled\": " << (pp.hueShiftEnabled ? "true" : "false") << ",\n";
+    stream << indent << "\"hueShiftDegrees\": " << pp.hueShiftDegrees << ",\n";
+    stream << indent << "\"chromaticAberrationEnabled\": " << (pp.chromaticAberrationEnabled ? "true" : "false") << ",\n";
     stream << indent << "\"chromaticAberration\": " << pp.chromaticAberration << ",\n";
+    stream << indent << "\"vignetteEnabled\": " << (pp.vignetteEnabled ? "true" : "false") << ",\n";
     stream << indent << "\"vignetteIntensity\": " << pp.vignetteIntensity << ",\n";
     stream << indent << "\"vignetteRoundness\": " << pp.vignetteRoundness << ",\n";
-    stream << indent << "\"acesToneMap\": " << (pp.acesToneMap ? "true" : "false") << ",\n";
+    stream << indent << "\"toneMappingEnabled\": " << (pp.toneMappingEnabled ? "true" : "false") << ",\n";
+    stream << indent << "\"acesToneMap\": " << (pp.toneMappingEnabled ? "true" : "false") << ",\n";
+    stream << indent << "\"filmGrainEnabled\": " << (pp.filmGrainEnabled ? "true" : "false") << ",\n";
     stream << indent << "\"filmGrain\": " << pp.filmGrain << ",\n";
+    stream << indent << "\"colorTemperatureEnabled\": " << (pp.colorTemperatureEnabled ? "true" : "false") << ",\n";
     stream << indent << "\"colorTemperature\": " << pp.colorTemperature << ",\n";
+    stream << indent << "\"saturationEnabled\": " << (pp.saturationEnabled ? "true" : "false") << ",\n";
     stream << indent << "\"saturationBoost\": " << pp.saturationBoost << "\n";
+}
+
+void WriteEffectStackOrder(std::ostream& stream, const EffectStackOrder& effectStack, const std::string& indent) {
+    for (std::size_t index = 0; index < effectStack.size(); ++index) {
+        stream << indent << "\"" << ToString(effectStack[index]) << "\"";
+        stream << (index + 1 < effectStack.size() ? ",\n" : "\n");
+    }
 }
 
 void WriteColor(std::ostream& stream, const Color& color) {
@@ -673,6 +694,9 @@ void WriteScenePose(std::ostream& stream, const ScenePose& pose, const std::stri
     stream << indent << "  \"postProcess\": {\n";
     WritePostProcessSettings(stream, pose.postProcess, indent + "    ");
     stream << indent << "  },\n";
+    stream << indent << "  \"effectStack\": [\n";
+    WriteEffectStackOrder(stream, pose.effectStack, indent + "    ");
+    stream << indent << "  ],\n";
     stream << indent << "  \"gradient\": [\n";
     WriteGradientStops(stream, pose.gradientStops, indent + "    ");
     stream << indent << "  ],\n";
@@ -762,13 +786,39 @@ void LoadScenePose(const JsonValue& poseValue, ScenePose& pose) {
         pose.postProcess.bloomIntensity = Number(*postProcess, "bloomIntensity", pose.postProcess.bloomIntensity);
         pose.postProcess.bloomRadius = Number(*postProcess, "bloomRadius", pose.postProcess.bloomRadius);
         pose.postProcess.bloomThreshold = Number(*postProcess, "bloomThreshold", pose.postProcess.bloomThreshold);
+        pose.postProcess.curvesEnabled = Boolean(*postProcess, "curvesEnabled", pose.postProcess.curvesEnabled);
+        pose.postProcess.curveBlackPoint = Number(*postProcess, "curveBlackPoint", pose.postProcess.curveBlackPoint);
+        pose.postProcess.curveWhitePoint = Number(*postProcess, "curveWhitePoint", pose.postProcess.curveWhitePoint);
+        pose.postProcess.curveGamma = Number(*postProcess, "curveGamma", pose.postProcess.curveGamma);
+        pose.postProcess.sharpenEnabled = Boolean(*postProcess, "sharpenEnabled", pose.postProcess.sharpenEnabled);
+        pose.postProcess.sharpenAmount = Number(*postProcess, "sharpenAmount", pose.postProcess.sharpenAmount);
+        pose.postProcess.hueShiftEnabled = Boolean(*postProcess, "hueShiftEnabled", pose.postProcess.hueShiftEnabled);
+        pose.postProcess.hueShiftDegrees = Number(*postProcess, "hueShiftDegrees", pose.postProcess.hueShiftDegrees);
+        pose.postProcess.chromaticAberrationEnabled = Boolean(*postProcess, "chromaticAberrationEnabled", pose.postProcess.enabled);
         pose.postProcess.chromaticAberration = Number(*postProcess, "chromaticAberration", pose.postProcess.chromaticAberration);
+        pose.postProcess.vignetteEnabled = Boolean(*postProcess, "vignetteEnabled", pose.postProcess.enabled);
         pose.postProcess.vignetteIntensity = Number(*postProcess, "vignetteIntensity", pose.postProcess.vignetteIntensity);
         pose.postProcess.vignetteRoundness = Number(*postProcess, "vignetteRoundness", pose.postProcess.vignetteRoundness);
-        pose.postProcess.acesToneMap = Boolean(*postProcess, "acesToneMap", pose.postProcess.acesToneMap);
+        pose.postProcess.toneMappingEnabled = Boolean(*postProcess, "toneMappingEnabled", Boolean(*postProcess, "acesToneMap", pose.postProcess.enabled));
+        pose.postProcess.acesToneMap = pose.postProcess.toneMappingEnabled;
+        pose.postProcess.filmGrainEnabled = Boolean(*postProcess, "filmGrainEnabled", pose.postProcess.enabled);
         pose.postProcess.filmGrain = Number(*postProcess, "filmGrain", pose.postProcess.filmGrain);
+        pose.postProcess.colorTemperatureEnabled = Boolean(*postProcess, "colorTemperatureEnabled", pose.postProcess.enabled);
         pose.postProcess.colorTemperature = Number(*postProcess, "colorTemperature", pose.postProcess.colorTemperature);
+        pose.postProcess.saturationEnabled = Boolean(*postProcess, "saturationEnabled", pose.postProcess.enabled);
         pose.postProcess.saturationBoost = Number(*postProcess, "saturationBoost", pose.postProcess.saturationBoost);
+    }
+    if (const JsonValue* effectStack = poseValue.Find("effectStack"); effectStack && effectStack->type == JsonValue::Type::Array) {
+        EffectStackOrder loadedOrder = pose.effectStack;
+        std::size_t writeIndex = 0;
+        for (const JsonValue& stageValue : effectStack->arrayValue) {
+            if (stageValue.type != JsonValue::Type::String || writeIndex >= loadedOrder.size()) {
+                continue;
+            }
+            loadedOrder[writeIndex++] = EffectStackStageFromString(stageValue.stringValue);
+        }
+        NormalizeEffectStackOrder(loadedOrder);
+        pose.effectStack = loadedOrder;
     }
     if (const JsonValue* gradient = poseValue.Find("gradient"); gradient && gradient->type == JsonValue::Type::Array) {
         pose.gradientStops.clear();
@@ -804,7 +854,7 @@ bool SceneSerializer::Save(const Scene& scene, const std::filesystem::path& path
     }
 
     stream << "{\n";
-    stream << "  \"version\": 4,\n";
+    stream << "  \"version\": 5,\n";
     stream << "  \"name\": \"" << EscapeJson(scene.name) << "\",\n";
     stream << "  \"mode\": \"" << ToString(scene.mode) << "\",\n";
     stream << "  \"previewIterations\": " << scene.previewIterations << ",\n";
@@ -832,6 +882,9 @@ bool SceneSerializer::Save(const Scene& scene, const std::filesystem::path& path
     stream << "  \"postProcess\": {\n";
     WritePostProcessSettings(stream, scene.postProcess, "    ");
     stream << "  },\n";
+    stream << "  \"effectStack\": [\n";
+    WriteEffectStackOrder(stream, scene.effectStack, "    ");
+    stream << "  ],\n";
     stream << "  \"gradient\": [\n";
     WriteGradientStops(stream, scene.gradientStops, "    ");
     stream << "  ],\n";
@@ -942,13 +995,39 @@ std::optional<Scene> SceneSerializer::Load(const std::filesystem::path& path, st
         scene.postProcess.bloomIntensity = Number(*postProcess, "bloomIntensity", scene.postProcess.bloomIntensity);
         scene.postProcess.bloomRadius = Number(*postProcess, "bloomRadius", scene.postProcess.bloomRadius);
         scene.postProcess.bloomThreshold = Number(*postProcess, "bloomThreshold", scene.postProcess.bloomThreshold);
+        scene.postProcess.curvesEnabled = Boolean(*postProcess, "curvesEnabled", scene.postProcess.curvesEnabled);
+        scene.postProcess.curveBlackPoint = Number(*postProcess, "curveBlackPoint", scene.postProcess.curveBlackPoint);
+        scene.postProcess.curveWhitePoint = Number(*postProcess, "curveWhitePoint", scene.postProcess.curveWhitePoint);
+        scene.postProcess.curveGamma = Number(*postProcess, "curveGamma", scene.postProcess.curveGamma);
+        scene.postProcess.sharpenEnabled = Boolean(*postProcess, "sharpenEnabled", scene.postProcess.sharpenEnabled);
+        scene.postProcess.sharpenAmount = Number(*postProcess, "sharpenAmount", scene.postProcess.sharpenAmount);
+        scene.postProcess.hueShiftEnabled = Boolean(*postProcess, "hueShiftEnabled", scene.postProcess.hueShiftEnabled);
+        scene.postProcess.hueShiftDegrees = Number(*postProcess, "hueShiftDegrees", scene.postProcess.hueShiftDegrees);
+        scene.postProcess.chromaticAberrationEnabled = Boolean(*postProcess, "chromaticAberrationEnabled", scene.postProcess.enabled);
         scene.postProcess.chromaticAberration = Number(*postProcess, "chromaticAberration", scene.postProcess.chromaticAberration);
+        scene.postProcess.vignetteEnabled = Boolean(*postProcess, "vignetteEnabled", scene.postProcess.enabled);
         scene.postProcess.vignetteIntensity = Number(*postProcess, "vignetteIntensity", scene.postProcess.vignetteIntensity);
         scene.postProcess.vignetteRoundness = Number(*postProcess, "vignetteRoundness", scene.postProcess.vignetteRoundness);
-        scene.postProcess.acesToneMap = Boolean(*postProcess, "acesToneMap", scene.postProcess.acesToneMap);
+        scene.postProcess.toneMappingEnabled = Boolean(*postProcess, "toneMappingEnabled", Boolean(*postProcess, "acesToneMap", scene.postProcess.enabled));
+        scene.postProcess.acesToneMap = scene.postProcess.toneMappingEnabled;
+        scene.postProcess.filmGrainEnabled = Boolean(*postProcess, "filmGrainEnabled", scene.postProcess.enabled);
         scene.postProcess.filmGrain = Number(*postProcess, "filmGrain", scene.postProcess.filmGrain);
+        scene.postProcess.colorTemperatureEnabled = Boolean(*postProcess, "colorTemperatureEnabled", scene.postProcess.enabled);
         scene.postProcess.colorTemperature = Number(*postProcess, "colorTemperature", scene.postProcess.colorTemperature);
+        scene.postProcess.saturationEnabled = Boolean(*postProcess, "saturationEnabled", scene.postProcess.enabled);
         scene.postProcess.saturationBoost = Number(*postProcess, "saturationBoost", scene.postProcess.saturationBoost);
+    }
+    if (const JsonValue* effectStack = root.Find("effectStack"); effectStack && effectStack->type == JsonValue::Type::Array) {
+        EffectStackOrder loadedOrder = scene.effectStack;
+        std::size_t writeIndex = 0;
+        for (const JsonValue& stageValue : effectStack->arrayValue) {
+            if (stageValue.type != JsonValue::Type::String || writeIndex >= loadedOrder.size()) {
+                continue;
+            }
+            loadedOrder[writeIndex++] = EffectStackStageFromString(stageValue.stringValue);
+        }
+        NormalizeEffectStackOrder(loadedOrder);
+        scene.effectStack = loadedOrder;
     }
     if (const JsonValue* gradient = root.Find("gradient"); gradient && gradient->type == JsonValue::Type::Array) {
         scene.gradientStops.clear();

@@ -626,6 +626,75 @@ std::vector<Color> BuildGradientPalette(const std::vector<GradientStop>& stops, 
     return palette;
 }
 
+bool HasActivePostProcess(const PostProcessSettings& settings) {
+    return settings.enabled
+        || settings.curvesEnabled
+        || settings.sharpenEnabled
+        || settings.hueShiftEnabled
+        || settings.chromaticAberrationEnabled
+        || settings.vignetteEnabled
+        || settings.toneMappingEnabled
+        || settings.filmGrainEnabled
+        || settings.colorTemperatureEnabled
+        || settings.saturationEnabled;
+}
+
+bool IsEffectStageEnabled(const Scene& scene, const EffectStackStage stage) {
+    switch (stage) {
+    case EffectStackStage::Denoiser:
+        return scene.denoiser.enabled;
+    case EffectStackStage::DepthOfField:
+        return scene.depthOfField.enabled;
+    case EffectStackStage::Curves:
+        return scene.postProcess.curvesEnabled;
+    case EffectStackStage::Sharpen:
+        return scene.postProcess.sharpenEnabled;
+    case EffectStackStage::HueShift:
+        return scene.postProcess.hueShiftEnabled;
+    case EffectStackStage::PostProcess:
+        return scene.postProcess.enabled;
+    case EffectStackStage::ChromaticAberration:
+        return scene.postProcess.chromaticAberrationEnabled;
+    case EffectStackStage::ColorTemperature:
+        return scene.postProcess.colorTemperatureEnabled;
+    case EffectStackStage::Saturation:
+        return scene.postProcess.saturationEnabled;
+    case EffectStackStage::ToneMapping:
+        return scene.postProcess.toneMappingEnabled;
+    case EffectStackStage::FilmGrain:
+        return scene.postProcess.filmGrainEnabled;
+    case EffectStackStage::Vignette:
+        return scene.postProcess.vignetteEnabled;
+    default:
+        return false;
+    }
+}
+
+void NormalizeEffectStackOrder(EffectStackOrder& order) {
+    std::array<bool, kEffectStackStageCount> seen {};
+    EffectStackOrder normalized {};
+    std::size_t insertIndex = 0;
+
+    for (const EffectStackStage stage : order) {
+        const std::size_t stageIndex = static_cast<std::size_t>(stage);
+        if (stageIndex >= kEffectStackStageCount || seen[stageIndex]) {
+            continue;
+        }
+        normalized[insertIndex++] = stage;
+        seen[stageIndex] = true;
+    }
+
+    for (const EffectStackStage stage : kDefaultEffectStackOrder) {
+        const std::size_t stageIndex = static_cast<std::size_t>(stage);
+        if (!seen[stageIndex]) {
+            normalized[insertIndex++] = stage;
+            seen[stageIndex] = true;
+        }
+    }
+
+    order = normalized;
+}
+
 Scene CreateDefaultScene() {
     return MakeProceduralScene(
         "Chrome Reliquary",
@@ -1099,6 +1168,7 @@ ScenePose CaptureScenePose(const Scene& scene) {
     pose.depthOfField = scene.depthOfField;
     pose.denoiser = scene.denoiser;
     pose.postProcess = scene.postProcess;
+    pose.effectStack = scene.effectStack;
     pose.transforms = scene.transforms;
     pose.paths = scene.paths;
     pose.gradientStops = scene.gradientStops;
@@ -1125,6 +1195,8 @@ void ApplyScenePose(Scene& scene, const ScenePose& pose) {
     scene.depthOfField = pose.depthOfField;
     scene.denoiser = pose.denoiser;
     scene.postProcess = pose.postProcess;
+    scene.effectStack = pose.effectStack;
+    NormalizeEffectStackOrder(scene.effectStack);
     scene.transforms = pose.transforms;
     scene.paths = pose.paths;
     scene.gradientStops = pose.gradientStops;
@@ -1258,15 +1330,30 @@ ScenePose InterpolatePose(const ScenePose& left, const ScenePose& right, const d
     pose.denoiser.enabled = alpha < 0.5 ? left.denoiser.enabled : right.denoiser.enabled;
     pose.denoiser.strength = Lerp(left.denoiser.strength, right.denoiser.strength, alpha);
     pose.postProcess.enabled = alpha < 0.5 ? left.postProcess.enabled : right.postProcess.enabled;
+    pose.effectStack = alpha < 0.5 ? left.effectStack : right.effectStack;
     pose.postProcess.bloomIntensity = Lerp(left.postProcess.bloomIntensity, right.postProcess.bloomIntensity, alpha);
     pose.postProcess.bloomRadius = Lerp(left.postProcess.bloomRadius, right.postProcess.bloomRadius, alpha);
     pose.postProcess.bloomThreshold = Lerp(left.postProcess.bloomThreshold, right.postProcess.bloomThreshold, alpha);
+    pose.postProcess.curvesEnabled = alpha < 0.5 ? left.postProcess.curvesEnabled : right.postProcess.curvesEnabled;
+    pose.postProcess.curveBlackPoint = Lerp(left.postProcess.curveBlackPoint, right.postProcess.curveBlackPoint, alpha);
+    pose.postProcess.curveWhitePoint = Lerp(left.postProcess.curveWhitePoint, right.postProcess.curveWhitePoint, alpha);
+    pose.postProcess.curveGamma = Lerp(left.postProcess.curveGamma, right.postProcess.curveGamma, alpha);
+    pose.postProcess.sharpenEnabled = alpha < 0.5 ? left.postProcess.sharpenEnabled : right.postProcess.sharpenEnabled;
+    pose.postProcess.sharpenAmount = Lerp(left.postProcess.sharpenAmount, right.postProcess.sharpenAmount, alpha);
+    pose.postProcess.hueShiftEnabled = alpha < 0.5 ? left.postProcess.hueShiftEnabled : right.postProcess.hueShiftEnabled;
+    pose.postProcess.hueShiftDegrees = Lerp(left.postProcess.hueShiftDegrees, right.postProcess.hueShiftDegrees, alpha);
+    pose.postProcess.chromaticAberrationEnabled = alpha < 0.5 ? left.postProcess.chromaticAberrationEnabled : right.postProcess.chromaticAberrationEnabled;
     pose.postProcess.chromaticAberration = Lerp(left.postProcess.chromaticAberration, right.postProcess.chromaticAberration, alpha);
+    pose.postProcess.vignetteEnabled = alpha < 0.5 ? left.postProcess.vignetteEnabled : right.postProcess.vignetteEnabled;
     pose.postProcess.vignetteIntensity = Lerp(left.postProcess.vignetteIntensity, right.postProcess.vignetteIntensity, alpha);
     pose.postProcess.vignetteRoundness = Lerp(left.postProcess.vignetteRoundness, right.postProcess.vignetteRoundness, alpha);
+    pose.postProcess.toneMappingEnabled = alpha < 0.5 ? left.postProcess.toneMappingEnabled : right.postProcess.toneMappingEnabled;
     pose.postProcess.acesToneMap = alpha < 0.5 ? left.postProcess.acesToneMap : right.postProcess.acesToneMap;
+    pose.postProcess.filmGrainEnabled = alpha < 0.5 ? left.postProcess.filmGrainEnabled : right.postProcess.filmGrainEnabled;
     pose.postProcess.filmGrain = Lerp(left.postProcess.filmGrain, right.postProcess.filmGrain, alpha);
+    pose.postProcess.colorTemperatureEnabled = alpha < 0.5 ? left.postProcess.colorTemperatureEnabled : right.postProcess.colorTemperatureEnabled;
     pose.postProcess.colorTemperature = Lerp(left.postProcess.colorTemperature, right.postProcess.colorTemperature, alpha);
+    pose.postProcess.saturationEnabled = alpha < 0.5 ? left.postProcess.saturationEnabled : right.postProcess.saturationEnabled;
     pose.postProcess.saturationBoost = Lerp(left.postProcess.saturationBoost, right.postProcess.saturationBoost, alpha);
     pose.backgroundColor = Lerp(left.backgroundColor, right.backgroundColor, alpha);
     pose.gridVisible = alpha < 0.5 ? left.gridVisible : right.gridVisible;
@@ -1498,6 +1585,21 @@ constexpr std::pair<SceneMode, const char*> kSceneModeNames[] = {
     {SceneMode::Hybrid, "hybrid"}
 };
 
+constexpr std::pair<EffectStackStage, const char*> kEffectStackStageNames[] = {
+    {EffectStackStage::Denoiser, "denoiser"},
+    {EffectStackStage::DepthOfField, "depth_of_field"},
+    {EffectStackStage::Curves, "curves"},
+    {EffectStackStage::Sharpen, "sharpen"},
+    {EffectStackStage::HueShift, "hue_shift"},
+    {EffectStackStage::PostProcess, "post_process"},
+    {EffectStackStage::ChromaticAberration, "chromatic_aberration"},
+    {EffectStackStage::ColorTemperature, "color_temperature"},
+    {EffectStackStage::Saturation, "saturation"},
+    {EffectStackStage::ToneMapping, "tone_mapping"},
+    {EffectStackStage::FilmGrain, "film_grain"},
+    {EffectStackStage::Vignette, "vignette"}
+};
+
 constexpr std::pair<SegmentMode, const char*> kSegmentModeNames[] = {
     {SegmentMode::ExtrudeNGon, "extrude_n_gon"},
     {SegmentMode::RepeatNGon, "repeat_n_gon"},
@@ -1636,6 +1738,9 @@ constexpr std::pair<PathLayout, const char*> kPathLayoutNames[] = {
 
 std::string ToString(const SceneMode mode) { return EnumToString(mode, kSceneModeNames, "hybrid"); }
 SceneMode SceneModeFromString(const std::string& value) { return EnumFromString(value, kSceneModeNames, SceneMode::Hybrid); }
+
+std::string ToString(const EffectStackStage stage) { return EnumToString(stage, kEffectStackStageNames, "post_process"); }
+EffectStackStage EffectStackStageFromString(const std::string& value) { return EnumFromString(value, kEffectStackStageNames, EffectStackStage::PostProcess); }
 
 std::string ToString(const SegmentMode mode) { return EnumToString(mode, kSegmentModeNames, "repeat_sphere"); }
 SegmentMode SegmentModeFromString(const std::string& value) {

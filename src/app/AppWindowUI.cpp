@@ -1,6 +1,7 @@
 #include "app/AppWindow.h"
 #include "app/AppWidgets.h"
 #include "app/CameraUtils.h"
+#include "app/ExportUtils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -409,11 +410,13 @@ void AppWindow::BuildDefaultLayout() {
     ImGui::DockBuilderDockWindow("Toolbar", topId);
     ImGui::DockBuilderDockWindow("Layers", leftId);
     ImGui::DockBuilderDockWindow("Keyframes", leftId);
+    ImGui::DockBuilderDockWindow("History", leftId);
     ImGui::DockBuilderDockWindow("Inspector", rightId);
     ImGui::DockBuilderDockWindow("Playback", bottomId);
     ImGui::DockBuilderDockWindow("Camera", rightId);
     ImGui::DockBuilderDockWindow("Preview", rightId);
     ImGui::DockBuilderDockWindow("Effects", rightId);
+    ImGui::DockBuilderDockWindow("Histogram", rightId);
     ImGui::DockBuilderDockWindow("Viewport", centerId);
 
     if (ImGuiDockNode* topNode = ImGui::DockBuilderGetNode(topId)) {
@@ -428,10 +431,12 @@ void AppWindow::BuildDefaultLayout() {
 void AppWindow::OpenAllDockPanels() {
     layersPanelOpen_ = true;
     keyframeListPanelOpen_ = true;
+    historyPanelOpen_ = true;
     inspectorPanelOpen_ = true;
     playbackPanelOpen_ = true;
     previewPanelOpen_ = true;
     effectsPanelOpen_ = true;
+    histogramPanelOpen_ = true;
     cameraPanelOpen_ = true;
     viewportPanelOpen_ = true;
 }
@@ -439,10 +444,12 @@ void AppWindow::OpenAllDockPanels() {
 void AppWindow::DrawDockPanelVisibilityMenuItems() {
     ImGui::MenuItem("Layers", nullptr, &layersPanelOpen_);
     ImGui::MenuItem("Keyframes", nullptr, &keyframeListPanelOpen_);
+    ImGui::MenuItem("History", nullptr, &historyPanelOpen_);
     ImGui::MenuItem("Inspector", nullptr, &inspectorPanelOpen_);
     ImGui::MenuItem("Playback", nullptr, &playbackPanelOpen_);
     ImGui::MenuItem("Preview", nullptr, &previewPanelOpen_);
     ImGui::MenuItem("Effects", nullptr, &effectsPanelOpen_);
+    ImGui::MenuItem("Histogram", nullptr, &histogramPanelOpen_);
     ImGui::MenuItem("Camera", nullptr, &cameraPanelOpen_);
     ImGui::MenuItem("Viewport", nullptr, &viewportPanelOpen_);
 }
@@ -478,10 +485,12 @@ void AppWindow::DrawDockPanelTabContextMenu(const char* panelName, bool& panelOp
     }
     const bool anyHiddenPanels = !layersPanelOpen_
         || !keyframeListPanelOpen_
+        || !historyPanelOpen_
         || !inspectorPanelOpen_
         || !playbackPanelOpen_
         || !previewPanelOpen_
         || !effectsPanelOpen_
+        || !histogramPanelOpen_
         || !cameraPanelOpen_
         || !viewportPanelOpen_;
     if (ImGui::MenuItem("Show All Panels", nullptr, false, anyHiddenPanels)) {
@@ -563,7 +572,7 @@ void AppWindow::DrawToolbar() {
     ImGui::SameLine(0.0f, 8.0f);
 
     if (DrawActionButton("##new_scene", "New", IconGlyph::NewScene, ActionTone::Slate)) {
-        PushUndoState(scene_);
+        PushUndoState(scene_, "New Scene");
         Scene newScene;
         newScene.name = "Untitled";
         newScene.animatePath = false;
@@ -577,7 +586,7 @@ void AppWindow::DrawToolbar() {
     if (DrawActionButton("##open_scene", "Open", IconGlyph::OpenScene, ActionTone::Slate)) {
         Scene beforeLoad = scene_;
         if (LoadSceneFromDialog()) {
-            PushUndoState(beforeLoad);
+            PushUndoState(beforeLoad, "Open Scene");
             sceneDirty_ = false;
             sceneModifiedSinceAutoSave_ = false;
             lastAutoSave_ = std::chrono::steady_clock::now();
@@ -603,10 +612,10 @@ void AppWindow::DrawToolbar() {
     exportButtonAnchorY_ = ImGui::GetItemRectMax().y + kOverlayPanelMarginY;
 
     drawDivider();
-    DrawSectionChip("PLAY", Mix(theme.accentSurface, ImVec4(0.25f, 0.66f, 0.72f, 1.0f), 0.42f));
+    DrawSectionChip("PLAY", Mix(theme.accentSurface, theme.accentHover, 0.42f));
     ImGui::SameLine(0.0f, 8.0f);
     if (DrawActionButton("##randomize_scene", "Randomize", IconGlyph::Randomize, ActionTone::Accent)) {
-        PushUndoState(scene_);
+        PushUndoState(scene_, "Randomize Scene");
         Scene randomizedScene = CreateRandomScene(static_cast<std::uint32_t>(GetTickCount64()));
         randomizedScene.gridVisible = scene_.gridVisible;
         ResetScene(std::move(randomizedScene));
@@ -614,7 +623,7 @@ void AppWindow::DrawToolbar() {
     }
     ImGui::SameLine();
     if (DrawActionButton("##toggle_playback", scene_.animatePath ? "Pause" : "Play", scene_.animatePath ? IconGlyph::Pause : IconGlyph::Play, ActionTone::Accent, scene_.animatePath)) {
-        PushUndoState(scene_);
+        PushUndoState(scene_, scene_.animatePath ? "Pause Playback" : "Start Playback");
         scene_.animatePath = !scene_.animatePath;
         MarkViewportDirty();
     }
@@ -623,7 +632,7 @@ void AppWindow::DrawToolbar() {
     DrawSectionChip("VIEW", Mix(theme.panelBackgroundAlt, theme.textMuted, 0.18f));
     ImGui::SameLine(0.0f, 8.0f);
     if (DrawActionButton("##toggle_grid", "Grid", IconGlyph::Grid, ActionTone::Accent, scene_.gridVisible)) {
-        PushUndoState(scene_);
+        PushUndoState(scene_, scene_.gridVisible ? "Hide Grid" : "Show Grid");
         scene_.gridVisible = !scene_.gridVisible;
         MarkViewportDirty();
     }
@@ -641,7 +650,7 @@ void AppWindow::DrawToolbar() {
     CaptureWidgetUndo(beforeMode, modeChanged);
 
     drawDivider();
-    DrawSectionChip("PRESET", Mix(theme.accentSurface, ImVec4(0.36f, 0.66f, 0.54f, 1.0f), 0.38f));
+    DrawSectionChip("PRESET", Mix(theme.accentSurface, theme.accent, 0.36f));
     ImGui::SameLine(0.0f, 8.0f);
     const bool canStepPresets = presetLibrary_.Count() > 1;
     if (DrawActionButton("##preset_prev", "", IconGlyph::ChevronLeft, ActionTone::Slate, false, canStepPresets, 0.0f, "Previous preset")) {
@@ -685,7 +694,7 @@ void AppWindow::DrawToolbar() {
     }
 
     drawDivider();
-    DrawSectionChip("SCENE", Mix(theme.accentSurface, ImVec4(0.86f, 0.61f, 0.32f, 1.0f), 0.28f));
+    DrawSectionChip("SCENE", Mix(theme.accentSurface, theme.accentActive, 0.34f));
     ImGui::SameLine(0.0f, 8.0f);
     ImGui::SetNextItemWidth(220.0f);
     const Scene beforeName = scene_;
@@ -1060,10 +1069,12 @@ void AppWindow::DrawExportPanel() {
     const float maxHeight = std::max(1.0f, bounds.Max.y - topY);
     const float panelWidth = std::min(640.0f, maxWidth);
     const float panelHeight = std::min(520.0f, maxHeight);
+    const float clampedXMin = bounds.Min.x;
+    const float clampedXMax = std::max(clampedXMin, bounds.Max.x - panelWidth);
     const float clampedX = std::clamp(
         exportButtonAnchorX_,
-        bounds.Min.x,
-        bounds.Max.x - panelWidth);
+        clampedXMin,
+        clampedXMax);
     const ImVec2 panelAnchor(clampedX, topY);
 
     ImGui::SetNextWindowViewport(viewport->ID);
@@ -1305,14 +1316,18 @@ void AppWindow::DrawEasingPanel() {
     const float maxHeight = std::max(1.0f, easingButtonAnchorY_ - bounds.Min.y - kOverlayPanelMarginY);
     const float panelWidth = std::min(248.0f, maxWidth);
     const float panelHeight = std::min(188.0f, maxHeight);
+    const float panelXMin = bounds.Min.x + kOverlayPanelMarginX;
+    const float panelXMax = std::max(panelXMin, bounds.Max.x - kOverlayPanelMarginX - panelWidth);
     const float clampedX = std::clamp(
         easingButtonAnchorX_,
-        bounds.Min.x + kOverlayPanelMarginX,
-        bounds.Max.x - kOverlayPanelMarginX - panelWidth);
+        panelXMin,
+        panelXMax);
+    const float panelYMin = bounds.Min.y + kOverlayPanelMarginY;
+    const float panelYMax = std::max(panelYMin, bounds.Max.y - panelHeight);
     const float panelY = std::clamp(
         easingButtonAnchorY_ - panelHeight,
-        bounds.Min.y + kOverlayPanelMarginY,
-        bounds.Max.y - panelHeight);
+        panelYMin,
+        panelYMax);
 
     ImGui::SetNextWindowViewport(viewport->ID);
     ImGui::SetNextWindowPos(ImVec2(clampedX, panelY), ImGuiCond_Always);
@@ -1347,6 +1362,7 @@ void AppWindow::DrawLayersPanel() {
         return;
     }
 
+    const UiTheme& theme = GetUiTheme();
     EnsureSelectionIsValid();
     const ImGuiIO& io = ImGui::GetIO();
     bool rightClickStartedOnLayerControl = false;
@@ -1407,9 +1423,15 @@ void AppWindow::DrawLayersPanel() {
                 ? scene_.paths[index].visible
                 : scene_.transforms[index].visible;
             const bool selected = IsLayerSelected(target, static_cast<int>(index));
-            const ImVec4 headerColor = selected ? ImVec4(0.15f, 0.24f, 0.37f, target == InspectorTarget::PathLayer ? 0.96f : 0.92f) : ImVec4(0.11f, 0.15f, 0.22f, target == InspectorTarget::PathLayer ? 0.82f : 0.78f);
-            const ImVec4 hoverColor = selected ? ImVec4(0.20f, 0.31f, 0.46f, 1.0f) : ImVec4(0.15f, 0.21f, 0.31f, 0.92f);
-            const ImVec4 activeColor = selected ? ImVec4(0.24f, 0.36f, 0.53f, 1.0f) : ImVec4(0.18f, 0.26f, 0.38f, 0.96f);
+            const ImVec4 headerColor = selected
+                ? WithAlpha(Mix(theme.accentSurface, theme.accent, 0.18f), target == InspectorTarget::PathLayer ? 0.96f : 0.92f)
+                : WithAlpha(Mix(theme.panelBackgroundAlt, theme.accentSurface, 0.48f), target == InspectorTarget::PathLayer ? 0.82f : 0.78f);
+            const ImVec4 hoverColor = selected
+                ? Mix(theme.accentSurface, theme.accentHover, 0.24f)
+                : Mix(theme.frameBackgroundHover, theme.accentSurface, 0.30f);
+            const ImVec4 activeColor = selected
+                ? Mix(theme.accentSurface, theme.accentHover, 0.32f)
+                : Mix(theme.frameBackgroundActive, theme.accentSurface, 0.34f);
             const bool dimLabel = !visible;
             ImGui::PushStyleColor(ImGuiCol_Header, headerColor);
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
@@ -1427,6 +1449,7 @@ void AppWindow::DrawLayersPanel() {
                 ? ImVec4(0.38f, 0.74f, 0.88f, 0.95f)
                 : ImVec4(0.97f, 0.64f, 0.34f, 0.95f);
             const char* dotTooltip = target == InspectorTarget::PathLayer ? "Path layer" : "Flame layer";
+            ImRect layerRowRect;
             if (dimLabel) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.74f, 0.78f, 0.84f, 0.58f));
             }
@@ -1443,6 +1466,7 @@ void AppWindow::DrawLayersPanel() {
                 const bool submitted = ImGui::InputText(inputId, &layerRenameBuffer_, renameFlags);
                 ImDrawList* drawList = ImGui::GetWindowDrawList();
                 const ImRect itemRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+                layerRowRect = itemRect;
                 const ImVec2 dotCenter(rowStart.x + dotRadius + 2.0f, std::floor((itemRect.Min.y + itemRect.Max.y) * 0.5f) + 0.5f);
                 drawList->AddCircleFilled(dotCenter, dotRadius, ImGui::GetColorU32(dotColor));
                 const ImRect dotRect(
@@ -1473,6 +1497,7 @@ void AppWindow::DrawLayersPanel() {
                 }
                 ImDrawList* drawList = ImGui::GetWindowDrawList();
                 const ImRect itemRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+                layerRowRect = itemRect;
                 const ImVec2 dotCenter(rowStart.x + dotRadius + 2.0f, std::floor((itemRect.Min.y + itemRect.Max.y) * 0.5f) + 0.5f);
                 drawList->AddCircleFilled(dotCenter, dotRadius, ImGui::GetColorU32(dotColor));
                 const ImRect dotRect(
@@ -1527,8 +1552,11 @@ void AppWindow::DrawLayersPanel() {
                 }
             }
             ImGui::SameLine(0.0f, visibilityGap);
-            const ImVec2 visibilityPos = ImGui::GetCursorScreenPos();
+            const ImVec2 linePos = ImGui::GetCursorScreenPos();
             const ImVec2 visibilitySize(visibilityButtonSize, visibilityButtonSize);
+            const float centeredVisibilityY = std::floor(layerRowRect.Min.y + (layerRowRect.GetHeight() - visibilitySize.y) * 0.5f) + 0.5f;
+            const ImVec2 visibilityPos(linePos.x, centeredVisibilityY);
+            ImGui::SetCursorScreenPos(visibilityPos);
             const bool togglePressed = ImGui::InvisibleButton("##visibility_toggle", visibilitySize);
             markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
             const bool toggleHovered = ImGui::IsItemHovered();
@@ -1737,12 +1765,91 @@ void AppWindow::DrawKeyframeListPanel() {
     ImGui::End();
 }
 
+void AppWindow::DrawHistoryPanel() {
+    if (!historyPanelOpen_) {
+        return;
+    }
+
+    if (ImGuiWindow* layersWindow = ImGui::FindWindowByName("Layers")) {
+        if (layersWindow->DockId != 0) {
+            ImGui::SetNextWindowDockID(layersWindow->DockId, ImGuiCond_FirstUseEver);
+        }
+    }
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
+    ImGui::Begin("History", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::PopStyleVar();
+    DrawDockPanelTabContextMenu("History", historyPanelOpen_);
+
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Click a state to step backward or forward.");
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+
+    const std::size_t undoCount = undoStack_.size();
+    const std::size_t redoCount = redoStack_.size();
+    if (undoCount == 0 && redoCount == 0) {
+        ImGui::PushID("history_empty_current");
+        ImGui::Selectable(currentHistoryLabel_.c_str(), true);
+        ImGui::PopID();
+        ImGui::End();
+        return;
+    }
+
+    bool historyJumped = false;
+    ImGui::BeginChild("##history_entries", ImVec2(0.0f, 0.0f), true);
+    for (std::size_t index = 0; index < undoCount; ++index) {
+        ImGui::PushID(static_cast<int>(index));
+        const bool selected = false;
+        if (ImGui::Selectable(undoStack_[index].label.c_str(), selected)) {
+            const std::size_t undoSteps = undoCount - index;
+            for (std::size_t step = 0; step < undoSteps && CanUndo(); ++step) {
+                Undo();
+            }
+            historyJumped = true;
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+
+    if (!historyJumped) {
+        ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+        ImGui::PushID("current");
+        ImGui::Selectable(currentHistoryLabel_.c_str(), true);
+        ImGui::PopID();
+        ImGui::PopStyleColor();
+
+        for (std::size_t displayIndex = 0; displayIndex < redoCount; ++displayIndex) {
+            const std::size_t redoIndex = redoCount - 1 - displayIndex;
+            ImGui::PushID(static_cast<int>(redoIndex + undoCount + 1));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            if (ImGui::Selectable(redoStack_[redoIndex].label.c_str(), false)) {
+                const std::size_t redoSteps = displayIndex + 1;
+                for (std::size_t step = 0; step < redoSteps && CanRedo(); ++step) {
+                    Redo();
+                }
+                historyJumped = true;
+                ImGui::PopStyleColor();
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::End();
+}
+
 void AppWindow::DrawInspectorPanel() {
     if (!inspectorPanelOpen_) {
         inspectorPanelActive_ = false;
         return;
     }
 
+    const UiTheme& theme = GetUiTheme();
     EnsureSelectionIsValid();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::Begin("Inspector", nullptr, ImGuiWindowFlags_NoCollapse);
@@ -1863,7 +1970,7 @@ void AppWindow::DrawInspectorPanel() {
         PathSettings& path = scene_.paths[scene_.selectedPath];
         const Scene proceduralReference = CreatePresetScene("Procedural Forge");
 
-        ImGui::TextColored(ImVec4(0.55f, 0.72f, 0.93f, 1.0f), "%s", path.name.c_str());
+        ImGui::TextColored(theme.accentHover, "%s", path.name.c_str());
         ImGui::SeparatorText("Path Controls");
 
         Scene before = scene_;
@@ -2340,7 +2447,7 @@ void AppWindow::DrawInspectorPanel() {
         }
     } else {
         TransformLayer& layer = scene_.transforms[scene_.selectedTransform];
-        ImGui::TextColored(ImVec4(0.55f, 0.72f, 0.93f, 1.0f), "%s", layer.name.c_str());
+        ImGui::TextColored(theme.accentHover, "%s", layer.name.c_str());
         ImGui::SeparatorText("Transform Controls");
 
         Scene before = scene_;
@@ -2516,9 +2623,10 @@ void AppWindow::DrawInspectorPanel() {
             captureEdit(before, changed);
         }
 
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.13f, 0.19f, 0.32f, 0.92f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.18f, 0.26f, 0.42f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.31f, 0.50f, 1.0f));
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Header, Mix(theme.accentSurface, theme.accent, 0.18f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, Mix(theme.accentSurface, theme.accentHover, 0.30f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, Mix(theme.accentSurface, theme.accentHover, 0.36f));
         if (ImGui::CollapsingHeader("Variations", ImGuiTreeNodeFlags_DefaultOpen)) {
             for (const VariationCategory& category : kVariationCategories) {
                 int activeCount = 0;
@@ -3202,21 +3310,22 @@ void AppWindow::DrawEffectsPanel() {
     DrawDockPanelTabContextMenu("Effects", effectsPanelOpen_);
 
     const Scene defaultScene = CreateDefaultScene();
-    const int activeEffectCount =
-        (scene_.denoiser.enabled ? 1 : 0)
-        + (scene_.depthOfField.enabled ? 1 : 0)
-        + (scene_.postProcess.enabled ? 1 : 0);
+    const int activeEffectCount = static_cast<int>(std::count_if(
+        scene_.effectStack.begin(),
+        scene_.effectStack.end(),
+        [&](const EffectStackStage stage) {
+            return IsEffectStageEnabled(scene_, stage);
+        }));
     const std::string effectSummary = std::to_string(activeEffectCount) + " active";
     DrawSectionChip(
         effectSummary.c_str(),
         activeEffectCount > 0
             ? Mix(theme.accentSurface, theme.accent, 0.30f)
             : Mix(theme.panelBackgroundAlt, theme.textMuted, 0.18f));
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Preview + export share these effects.");
-    ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
+    int requestedMoveFrom = -1;
+    int requestedMoveTo = -1;
     const auto drawEffectFieldLabel = [&](const char* label) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", label);
@@ -3228,292 +3337,1175 @@ void AppWindow::DrawEffectsPanel() {
         const int columns = ImGui::GetContentRegionAvail().x >= 360.0f ? 2 : 1;
         return ImGui::BeginTable(id, columns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
     };
-    const auto beginEffectCard = [&](const char* id, const char* title, const char* description) {
-        ImGui::TableNextColumn();
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme.roundingMedium);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 12.0f));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, Mix(theme.panelBackgroundInset, theme.panelBackgroundAlt, 0.22f));
-        ImGui::BeginChild(
-            id,
-            ImVec2(0.0f, 0.0f),
-            ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-            ImGuiWindowFlags_NoScrollbar);
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar(3);
-
-        const bool headerOpen = ImGui::BeginTable("##effect_header", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings);
-        if (headerOpen) {
-            ImGui::TableSetupColumn("##effect_header_title", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("##effect_header_toggle", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(title);
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("%s", description);
-            ImGui::PopTextWrapPos();
-            ImGui::TableNextColumn();
-        }
-        return headerOpen;
+    const auto beginEffectSubsection = [&](const char* id, const char* title, const bool defaultOpen = true) {
+        ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetColorU32(WithAlpha(theme.frameBackgroundHover, 0.26f)));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::GetColorU32(WithAlpha(Mix(theme.frameBackgroundHover, theme.textMuted, 0.30f), 0.50f)));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::GetColorU32(WithAlpha(theme.frameBackgroundActive, 0.28f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
+        ImGui::SetNextItemOpen(defaultOpen, ImGuiCond_Once);
+        return ImGui::TreeNodeEx(id, ImGuiTreeNodeFlags_SpanAvailWidth, "%s", title);
     };
-    const auto endEffectHeader = [&](const bool headerOpen) {
-        if (headerOpen) {
-            ImGui::EndTable();
+    const auto endEffectSubsection = [&](const bool open) {
+        if (open) {
+            ImGui::TreePop();
         }
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
+    };
+    bool effectHeaderRowOpen = false;
+    bool effectContentIndented = false;
+    struct EffectHeaderState {
+        bool contentOpen = false;
+        bool resetPressed = false;
+    };
+    const auto beginEffectCard = [&](const char* id, const char* title, const bool defaultOpen, const bool enabled, const int stackIndex) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::PushID(id);
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0.0f, 0.0f));
+        effectHeaderRowOpen = ImGui::BeginTable("##effect_header", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings);
+        EffectHeaderState headerState;
+        if (effectHeaderRowOpen) {
+            ImGui::TableSetupColumn("##effect_header_title", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("##effect_header_reset", ImGuiTableColumnFlags_WidthFixed, 54.0f);
+            ImGui::TableSetupColumn("##effect_header_toggle", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+            ImGui::TableNextColumn();
+            const ImVec4 headerColor = enabled
+                ? Mix(theme.accentSurface, theme.accent, 0.18f)
+                : Mix(Mix(theme.accentSurface, theme.accent, 0.18f), theme.panelBackgroundAlt, 0.45f);
+            const ImVec4 hoverColor = enabled
+                ? Mix(theme.accentSurface, theme.accentHover, 0.48f)
+                : Mix(Mix(theme.accentSurface, theme.accentHover, 0.48f), theme.frameBackgroundHover, 0.22f);
+            const ImVec4 activeColor = enabled
+                ? Mix(theme.accentSurface, theme.accentHover, 0.36f)
+                : Mix(Mix(theme.accentSurface, theme.accentHover, 0.36f), theme.frameBackgroundActive, 0.35f);
+            ImGui::PushStyleColor(ImGuiCol_Header, headerColor);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, activeColor);
+            if (!enabled) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            }
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
+            ImGui::SetNextItemOpen(defaultOpen, ImGuiCond_Once);
+            headerState.contentOpen = ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_SpanAvailWidth);
+            const ImRect headerRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoDisableHover)) {
+                ImGui::SetDragDropPayload("effects_stack_stage", &stackIndex, sizeof(stackIndex));
+                ImGui::TextUnformatted(title);
+                ImGui::EndDragDropSource();
+            }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("effects_stack_stage", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                    if (payload->IsPreview() || payload->IsDelivery()) {
+                        ImDrawList* drawList = ImGui::GetWindowDrawList();
+                        const float inset = 1.5f;
+                        const ImVec2 outlineMin(headerRect.Min.x + inset, headerRect.Min.y + inset);
+                        const ImVec2 outlineMax(headerRect.Max.x - inset, headerRect.Max.y - inset);
+                        drawList->AddRectFilled(
+                            outlineMin,
+                            outlineMax,
+                            ImGui::GetColorU32(WithAlpha(theme.accent, 0.10f)),
+                            theme.roundingMedium);
+                        drawList->AddRect(
+                            outlineMin,
+                            outlineMax,
+                            ImGui::GetColorU32(WithAlpha(theme.accent, 0.92f)),
+                            theme.roundingMedium,
+                            0,
+                            1.5f);
+                    }
+                    const int payloadIndex = *static_cast<const int*>(payload->Data);
+                    if (payloadIndex != stackIndex) {
+                        requestedMoveFrom = payloadIndex;
+                        requestedMoveTo = stackIndex;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            ImGui::PopStyleVar();
+            if (!enabled) {
+                ImGui::PopStyleColor();
+            }
+            ImGui::PopStyleColor(3);
+            ImGui::TableNextColumn();
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 2.0f));
+            headerState.resetPressed = ImGui::Button("Reset");
+            ImGui::PopStyleVar();
+            ImGui::TableNextColumn();
+        }
+        return headerState;
+    };
+    const auto endEffectHeader = [&](const bool contentOpen, const char* description) {
+        if (effectHeaderRowOpen) {
+            ImGui::EndTable();
+            effectHeaderRowOpen = false;
+        }
+        ImGui::PopStyleVar();
+        if (contentOpen) {
+            ImGui::Indent(14.0f);
+            effectContentIndented = true;
+        } else {
+            effectContentIndented = false;
+        }
+        (void)contentOpen;
+        (void)description;
     };
     const auto endEffectCard = [&]() {
-        ImGui::EndChild();
+        if (effectContentIndented) {
+            ImGui::Unindent(14.0f);
+            effectContentIndented = false;
+        }
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        ImGui::PopID();
+    };
+    const auto commitEffectReset = [&](const Scene& beforeReset, const char* effectName) {
+        SyncCurrentKeyframeFromScene();
+        PushUndoState(beforeReset, std::string("Reset ") + effectName);
+        MarkViewportDirty(DeterminePreviewResetReason(beforeReset, scene_));
     };
 
-    const int effectCardColumns = ImGui::GetContentRegionAvail().x >= 760.0f ? 2 : 1;
+    const int effectCardColumns = 1;
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 3.0f));
     if (ImGui::BeginTable("##effects_panel_cards", effectCardColumns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
-        const bool denoiserHeaderOpen = beginEffectCard(
+        for (std::size_t index = 0; index < scene_.effectStack.size(); ++index) {
+            switch (scene_.effectStack[index]) {
+            case EffectStackStage::Denoiser: {
+        const EffectHeaderState denoiserHeader = beginEffectCard(
             "##effect_card_denoiser",
             "Denoiser",
-            "Reduce noise in the resolved frame.");
+            scene_.denoiser.enabled,
+            scene_.denoiser.enabled,
+            static_cast<int>(index));
         const Scene beforeDenoiserEnabled = scene_;
         bool denoiserEnabledChanged = ImGui::Checkbox("##effect_denoiser", &scene_.denoiser.enabled);
         denoiserEnabledChanged = ResetValueOnDoubleClick(scene_.denoiser.enabled, defaultScene.denoiser.enabled) || denoiserEnabledChanged;
-        endEffectHeader(denoiserHeaderOpen);
-        if (denoiserEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeDenoiserEnabled, scene_));
+        if (denoiserHeader.resetPressed) {
+            scene_.denoiser = defaultScene.denoiser;
         }
-        CaptureWidgetUndo(beforeDenoiserEnabled, denoiserEnabledChanged);
-        ImGui::Separator();
-        if (scene_.denoiser.enabled) {
+        endEffectHeader(denoiserHeader.contentOpen, nullptr);
+        if (denoiserHeader.resetPressed) {
+            commitEffectReset(beforeDenoiserEnabled, "Denoiser");
+        } else if (denoiserEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeDenoiserEnabled, scene_));
+            CaptureWidgetUndo(beforeDenoiserEnabled, denoiserEnabledChanged);
+        }
+        if (denoiserHeader.contentOpen && scene_.denoiser.enabled) {
             const double denoiserStrengthMin = 0.0;
             const double denoiserStrengthMax = 1.0;
-            if (beginEffectFieldGrid("##effect_denoiser_grid")) {
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Strength");
-                setEffectItemWidth();
-                const Scene beforeDenoise = scene_;
-                bool denoiseChanged = SliderScalarWithInput("##effect_denoiser_strength", ImGuiDataType_Double, &scene_.denoiser.strength, &denoiserStrengthMin, &denoiserStrengthMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.denoiser.strength, defaultScene.denoiser.strength);
-                if (denoiseChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforeDenoise, scene_));
+            const bool denoiserControlsOpen = beginEffectSubsection("##effect_denoiser_section", "Controls");
+            if (denoiserControlsOpen) {
+                if (beginEffectFieldGrid("##effect_denoiser_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Strength");
+                    setEffectItemWidth();
+                    const Scene beforeDenoise = scene_;
+                    bool denoiseChanged = SliderScalarWithInput("##effect_denoiser_strength", ImGuiDataType_Double, &scene_.denoiser.strength, &denoiserStrengthMin, &denoiserStrengthMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.denoiser.strength, defaultScene.denoiser.strength);
+                    if (denoiseChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeDenoise, scene_));
+                    }
+                    CaptureWidgetUndo(beforeDenoise, denoiseChanged);
+                    ImGui::EndTable();
                 }
-                CaptureWidgetUndo(beforeDenoise, denoiseChanged);
-                ImGui::EndTable();
             }
-        } else {
-            ImGui::TextDisabled("Off");
+            endEffectSubsection(denoiserControlsOpen);
+        } else if (denoiserHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
+                break;
+            }
 
-        const bool dofHeaderOpen = beginEffectCard(
+            case EffectStackStage::DepthOfField: {
+        const EffectHeaderState dofHeader = beginEffectCard(
             "##effect_card_dof",
             "Depth of Field",
-            "Keep a focus band sharp and soften the rest.");
+            scene_.depthOfField.enabled,
+            scene_.depthOfField.enabled,
+            static_cast<int>(index));
         const Scene beforeDofEnabled = scene_;
         bool dofEnabledChanged = ImGui::Checkbox("##effect_dof", &scene_.depthOfField.enabled);
         dofEnabledChanged = ResetValueOnDoubleClick(scene_.depthOfField.enabled, defaultScene.depthOfField.enabled) || dofEnabledChanged;
-        endEffectHeader(dofHeaderOpen);
-        if (dofEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeDofEnabled, scene_));
+        if (dofHeader.resetPressed) {
+            scene_.depthOfField = defaultScene.depthOfField;
         }
-        CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
-        ImGui::Separator();
-        if (scene_.depthOfField.enabled) {
+        endEffectHeader(dofHeader.contentOpen, nullptr);
+        if (dofHeader.resetPressed) {
+            commitEffectReset(beforeDofEnabled, "Depth of Field");
+        } else if (dofEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeDofEnabled, scene_));
+            CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
+        }
+        if (dofHeader.contentOpen && scene_.depthOfField.enabled) {
             const double focusDepthMin = 0.0;
             const double focusDepthMax = 1.0;
             const double focusRangeMin = 0.01;
             const double focusRangeMax = 0.4;
             const double blurStrengthMin = 0.0;
             const double blurStrengthMax = 1.0;
-            if (beginEffectFieldGrid("##effect_dof_grid")) {
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Focus Depth");
-                setEffectItemWidth();
-                Scene beforeDof = scene_;
-                bool dofChanged = SliderScalarWithInput("##effect_dof_focus_depth", ImGuiDataType_Double, &scene_.depthOfField.focusDepth, &focusDepthMin, &focusDepthMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.depthOfField.focusDepth, defaultScene.depthOfField.focusDepth);
-                if (dofChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
-                }
-                CaptureWidgetUndo(beforeDof, dofChanged);
+            const bool dofFocusOpen = beginEffectSubsection("##effect_dof_section", "Focus");
+            if (dofFocusOpen) {
+                if (beginEffectFieldGrid("##effect_dof_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Focus Depth");
+                    setEffectItemWidth();
+                    Scene beforeDof = scene_;
+                    bool dofChanged = SliderScalarWithInput("##effect_dof_focus_depth", ImGuiDataType_Double, &scene_.depthOfField.focusDepth, &focusDepthMin, &focusDepthMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.depthOfField.focusDepth, defaultScene.depthOfField.focusDepth);
+                    if (dofChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
+                    }
+                    CaptureWidgetUndo(beforeDof, dofChanged);
 
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Focus Range");
-                setEffectItemWidth();
-                beforeDof = scene_;
-                dofChanged = SliderScalarWithInput("##effect_dof_focus_range", ImGuiDataType_Double, &scene_.depthOfField.focusRange, &focusRangeMin, &focusRangeMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.depthOfField.focusRange, defaultScene.depthOfField.focusRange);
-                if (dofChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
-                }
-                CaptureWidgetUndo(beforeDof, dofChanged);
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Focus Range");
+                    setEffectItemWidth();
+                    beforeDof = scene_;
+                    dofChanged = SliderScalarWithInput("##effect_dof_focus_range", ImGuiDataType_Double, &scene_.depthOfField.focusRange, &focusRangeMin, &focusRangeMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.depthOfField.focusRange, defaultScene.depthOfField.focusRange);
+                    if (dofChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
+                    }
+                    CaptureWidgetUndo(beforeDof, dofChanged);
 
-                if (ImGui::TableGetColumnCount() > 1) {
-                    ImGui::TableNextRow();
+                    if (ImGui::TableGetColumnCount() > 1) {
+                        ImGui::TableNextRow();
+                    }
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Blur Strength");
+                    setEffectItemWidth();
+                    beforeDof = scene_;
+                    dofChanged = SliderScalarWithInput("##effect_dof_blur_strength", ImGuiDataType_Double, &scene_.depthOfField.blurStrength, &blurStrengthMin, &blurStrengthMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.depthOfField.blurStrength, defaultScene.depthOfField.blurStrength);
+                    if (dofChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
+                    }
+                    CaptureWidgetUndo(beforeDof, dofChanged);
+                    ImGui::EndTable();
                 }
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Blur Strength");
-                setEffectItemWidth();
-                beforeDof = scene_;
-                dofChanged = SliderScalarWithInput("##effect_dof_blur_strength", ImGuiDataType_Double, &scene_.depthOfField.blurStrength, &blurStrengthMin, &blurStrengthMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.depthOfField.blurStrength, defaultScene.depthOfField.blurStrength);
-                if (dofChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
-                }
-                CaptureWidgetUndo(beforeDof, dofChanged);
-
-                ImGui::EndTable();
             }
-        } else {
-            ImGui::TextDisabled("Off");
+            endEffectSubsection(dofFocusOpen);
+        } else if (dofHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
+                break;
+            }
 
-        const bool postProcessHeaderOpen = beginEffectCard(
+            case EffectStackStage::PostProcess: {
+        const EffectHeaderState glowHeader = beginEffectCard(
             "##effect_card_post_process",
-            "Post-Processing",
-            "Bloom, grading, and finishing.");
+            "Glow",
+            scene_.postProcess.enabled,
+            scene_.postProcess.enabled,
+            static_cast<int>(index));
         const Scene beforePostProcessEnabled = scene_;
         bool postProcessEnabledChanged = ImGui::Checkbox("##effect_post_process", &scene_.postProcess.enabled);
         postProcessEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.enabled, defaultScene.postProcess.enabled) || postProcessEnabledChanged;
-        endEffectHeader(postProcessHeaderOpen);
-        if (postProcessEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforePostProcessEnabled, scene_));
+        if (glowHeader.resetPressed) {
+            scene_.postProcess.enabled = defaultScene.postProcess.enabled;
+            scene_.postProcess.bloomIntensity = defaultScene.postProcess.bloomIntensity;
+            scene_.postProcess.bloomThreshold = defaultScene.postProcess.bloomThreshold;
         }
-        CaptureWidgetUndo(beforePostProcessEnabled, postProcessEnabledChanged);
-        ImGui::Separator();
-        if (scene_.postProcess.enabled) {
+        endEffectHeader(glowHeader.contentOpen, nullptr);
+        if (glowHeader.resetPressed) {
+            commitEffectReset(beforePostProcessEnabled, "Glow");
+        } else if (postProcessEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforePostProcessEnabled, scene_));
+            CaptureWidgetUndo(beforePostProcessEnabled, postProcessEnabledChanged);
+        }
+        if (glowHeader.contentOpen && scene_.postProcess.enabled) {
             const double bloomIntensityMin = 0.0;
             const double bloomIntensityMax = 2.0;
             const double bloomThresholdMin = 0.0;
             const double bloomThresholdMax = 2.0;
+            const bool glowBloomOpen = beginEffectSubsection("##effect_glow_section", "Bloom");
+            if (glowBloomOpen) {
+                if (beginEffectFieldGrid("##effect_post_process_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Intensity");
+                    setEffectItemWidth();
+                    Scene beforePP = scene_;
+                    bool ppChanged = SliderScalarWithInput("##effect_pp_bloom_intensity", ImGuiDataType_Double, &scene_.postProcess.bloomIntensity, &bloomIntensityMin, &bloomIntensityMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.bloomIntensity, defaultScene.postProcess.bloomIntensity);
+                    if (ppChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
+                    }
+                    CaptureWidgetUndo(beforePP, ppChanged);
+
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Threshold");
+                    setEffectItemWidth();
+                    beforePP = scene_;
+                    ppChanged = SliderScalarWithInput("##effect_pp_bloom_threshold", ImGuiDataType_Double, &scene_.postProcess.bloomThreshold, &bloomThresholdMin, &bloomThresholdMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.bloomThreshold, defaultScene.postProcess.bloomThreshold);
+                    if (ppChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
+                    }
+                    CaptureWidgetUndo(beforePP, ppChanged);
+
+                    ImGui::EndTable();
+                }
+            }
+            endEffectSubsection(glowBloomOpen);
+        } else if (glowHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
+        }
+        endEffectCard();
+                break;
+            }
+
+            case EffectStackStage::ChromaticAberration: {
+        const EffectHeaderState chromaticHeader = beginEffectCard(
+            "##effect_card_chromatic",
+            "Chromatic Aberration",
+            scene_.postProcess.chromaticAberrationEnabled,
+            scene_.postProcess.chromaticAberrationEnabled,
+            static_cast<int>(index));
+        const Scene beforeChromaticEnabled = scene_;
+        bool chromaticEnabledChanged = ImGui::Checkbox("##effect_chromatic_enabled", &scene_.postProcess.chromaticAberrationEnabled);
+        chromaticEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.chromaticAberrationEnabled, defaultScene.postProcess.chromaticAberrationEnabled) || chromaticEnabledChanged;
+        if (chromaticHeader.resetPressed) {
+            scene_.postProcess.chromaticAberrationEnabled = defaultScene.postProcess.chromaticAberrationEnabled;
+            scene_.postProcess.chromaticAberration = defaultScene.postProcess.chromaticAberration;
+        }
+        endEffectHeader(chromaticHeader.contentOpen, nullptr);
+        if (chromaticHeader.resetPressed) {
+            commitEffectReset(beforeChromaticEnabled, "Chromatic Aberration");
+        } else if (chromaticEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeChromaticEnabled, scene_));
+            CaptureWidgetUndo(beforeChromaticEnabled, chromaticEnabledChanged);
+        }
+        if (chromaticHeader.contentOpen && scene_.postProcess.chromaticAberrationEnabled) {
             const double chromaticMin = 0.0;
             const double chromaticMax = 5.0;
+            const bool chromaticLensOpen = beginEffectSubsection("##effect_chromatic_section", "Lens");
+            if (chromaticLensOpen) {
+                if (beginEffectFieldGrid("##effect_chromatic_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Amount");
+                    setEffectItemWidth();
+                    Scene beforeChromatic = scene_;
+                    bool chromaticChanged = SliderScalarWithInput("##effect_chromatic_amount", ImGuiDataType_Double, &scene_.postProcess.chromaticAberration, &chromaticMin, &chromaticMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.chromaticAberration, defaultScene.postProcess.chromaticAberration);
+                    if (chromaticChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeChromatic, scene_));
+                    }
+                    CaptureWidgetUndo(beforeChromatic, chromaticChanged);
+                    ImGui::EndTable();
+                }
+            }
+            endEffectSubsection(chromaticLensOpen);
+        } else if (chromaticHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
+        }
+        endEffectCard();
+                break;
+            }
+
+            case EffectStackStage::ColorTemperature: {
+        const EffectHeaderState temperatureHeader = beginEffectCard(
+            "##effect_card_temperature",
+            "Temperature",
+            scene_.postProcess.colorTemperatureEnabled,
+            scene_.postProcess.colorTemperatureEnabled,
+            static_cast<int>(index));
+        const Scene beforeTemperatureEnabled = scene_;
+        bool temperatureEnabledChanged = ImGui::Checkbox("##effect_temperature_enabled", &scene_.postProcess.colorTemperatureEnabled);
+        temperatureEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.colorTemperatureEnabled, defaultScene.postProcess.colorTemperatureEnabled) || temperatureEnabledChanged;
+        if (temperatureHeader.resetPressed) {
+            scene_.postProcess.colorTemperatureEnabled = defaultScene.postProcess.colorTemperatureEnabled;
+            scene_.postProcess.colorTemperature = defaultScene.postProcess.colorTemperature;
+        }
+        endEffectHeader(temperatureHeader.contentOpen, nullptr);
+        if (temperatureHeader.resetPressed) {
+            commitEffectReset(beforeTemperatureEnabled, "Temperature");
+        } else if (temperatureEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeTemperatureEnabled, scene_));
+            CaptureWidgetUndo(beforeTemperatureEnabled, temperatureEnabledChanged);
+        }
+        if (temperatureHeader.contentOpen && scene_.postProcess.colorTemperatureEnabled) {
+            const double colorTempMin = 2000.0;
+            const double colorTempMax = 12000.0;
+            const bool temperatureBalanceOpen = beginEffectSubsection("##effect_temperature_section", "Balance");
+            if (temperatureBalanceOpen) {
+                if (beginEffectFieldGrid("##effect_temperature_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Kelvin");
+                    setEffectItemWidth();
+                    Scene beforeTemperature = scene_;
+                    bool temperatureChanged = SliderScalarWithInput("##effect_temperature_value", ImGuiDataType_Double, &scene_.postProcess.colorTemperature, &colorTempMin, &colorTempMax, "%.0f K")
+                        || ResetValueOnDoubleClick(scene_.postProcess.colorTemperature, defaultScene.postProcess.colorTemperature);
+                    if (temperatureChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeTemperature, scene_));
+                    }
+                    CaptureWidgetUndo(beforeTemperature, temperatureChanged);
+                    ImGui::EndTable();
+                }
+            }
+            endEffectSubsection(temperatureBalanceOpen);
+        } else if (temperatureHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
+        }
+        endEffectCard();
+                break;
+            }
+
+            case EffectStackStage::Saturation: {
+        const EffectHeaderState saturationHeader = beginEffectCard(
+            "##effect_card_saturation",
+            "Saturation",
+            scene_.postProcess.saturationEnabled,
+            scene_.postProcess.saturationEnabled,
+            static_cast<int>(index));
+        const Scene beforeSaturationEnabled = scene_;
+        bool saturationEnabledChanged = ImGui::Checkbox("##effect_saturation_enabled", &scene_.postProcess.saturationEnabled);
+        saturationEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.saturationEnabled, defaultScene.postProcess.saturationEnabled) || saturationEnabledChanged;
+        if (saturationHeader.resetPressed) {
+            scene_.postProcess.saturationEnabled = defaultScene.postProcess.saturationEnabled;
+            scene_.postProcess.saturationBoost = defaultScene.postProcess.saturationBoost;
+        }
+        endEffectHeader(saturationHeader.contentOpen, nullptr);
+        if (saturationHeader.resetPressed) {
+            commitEffectReset(beforeSaturationEnabled, "Saturation");
+        } else if (saturationEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeSaturationEnabled, scene_));
+            CaptureWidgetUndo(beforeSaturationEnabled, saturationEnabledChanged);
+        }
+        if (saturationHeader.contentOpen && scene_.postProcess.saturationEnabled) {
+            const double saturationMin = -1.0;
+            const double saturationMax = 1.0;
+            const bool saturationColorOpen = beginEffectSubsection("##effect_saturation_section", "Color");
+            if (saturationColorOpen) {
+                if (beginEffectFieldGrid("##effect_saturation_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Boost");
+                    setEffectItemWidth();
+                    Scene beforeSaturation = scene_;
+                    bool saturationChanged = SliderScalarWithInput("##effect_saturation_amount", ImGuiDataType_Double, &scene_.postProcess.saturationBoost, &saturationMin, &saturationMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.saturationBoost, defaultScene.postProcess.saturationBoost);
+                    if (saturationChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeSaturation, scene_));
+                    }
+                    CaptureWidgetUndo(beforeSaturation, saturationChanged);
+                    ImGui::EndTable();
+                }
+            }
+            endEffectSubsection(saturationColorOpen);
+        } else if (saturationHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
+        }
+        endEffectCard();
+                break;
+            }
+
+            case EffectStackStage::ToneMapping: {
+        const EffectHeaderState toneMappingHeader = beginEffectCard(
+            "##effect_card_tonemap",
+            "Tone Mapping",
+            scene_.postProcess.toneMappingEnabled,
+            scene_.postProcess.toneMappingEnabled,
+            static_cast<int>(index));
+        const Scene beforeToneMappingEnabled = scene_;
+        bool toneMappingEnabledChanged = ImGui::Checkbox("##effect_tonemap_enabled", &scene_.postProcess.toneMappingEnabled);
+        toneMappingEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.toneMappingEnabled, defaultScene.postProcess.toneMappingEnabled) || toneMappingEnabledChanged;
+        if (toneMappingHeader.resetPressed) {
+            scene_.postProcess.toneMappingEnabled = defaultScene.postProcess.toneMappingEnabled;
+            scene_.postProcess.acesToneMap = defaultScene.postProcess.acesToneMap;
+        }
+        scene_.postProcess.acesToneMap = scene_.postProcess.toneMappingEnabled;
+        endEffectHeader(toneMappingHeader.contentOpen, nullptr);
+        if (toneMappingHeader.resetPressed) {
+            commitEffectReset(beforeToneMappingEnabled, "Tone Mapping");
+        } else if (toneMappingEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeToneMappingEnabled, scene_));
+            CaptureWidgetUndo(beforeToneMappingEnabled, toneMappingEnabledChanged);
+        }
+        if (toneMappingHeader.contentOpen && scene_.postProcess.toneMappingEnabled) {
+            const bool toneCurveOpen = beginEffectSubsection("##effect_tonemap_section", "Curve");
+            endEffectSubsection(toneCurveOpen);
+        } else if (toneMappingHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
+        }
+        endEffectCard();
+                break;
+            }
+
+            case EffectStackStage::FilmGrain: {
+        const EffectHeaderState filmGrainHeader = beginEffectCard(
+            "##effect_card_film_grain",
+            "Film Grain",
+            scene_.postProcess.filmGrainEnabled,
+            scene_.postProcess.filmGrainEnabled,
+            static_cast<int>(index));
+        const Scene beforeFilmGrainEnabled = scene_;
+        bool filmGrainEnabledChanged = ImGui::Checkbox("##effect_film_grain_enabled", &scene_.postProcess.filmGrainEnabled);
+        filmGrainEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.filmGrainEnabled, defaultScene.postProcess.filmGrainEnabled) || filmGrainEnabledChanged;
+        if (filmGrainHeader.resetPressed) {
+            scene_.postProcess.filmGrainEnabled = defaultScene.postProcess.filmGrainEnabled;
+            scene_.postProcess.filmGrain = defaultScene.postProcess.filmGrain;
+        }
+        endEffectHeader(filmGrainHeader.contentOpen, nullptr);
+        if (filmGrainHeader.resetPressed) {
+            commitEffectReset(beforeFilmGrainEnabled, "Film Grain");
+        } else if (filmGrainEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeFilmGrainEnabled, scene_));
+            CaptureWidgetUndo(beforeFilmGrainEnabled, filmGrainEnabledChanged);
+        }
+        if (filmGrainHeader.contentOpen && scene_.postProcess.filmGrainEnabled) {
+            const double filmGrainMin = 0.0;
+            const double filmGrainMax = 1.0;
+            const bool filmTextureOpen = beginEffectSubsection("##effect_film_grain_section", "Texture");
+            if (filmTextureOpen) {
+                if (beginEffectFieldGrid("##effect_film_grain_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Amount");
+                    setEffectItemWidth();
+                    Scene beforeFilmGrain = scene_;
+                    bool filmGrainChanged = SliderScalarWithInput("##effect_film_grain_amount", ImGuiDataType_Double, &scene_.postProcess.filmGrain, &filmGrainMin, &filmGrainMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.filmGrain, defaultScene.postProcess.filmGrain);
+                    if (filmGrainChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeFilmGrain, scene_));
+                    }
+                    CaptureWidgetUndo(beforeFilmGrain, filmGrainChanged);
+                    ImGui::EndTable();
+                }
+            }
+            endEffectSubsection(filmTextureOpen);
+        } else if (filmGrainHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
+        }
+        endEffectCard();
+                break;
+            }
+
+            case EffectStackStage::Vignette: {
+        const EffectHeaderState vignetteHeader = beginEffectCard(
+            "##effect_card_vignette",
+            "Vignette",
+            scene_.postProcess.vignetteEnabled,
+            scene_.postProcess.vignetteEnabled,
+            static_cast<int>(index));
+        const Scene beforeVignetteEnabled = scene_;
+        bool vignetteEnabledChanged = ImGui::Checkbox("##effect_vignette_enabled", &scene_.postProcess.vignetteEnabled);
+        vignetteEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.vignetteEnabled, defaultScene.postProcess.vignetteEnabled) || vignetteEnabledChanged;
+        if (vignetteHeader.resetPressed) {
+            scene_.postProcess.vignetteEnabled = defaultScene.postProcess.vignetteEnabled;
+            scene_.postProcess.vignetteIntensity = defaultScene.postProcess.vignetteIntensity;
+            scene_.postProcess.vignetteRoundness = defaultScene.postProcess.vignetteRoundness;
+        }
+        endEffectHeader(vignetteHeader.contentOpen, nullptr);
+        if (vignetteHeader.resetPressed) {
+            commitEffectReset(beforeVignetteEnabled, "Vignette");
+        } else if (vignetteEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeVignetteEnabled, scene_));
+            CaptureWidgetUndo(beforeVignetteEnabled, vignetteEnabledChanged);
+        }
+        if (vignetteHeader.contentOpen && scene_.postProcess.vignetteEnabled) {
             const double vignetteIntensityMin = 0.0;
             const double vignetteIntensityMax = 1.5;
             const double vignetteRoundnessMin = 0.0;
             const double vignetteRoundnessMax = 1.0;
-            const double filmGrainMin = 0.0;
-            const double filmGrainMax = 1.0;
-            const double colorTempMin = 2000.0;
-            const double colorTempMax = 12000.0;
-            const double saturationMin = -1.0;
-            const double saturationMax = 1.0;
-            if (beginEffectFieldGrid("##effect_post_process_grid")) {
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Bloom Intensity");
-                setEffectItemWidth();
-                Scene beforePP = scene_;
-                bool ppChanged = SliderScalarWithInput("##effect_pp_bloom_intensity", ImGuiDataType_Double, &scene_.postProcess.bloomIntensity, &bloomIntensityMin, &bloomIntensityMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.postProcess.bloomIntensity, defaultScene.postProcess.bloomIntensity);
-                if (ppChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                }
-                CaptureWidgetUndo(beforePP, ppChanged);
+            const bool vignetteShapeOpen = beginEffectSubsection("##effect_vignette_section", "Shape");
+            if (vignetteShapeOpen) {
+                if (beginEffectFieldGrid("##effect_vignette_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Intensity");
+                    setEffectItemWidth();
+                    Scene beforeVignette = scene_;
+                    bool vignetteChanged = SliderScalarWithInput("##effect_vignette_intensity", ImGuiDataType_Double, &scene_.postProcess.vignetteIntensity, &vignetteIntensityMin, &vignetteIntensityMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.vignetteIntensity, defaultScene.postProcess.vignetteIntensity);
+                    if (vignetteChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeVignette, scene_));
+                    }
+                    CaptureWidgetUndo(beforeVignette, vignetteChanged);
 
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Bloom Threshold");
-                setEffectItemWidth();
-                beforePP = scene_;
-                ppChanged = SliderScalarWithInput("##effect_pp_bloom_threshold", ImGuiDataType_Double, &scene_.postProcess.bloomThreshold, &bloomThresholdMin, &bloomThresholdMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.postProcess.bloomThreshold, defaultScene.postProcess.bloomThreshold);
-                if (ppChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Roundness");
+                    setEffectItemWidth();
+                    beforeVignette = scene_;
+                    vignetteChanged = SliderScalarWithInput("##effect_vignette_roundness", ImGuiDataType_Double, &scene_.postProcess.vignetteRoundness, &vignetteRoundnessMin, &vignetteRoundnessMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.vignetteRoundness, defaultScene.postProcess.vignetteRoundness);
+                    if (vignetteChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeVignette, scene_));
+                    }
+                    CaptureWidgetUndo(beforeVignette, vignetteChanged);
+                    ImGui::EndTable();
                 }
-                CaptureWidgetUndo(beforePP, ppChanged);
-
-                if (ImGui::TableGetColumnCount() > 1) {
-                    ImGui::TableNextRow();
-                }
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Chromatic Aberration");
-                setEffectItemWidth();
-                beforePP = scene_;
-                ppChanged = SliderScalarWithInput("##effect_pp_chromatic", ImGuiDataType_Double, &scene_.postProcess.chromaticAberration, &chromaticMin, &chromaticMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.postProcess.chromaticAberration, defaultScene.postProcess.chromaticAberration);
-                if (ppChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                }
-                CaptureWidgetUndo(beforePP, ppChanged);
-
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Vignette");
-                setEffectItemWidth();
-                beforePP = scene_;
-                ppChanged = SliderScalarWithInput("##effect_pp_vignette", ImGuiDataType_Double, &scene_.postProcess.vignetteIntensity, &vignetteIntensityMin, &vignetteIntensityMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.postProcess.vignetteIntensity, defaultScene.postProcess.vignetteIntensity);
-                if (ppChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                }
-                CaptureWidgetUndo(beforePP, ppChanged);
-
-                if (ImGui::TableGetColumnCount() > 1) {
-                    ImGui::TableNextRow();
-                }
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Vignette Roundness");
-                setEffectItemWidth();
-                beforePP = scene_;
-                ppChanged = SliderScalarWithInput("##effect_pp_vignette_round", ImGuiDataType_Double, &scene_.postProcess.vignetteRoundness, &vignetteRoundnessMin, &vignetteRoundnessMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.postProcess.vignetteRoundness, defaultScene.postProcess.vignetteRoundness);
-                if (ppChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                }
-                CaptureWidgetUndo(beforePP, ppChanged);
-
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Film Grain");
-                setEffectItemWidth();
-                beforePP = scene_;
-                ppChanged = SliderScalarWithInput("##effect_pp_film_grain", ImGuiDataType_Double, &scene_.postProcess.filmGrain, &filmGrainMin, &filmGrainMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.postProcess.filmGrain, defaultScene.postProcess.filmGrain);
-                if (ppChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                }
-                CaptureWidgetUndo(beforePP, ppChanged);
-
-                if (ImGui::TableGetColumnCount() > 1) {
-                    ImGui::TableNextRow();
-                }
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Color Temperature");
-                setEffectItemWidth();
-                beforePP = scene_;
-                ppChanged = SliderScalarWithInput("##effect_pp_color_temp", ImGuiDataType_Double, &scene_.postProcess.colorTemperature, &colorTempMin, &colorTempMax, "%.0f K")
-                    || ResetValueOnDoubleClick(scene_.postProcess.colorTemperature, defaultScene.postProcess.colorTemperature);
-                if (ppChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                }
-                CaptureWidgetUndo(beforePP, ppChanged);
-
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("Saturation Boost");
-                setEffectItemWidth();
-                beforePP = scene_;
-                ppChanged = SliderScalarWithInput("##effect_pp_saturation", ImGuiDataType_Double, &scene_.postProcess.saturationBoost, &saturationMin, &saturationMax, "%.2f")
-                    || ResetValueOnDoubleClick(scene_.postProcess.saturationBoost, defaultScene.postProcess.saturationBoost);
-                if (ppChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                }
-                CaptureWidgetUndo(beforePP, ppChanged);
-
-                if (ImGui::TableGetColumnCount() > 1) {
-                    ImGui::TableNextRow();
-                }
-                ImGui::TableNextColumn();
-                drawEffectFieldLabel("ACES Tone Mapping");
-                beforePP = scene_;
-                ppChanged = ImGui::Checkbox("##effect_pp_aces", &scene_.postProcess.acesToneMap)
-                    || ResetValueOnDoubleClick(scene_.postProcess.acesToneMap, defaultScene.postProcess.acesToneMap);
-                if (ppChanged) {
-                    MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                }
-                CaptureWidgetUndo(beforePP, ppChanged);
-
-                ImGui::EndTable();
             }
-        } else {
-            ImGui::TextDisabled("Off");
+            endEffectSubsection(vignetteShapeOpen);
+        } else if (vignetteHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
+                break;
+            }
+
+            case EffectStackStage::Curves: {
+        const EffectHeaderState curvesHeader = beginEffectCard(
+            "##effect_card_curves",
+            "Curves",
+            scene_.postProcess.curvesEnabled,
+            scene_.postProcess.curvesEnabled,
+            static_cast<int>(index));
+        const Scene beforeCurvesEnabled = scene_;
+        bool curvesEnabledChanged = ImGui::Checkbox("##effect_curves", &scene_.postProcess.curvesEnabled);
+        curvesEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.curvesEnabled, defaultScene.postProcess.curvesEnabled) || curvesEnabledChanged;
+        if (curvesHeader.resetPressed) {
+            scene_.postProcess.curvesEnabled = defaultScene.postProcess.curvesEnabled;
+            scene_.postProcess.curveBlackPoint = defaultScene.postProcess.curveBlackPoint;
+            scene_.postProcess.curveWhitePoint = defaultScene.postProcess.curveWhitePoint;
+            scene_.postProcess.curveGamma = defaultScene.postProcess.curveGamma;
+        }
+        endEffectHeader(curvesHeader.contentOpen, nullptr);
+        if (curvesHeader.resetPressed) {
+            commitEffectReset(beforeCurvesEnabled, "Curves");
+        } else if (curvesEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeCurvesEnabled, scene_));
+            CaptureWidgetUndo(beforeCurvesEnabled, curvesEnabledChanged);
+        }
+        if (curvesHeader.contentOpen && scene_.postProcess.curvesEnabled) {
+            const double blackPointMin = 0.0;
+            const double blackPointMax = 0.8;
+            const double whitePointMin = 0.2;
+            const double whitePointMax = 1.0;
+            const double curveGammaMin = 0.3;
+            const double curveGammaMax = 3.0;
+            const bool curvesLevelsOpen = beginEffectSubsection("##effect_curves_section", "Levels");
+            if (curvesLevelsOpen) {
+                if (beginEffectFieldGrid("##effect_curves_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Black Point");
+                    setEffectItemWidth();
+                    Scene beforeCurves = scene_;
+                    bool curvesChanged = SliderScalarWithInput("##effect_curves_black", ImGuiDataType_Double, &scene_.postProcess.curveBlackPoint, &blackPointMin, &blackPointMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.curveBlackPoint, defaultScene.postProcess.curveBlackPoint);
+                    scene_.postProcess.curveBlackPoint = std::min(scene_.postProcess.curveBlackPoint, scene_.postProcess.curveWhitePoint - 0.01);
+                    if (curvesChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
+                    }
+                    CaptureWidgetUndo(beforeCurves, curvesChanged);
+
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("White Point");
+                    setEffectItemWidth();
+                    beforeCurves = scene_;
+                    curvesChanged = SliderScalarWithInput("##effect_curves_white", ImGuiDataType_Double, &scene_.postProcess.curveWhitePoint, &whitePointMin, &whitePointMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.curveWhitePoint, defaultScene.postProcess.curveWhitePoint);
+                    scene_.postProcess.curveWhitePoint = std::max(scene_.postProcess.curveWhitePoint, scene_.postProcess.curveBlackPoint + 0.01);
+                    if (curvesChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
+                    }
+                    CaptureWidgetUndo(beforeCurves, curvesChanged);
+
+                    if (ImGui::TableGetColumnCount() > 1) {
+                        ImGui::TableNextRow();
+                    }
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Gamma");
+                    setEffectItemWidth();
+                    beforeCurves = scene_;
+                    curvesChanged = SliderScalarWithInput("##effect_curves_gamma", ImGuiDataType_Double, &scene_.postProcess.curveGamma, &curveGammaMin, &curveGammaMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.curveGamma, defaultScene.postProcess.curveGamma);
+                    if (curvesChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
+                    }
+                    CaptureWidgetUndo(beforeCurves, curvesChanged);
+
+                    ImGui::EndTable();
+                }
+            }
+            endEffectSubsection(curvesLevelsOpen);
+        } else if (curvesHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
+        }
+        endEffectCard();
+                break;
+            }
+
+            case EffectStackStage::Sharpen: {
+        const EffectHeaderState sharpenHeader = beginEffectCard(
+            "##effect_card_sharpen",
+            "Sharpen",
+            scene_.postProcess.sharpenEnabled,
+            scene_.postProcess.sharpenEnabled,
+            static_cast<int>(index));
+        const Scene beforeSharpenEnabled = scene_;
+        bool sharpenEnabledChanged = ImGui::Checkbox("##effect_sharpen", &scene_.postProcess.sharpenEnabled);
+        sharpenEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.sharpenEnabled, defaultScene.postProcess.sharpenEnabled) || sharpenEnabledChanged;
+        if (sharpenHeader.resetPressed) {
+            scene_.postProcess.sharpenEnabled = defaultScene.postProcess.sharpenEnabled;
+            scene_.postProcess.sharpenAmount = defaultScene.postProcess.sharpenAmount;
+        }
+        endEffectHeader(sharpenHeader.contentOpen, nullptr);
+        if (sharpenHeader.resetPressed) {
+            commitEffectReset(beforeSharpenEnabled, "Sharpen");
+        } else if (sharpenEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeSharpenEnabled, scene_));
+            CaptureWidgetUndo(beforeSharpenEnabled, sharpenEnabledChanged);
+        }
+        if (sharpenHeader.contentOpen && scene_.postProcess.sharpenEnabled) {
+            const double sharpenMin = 0.0;
+            const double sharpenMax = 1.0;
+            const bool sharpenDetailOpen = beginEffectSubsection("##effect_sharpen_section", "Detail");
+            if (sharpenDetailOpen) {
+                if (beginEffectFieldGrid("##effect_sharpen_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Amount");
+                    setEffectItemWidth();
+                    Scene beforeSharpen = scene_;
+                    bool sharpenChanged = SliderScalarWithInput("##effect_sharpen_amount", ImGuiDataType_Double, &scene_.postProcess.sharpenAmount, &sharpenMin, &sharpenMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.sharpenAmount, defaultScene.postProcess.sharpenAmount);
+                    if (sharpenChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeSharpen, scene_));
+                    }
+                    CaptureWidgetUndo(beforeSharpen, sharpenChanged);
+                    ImGui::EndTable();
+                }
+            }
+            endEffectSubsection(sharpenDetailOpen);
+        } else if (sharpenHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
+        }
+        endEffectCard();
+                break;
+            }
+
+            case EffectStackStage::HueShift: {
+        const EffectHeaderState hueShiftHeader = beginEffectCard(
+            "##effect_card_hue_shift",
+            "Hue Shift",
+            scene_.postProcess.hueShiftEnabled,
+            scene_.postProcess.hueShiftEnabled,
+            static_cast<int>(index));
+        const Scene beforeHueShiftEnabled = scene_;
+        bool hueShiftEnabledChanged = ImGui::Checkbox("##effect_hue_shift", &scene_.postProcess.hueShiftEnabled);
+        hueShiftEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.hueShiftEnabled, defaultScene.postProcess.hueShiftEnabled) || hueShiftEnabledChanged;
+        if (hueShiftHeader.resetPressed) {
+            scene_.postProcess.hueShiftEnabled = defaultScene.postProcess.hueShiftEnabled;
+            scene_.postProcess.hueShiftDegrees = defaultScene.postProcess.hueShiftDegrees;
+        }
+        endEffectHeader(hueShiftHeader.contentOpen, nullptr);
+        if (hueShiftHeader.resetPressed) {
+            commitEffectReset(beforeHueShiftEnabled, "Hue Shift");
+        } else if (hueShiftEnabledChanged) {
+            MarkViewportDirty(DeterminePreviewResetReason(beforeHueShiftEnabled, scene_));
+            CaptureWidgetUndo(beforeHueShiftEnabled, hueShiftEnabledChanged);
+        }
+        if (hueShiftHeader.contentOpen && scene_.postProcess.hueShiftEnabled) {
+            const double hueShiftMin = -180.0;
+            const double hueShiftMax = 180.0;
+            const bool hueColorOpen = beginEffectSubsection("##effect_hue_shift_section", "Color");
+            if (hueColorOpen) {
+                if (beginEffectFieldGrid("##effect_hue_shift_grid")) {
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Degrees");
+                    setEffectItemWidth();
+                    Scene beforeHueShift = scene_;
+                    bool hueShiftChanged = SliderScalarWithInput("##effect_hue_shift_degrees", ImGuiDataType_Double, &scene_.postProcess.hueShiftDegrees, &hueShiftMin, &hueShiftMax, "%.0f deg")
+                        || ResetValueOnDoubleClick(scene_.postProcess.hueShiftDegrees, defaultScene.postProcess.hueShiftDegrees);
+                    if (hueShiftChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeHueShift, scene_));
+                    }
+                    CaptureWidgetUndo(beforeHueShift, hueShiftChanged);
+                    ImGui::EndTable();
+                }
+            }
+            endEffectSubsection(hueColorOpen);
+        } else if (hueShiftHeader.contentOpen) {
+            ImGui::TextDisabled("Disabled");
+        }
+        endEffectCard();
+                break;
+            }
+
+            default:
+                break;
+            }
+        }
 
         ImGui::EndTable();
     }
+    ImGui::PopStyleVar();
+
+    if (requestedMoveFrom >= 0
+        && requestedMoveTo >= 0
+        && requestedMoveFrom < static_cast<int>(scene_.effectStack.size())
+        && requestedMoveTo < static_cast<int>(scene_.effectStack.size())
+        && requestedMoveFrom != requestedMoveTo) {
+        const Scene beforeReorder = scene_;
+        auto begin = scene_.effectStack.begin();
+        if (requestedMoveFrom < requestedMoveTo) {
+            std::rotate(begin + requestedMoveFrom, begin + requestedMoveFrom + 1, begin + requestedMoveTo + 1);
+        } else {
+            std::rotate(begin + requestedMoveTo, begin + requestedMoveFrom, begin + requestedMoveFrom + 1);
+        }
+        SyncCurrentKeyframeFromScene();
+        PushUndoState(beforeReorder, "Reorder Effects");
+        MarkViewportDirty(DeterminePreviewResetReason(beforeReorder, scene_));
+    }
+
+    ImGui::End();
+}
+
+bool AppWindow::CaptureCurrentPreviewPixels(std::vector<std::uint32_t>& pixels, int& width, int& height) {
+    width = std::max(1, UploadedViewportWidth());
+    height = std::max(1, UploadedViewportHeight());
+    pixels.clear();
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+
+    const PreviewPresentationState presentation = previewProgress_.presentation;
+    if (presentation.device == PreviewRenderDevice::Cpu) {
+        if (viewportPixels_.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height)) {
+            return false;
+        }
+        pixels = viewportPixels_;
+        return true;
+    }
+
+    if (renderBackend_ == nullptr) {
+        return false;
+    }
+
+    const auto readTexture = [&](ID3D11Texture2D* texture) {
+        return texture != nullptr && renderBackend_->ReadbackColorTexture(texture, pixels);
+    };
+
+    switch (presentation.stage) {
+    case PreviewRenderStage::PostProcessed:
+        return readTexture(gpuPostProcess_.OutputTexture());
+    case PreviewRenderStage::DepthOfField:
+        return readTexture(gpuDofRenderer_.OutputTexture());
+    case PreviewRenderStage::Denoised:
+        return readTexture(gpuDenoiser_.OutputTexture());
+    case PreviewRenderStage::Base:
+    case PreviewRenderStage::Composited:
+    default:
+        break;
+    }
+
+    auto compositeTexture = [&](ID3D11Texture2D* texture) {
+        if (texture == nullptr) {
+            return true;
+        }
+        std::vector<std::uint32_t> layerPixels;
+        if (!renderBackend_->ReadbackColorTexture(texture, layerPixels)) {
+            return false;
+        }
+        if (pixels.empty()) {
+            pixels = std::move(layerPixels);
+        } else {
+            CompositePixelsOver(pixels, layerPixels);
+        }
+        return true;
+    };
+
+    if (presentation.content != PreviewRenderContent::Path && !compositeTexture(gpuFlameRenderer_.OutputTexture())) {
+        return false;
+    }
+    if (presentation.content != PreviewRenderContent::Flame && !compositeTexture(gpuPathRenderer_.OutputTexture())) {
+        return false;
+    }
+    return !pixels.empty();
+}
+
+void AppWindow::DrawHistogramPanel() {
+    if (!histogramPanelOpen_) {
+        return;
+    }
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
+    ImGui::Begin("Histogram", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::PopStyleVar();
+    DrawDockPanelTabContextMenu("Histogram", histogramPanelOpen_);
+
+    const int previewWidth = std::max(1, UploadedViewportWidth());
+    const int previewHeight = std::max(1, UploadedViewportHeight());
+    const std::size_t previewPixelCount = static_cast<std::size_t>(previewWidth) * static_cast<std::size_t>(previewHeight);
+    const auto histogramRefreshInterval =
+        previewPixelCount > 1800000 ? std::chrono::milliseconds(1600)
+        : previewPixelCount > 900000 ? std::chrono::milliseconds(1100)
+        : previewPixelCount > 400000 ? std::chrono::milliseconds(650)
+        : std::chrono::milliseconds(250);
+    const auto now = std::chrono::steady_clock::now();
+    const bool histogramShapeChanged =
+        !histogramCache_.valid
+        || histogramCache_.width != previewWidth
+        || histogramCache_.height != previewHeight
+        || histogramCache_.presentation != previewProgress_.presentation;
+    const bool previewChangedSinceHistogram = histogramCache_.sourceTimestamp != lastPreviewUpdate_;
+    const bool previewSettled = previewProgress_.phase == PreviewProgressPhase::Complete;
+    const bool dueForRefresh =
+        histogramShapeChanged
+        || (!histogramCache_.valid)
+        || (previewChangedSinceHistogram && previewSettled)
+        || (previewChangedSinceHistogram && (now - histogramCache_.lastRefreshAt >= histogramRefreshInterval));
+
+    if (dueForRefresh) {
+        std::vector<std::uint32_t> previewPixels;
+        int capturedWidth = 0;
+        int capturedHeight = 0;
+        if (!CaptureCurrentPreviewPixels(previewPixels, capturedWidth, capturedHeight)) {
+            if (!histogramCache_.valid) {
+                ImGui::TextDisabled("No preview image available yet.");
+                ImGui::End();
+                return;
+            }
+        } else {
+            histogramCache_ = {};
+            histogramCache_.valid = true;
+            histogramCache_.width = capturedWidth;
+            histogramCache_.height = capturedHeight;
+            histogramCache_.presentation = previewProgress_.presentation;
+            histogramCache_.sourceTimestamp = lastPreviewUpdate_;
+            histogramCache_.lastRefreshAt = now;
+
+            double meanLuminance = 0.0;
+            int shadowClipped = 0;
+            int highlightClipped = 0;
+            int midtones = 0;
+            std::array<std::uint32_t, 256> luminanceCounts {};
+
+            const std::size_t maxHistogramSamples =
+                previewPixels.size() > 1800000 ? 12000
+                : previewPixels.size() > 900000 ? 18000
+                : previewPixels.size() > 400000 ? 28000
+                : 48000;
+            const std::size_t sampleStride = std::max<std::size_t>(1, (previewPixels.size() + maxHistogramSamples - 1) / maxHistogramSamples);
+            std::size_t sampleCount = 0;
+            for (std::size_t pixelIndex = 0; pixelIndex < previewPixels.size(); pixelIndex += sampleStride) {
+                const std::uint32_t pixel = previewPixels[pixelIndex];
+                const int red = static_cast<int>((pixel >> 16U) & 0xFFU);
+                const int green = static_cast<int>((pixel >> 8U) & 0xFFU);
+                const int blue = static_cast<int>(pixel & 0xFFU);
+                const int lum = static_cast<int>(std::clamp(
+                    std::round((red * 0.2126 + green * 0.7152 + blue * 0.0722)),
+                    0.0,
+                    255.0));
+                histogramCache_.red[static_cast<std::size_t>(red)] += 1.0f;
+                histogramCache_.green[static_cast<std::size_t>(green)] += 1.0f;
+                histogramCache_.blue[static_cast<std::size_t>(blue)] += 1.0f;
+                histogramCache_.luminance[static_cast<std::size_t>(lum)] += 1.0f;
+                luminanceCounts[static_cast<std::size_t>(lum)] += 1U;
+                meanLuminance += (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255.0;
+                if (red <= 2 && green <= 2 && blue <= 2) {
+                    ++shadowClipped;
+                }
+                if (red >= 253 && green >= 253 && blue >= 253) {
+                    ++highlightClipped;
+                }
+                if (lum >= 64 && lum <= 191) {
+                    ++midtones;
+                }
+                ++sampleCount;
+            }
+
+            const auto normalizeBins = [](std::array<float, 256>& bins) {
+                const float maxBin = *std::max_element(bins.begin(), bins.end());
+                if (maxBin <= 0.0f) {
+                    return;
+                }
+                for (float& value : bins) {
+                    value /= maxBin;
+                }
+            };
+            normalizeBins(histogramCache_.red);
+            normalizeBins(histogramCache_.green);
+            normalizeBins(histogramCache_.blue);
+            normalizeBins(histogramCache_.luminance);
+
+            const double sampleCountDouble = static_cast<double>(std::max<std::size_t>(1, sampleCount));
+            const auto percentileLuminance = [&](const double percentile) {
+                const std::uint64_t threshold = static_cast<std::uint64_t>(std::ceil(percentile * sampleCountDouble));
+                std::uint64_t cumulative = 0;
+                for (std::size_t index = 0; index < luminanceCounts.size(); ++index) {
+                    cumulative += luminanceCounts[index];
+                    if (cumulative >= threshold) {
+                        return static_cast<double>(index) / 255.0;
+                    }
+                }
+                return 1.0;
+            };
+
+            histogramCache_.sampleCount = sampleCount;
+            histogramCache_.meanLuminance = meanLuminance / sampleCountDouble;
+            histogramCache_.medianLuminance = percentileLuminance(0.50);
+            histogramCache_.p95Luminance = percentileLuminance(0.95);
+            histogramCache_.shadowClipPercent = (static_cast<double>(shadowClipped) / sampleCountDouble) * 100.0;
+            histogramCache_.midtonePercent = (static_cast<double>(midtones) / sampleCountDouble) * 100.0;
+            histogramCache_.highlightClipPercent = (static_cast<double>(highlightClipped) / sampleCountDouble) * 100.0;
+        }
+    }
+
+    if (!histogramCache_.valid) {
+        ImGui::TextDisabled("No histogram data yet.");
+        ImGui::End();
+        return;
+    }
+
+    const UiTheme& theme = GetUiTheme();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float availableHeight = ImGui::GetContentRegionAvail().y;
+    const float legendHeight = ImGui::GetFrameHeight() + 2.0f;
+    const float statsBlockHeight = ImGui::GetTextLineHeight() * 3.2f + style.ItemSpacing.y * 3.0f;
+    const float bottomReserve = legendHeight + statsBlockHeight + style.ItemSpacing.y * 3.0f;
+    const float targetChartHeight = availableHeight - bottomReserve;
+    const float chartHeight = std::clamp(targetChartHeight, 140.0f, 320.0f);
+    ImGui::BeginChild(
+        "##histogram_chart_region",
+        ImVec2(0.0f, chartHeight),
+        false,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    const ImVec2 chartAvail = ImGui::GetContentRegionAvail();
+    const ImVec2 chartSize(std::max(1.0f, chartAvail.x), std::max(1.0f, chartAvail.y));
+    const ImVec2 chartPos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##histogram_canvas", chartSize);
+    const ImRect chartRect(chartPos, ImVec2(chartPos.x + chartSize.x, chartPos.y + chartSize.y));
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    const ImU32 chartFillTop = ImGui::GetColorU32(Mix(theme.panelBackgroundInset, theme.frameBackground, 0.55f));
+    const ImU32 chartFillBottom = ImGui::GetColorU32(theme.panelBackgroundInset);
+    const ImU32 chartBorder = ImGui::GetColorU32(theme.border);
+    const ImU32 gridColor = ImGui::GetColorU32(WithAlpha(theme.textDim, 0.16f));
+    const ImU32 lumaFill = ImGui::GetColorU32(ImVec4(0.92f, 0.94f, 0.98f, 0.18f));
+    const ImU32 lumaStroke = ImGui::GetColorU32(ImVec4(0.92f, 0.94f, 0.98f, 0.72f));
+    const ImU32 redFill = ImGui::GetColorU32(ImVec4(0.96f, 0.34f, 0.36f, 0.16f));
+    const ImU32 redStroke = ImGui::GetColorU32(ImVec4(0.98f, 0.40f, 0.42f, 0.92f));
+    const ImU32 greenFill = ImGui::GetColorU32(ImVec4(0.34f, 0.84f, 0.52f, 0.16f));
+    const ImU32 greenStroke = ImGui::GetColorU32(ImVec4(0.42f, 0.90f, 0.58f, 0.92f));
+    const ImU32 blueFill = ImGui::GetColorU32(ImVec4(0.30f, 0.58f, 0.94f, 0.16f));
+    const ImU32 blueStroke = ImGui::GetColorU32(ImVec4(0.38f, 0.64f, 0.98f, 0.94f));
+    const ImU32 shadowTint = ImGui::GetColorU32(ImVec4(0.10f, 0.16f, 0.30f, 0.22f));
+    const ImU32 highlightTint = ImGui::GetColorU32(ImVec4(0.78f, 0.74f, 0.48f, 0.12f));
+    const ImU32 axisLabelColor = ImGui::GetColorU32(WithAlpha(theme.textDim, 0.85f));
+
+    drawList->AddRectFilledMultiColor(
+        chartRect.Min,
+        chartRect.Max,
+        chartFillTop,
+        chartFillTop,
+        chartFillBottom,
+        chartFillBottom);
+    drawList->AddRectFilled(
+        chartRect.Min,
+        ImVec2(chartRect.Min.x + chartRect.GetWidth() * 0.06f, chartRect.Max.y),
+        shadowTint,
+        theme.roundingMedium,
+        ImDrawFlags_RoundCornersLeft);
+    drawList->AddRectFilled(
+        ImVec2(chartRect.Max.x - chartRect.GetWidth() * 0.06f, chartRect.Min.y),
+        chartRect.Max,
+        highlightTint,
+        theme.roundingMedium,
+        ImDrawFlags_RoundCornersRight);
+
+    constexpr int gridDivisionsX = 4;
+    constexpr int gridDivisionsY = 4;
+    for (int gridIndex = 1; gridIndex < gridDivisionsX; ++gridIndex) {
+        const float t = static_cast<float>(gridIndex) / static_cast<float>(gridDivisionsX);
+        const float x = ImLerp(chartRect.Min.x, chartRect.Max.x, t);
+        drawList->AddLine(ImVec2(x, chartRect.Min.y), ImVec2(x, chartRect.Max.y), gridColor, 1.0f);
+    }
+    for (int gridIndex = 1; gridIndex < gridDivisionsY; ++gridIndex) {
+        const float t = static_cast<float>(gridIndex) / static_cast<float>(gridDivisionsY);
+        const float y = ImLerp(chartRect.Min.y, chartRect.Max.y, t);
+        drawList->AddLine(ImVec2(chartRect.Min.x, y), ImVec2(chartRect.Max.x, y), gridColor, 1.0f);
+    }
+
+    const auto drawHistogramLayer = [&](const std::array<float, 256>& bins, const ImU32 fillColor, const ImU32 strokeColor) {
+        std::array<ImVec2, 256> linePoints {};
+        for (int binIndex = 0; binIndex < 256; ++binIndex) {
+            const float x = ImLerp(chartRect.Min.x, chartRect.Max.x, static_cast<float>(binIndex) / 255.0f);
+            const float y = ImLerp(chartRect.Max.y - 1.0f, chartRect.Min.y + 10.0f, bins[static_cast<std::size_t>(binIndex)]);
+            linePoints[static_cast<std::size_t>(binIndex)] = ImVec2(x, y);
+            drawList->AddLine(ImVec2(x, chartRect.Max.y - 1.0f), ImVec2(x, y), fillColor, 1.0f);
+        }
+        drawList->AddPolyline(linePoints.data(), static_cast<int>(linePoints.size()), strokeColor, ImDrawFlags_None, 2.0f);
+    };
+
+    drawHistogramLayer(histogramCache_.luminance, lumaFill, lumaStroke);
+    drawHistogramLayer(histogramCache_.red, redFill, redStroke);
+    drawHistogramLayer(histogramCache_.green, greenFill, greenStroke);
+    drawHistogramLayer(histogramCache_.blue, blueFill, blueStroke);
+    drawList->AddRect(chartRect.Min, chartRect.Max, chartBorder, theme.roundingMedium, 0, 1.0f);
+
+    const char* xAxisLabels[] = {"0", "64", "128", "192", "255"};
+    for (int index = 0; index < 5; ++index) {
+        const float t = static_cast<float>(index) / 4.0f;
+        const float x = ImLerp(chartRect.Min.x, chartRect.Max.x, t);
+        const ImVec2 textSize = ImGui::CalcTextSize(xAxisLabels[index]);
+        const float labelMinX = chartRect.Min.x + 6.0f;
+        const float labelMaxX = std::max(labelMinX, chartRect.Max.x - textSize.x - 6.0f);
+        const float textX = std::clamp(
+            x - textSize.x * 0.5f,
+            labelMinX,
+            labelMaxX);
+        drawList->AddText(
+            ImVec2(textX, chartRect.Max.y - textSize.y - 5.0f),
+            axisLabelColor,
+            xAxisLabels[index]);
+    }
+    ImGui::EndChild();
+
+    ImGui::Spacing();
+    PushMonospaceFont();
+    const auto drawStatValue = [&](const char* label, const std::string& value) {
+        ImGui::TextDisabled("%s", label);
+        ImGui::Text("%s", value.c_str());
+    };
+    if (ImGui::BeginTable("##histogram_stats", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
+        ImGui::TableNextColumn();
+        drawStatValue("SIZE", std::format("{}x{}", histogramCache_.width, histogramCache_.height));
+        ImGui::TableNextColumn();
+        drawStatValue("SAMPLES", std::format("{:L}", histogramCache_.sampleCount));
+        ImGui::TableNextColumn();
+        drawStatValue("MEAN", std::format("{:.2f}", histogramCache_.meanLuminance));
+        ImGui::TableNextColumn();
+        drawStatValue("MEDIAN", std::format("{:.2f}", histogramCache_.medianLuminance));
+
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        drawStatValue("P95", std::format("{:.2f}", histogramCache_.p95Luminance));
+        ImGui::TableNextColumn();
+        drawStatValue("SHADOWS", std::format("{:.1f}%", histogramCache_.shadowClipPercent));
+        ImGui::TableNextColumn();
+        drawStatValue("MIDTONES", std::format("{:.1f}%", histogramCache_.midtonePercent));
+        ImGui::TableNextColumn();
+        drawStatValue("HIGHLIGHTS", std::format("{:.1f}%", histogramCache_.highlightClipPercent));
+        ImGui::EndTable();
+    }
+    PopMonospaceFont();
+
+    const auto drawLegendItem = [&](const char* id, const char* label, const ImVec4& color) {
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        const float itemWidth = textSize.x + 34.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 5.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, Mix(theme.panelBackgroundAlt, color, 0.18f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Mix(theme.frameBackgroundHover, color, 0.26f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, Mix(theme.frameBackgroundActive, color, 0.32f));
+        ImGui::Button(id, ImVec2(itemWidth, 0.0f));
+        const ImRect chipRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        drawList->AddCircleFilled(
+            ImVec2(chipRect.Min.x + 12.0f, (chipRect.Min.y + chipRect.Max.y) * 0.5f),
+            4.0f,
+            ImGui::GetColorU32(color));
+        drawList->AddText(
+            ImVec2(chipRect.Min.x + 22.0f, chipRect.Min.y + 4.0f),
+            ImGui::GetColorU32(theme.text),
+            label);
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar();
+    };
+
+    drawLegendItem("##histogram_luma_chip", "Luma", ImVec4(0.92f, 0.94f, 0.98f, 1.0f));
+    ImGui::SameLine(0.0f, 8.0f);
+    drawLegendItem("##histogram_red_chip", "Red", ImVec4(0.96f, 0.34f, 0.36f, 1.0f));
+    ImGui::SameLine(0.0f, 8.0f);
+    drawLegendItem("##histogram_green_chip", "Green", ImVec4(0.34f, 0.84f, 0.52f, 1.0f));
+    ImGui::SameLine(0.0f, 8.0f);
+    drawLegendItem("##histogram_blue_chip", "Blue", ImVec4(0.30f, 0.58f, 0.94f, 1.0f));
 
     ImGui::End();
 }

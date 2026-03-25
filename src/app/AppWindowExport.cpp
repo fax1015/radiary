@@ -354,10 +354,7 @@ AppWindow::GpuExportRenderPlan AppWindow::BuildGpuExportRenderPlan(
     plan.transparentBackground = transparentBackground;
     plan.exportGrid = !hideGrid && plan.scene.gridVisible;
     plan.content = PreviewContentForMode(plan.scene.mode);
-    plan.outputStage = DetermineResolvedRenderStage(
-        plan.scene.denoiser.enabled,
-        plan.scene.depthOfField.enabled,
-        plan.scene.postProcess.enabled);
+    plan.outputStage = DetermineResolvedRenderStage(plan.scene);
     plan.renderState = renderState;
     return plan;
 }
@@ -556,7 +553,9 @@ bool AppWindow::ReadGpuExportEffectPixels(
     const int height,
     const GpuFrameInputs& baseInputs,
     std::vector<std::uint32_t>& output) {
-    const bool needsResolvedFrame = exportScene.denoiser.enabled || exportScene.postProcess.enabled;
+    const bool hasActiveEffects = std::any_of(exportScene.effectStack.begin(), exportScene.effectStack.end(), [&](const EffectStackStage stage) {
+        return IsEffectStageEnabled(exportScene, stage);
+    });
     GpuEffectChainState effectState;
     if (!PrepareGpuEffectChainState(
             exportScene,
@@ -564,7 +563,7 @@ bool AppWindow::ReadGpuExportEffectPixels(
             height,
             baseInputs,
             exportScene.denoiser.enabled,
-            !exportScene.denoiser.enabled && needsResolvedFrame,
+            hasActiveEffects,
             effectState)) {
         return false;
     }
@@ -573,18 +572,10 @@ bool AppWindow::ReadGpuExportEffectPixels(
         return false;
     }
 
-    if (exportScene.depthOfField.enabled) {
-        GpuPassOutput dofOutput;
-        if (!RunGpuDofPass(exportScene, width, height, effectState.inputs, dofOutput)) {
-            return false;
-        }
-        return ApplyGpuExportPostProcessAndReadback(exportScene, width, height, dofOutput, output);
-    }
-
     if (!effectState.hasResolvedFrame) {
         return false;
     }
-    return ApplyGpuExportPostProcessAndReadback(exportScene, width, height, effectState.resolvedFrame, output);
+    return renderBackend_ != nullptr && renderBackend_->ReadbackColorTexture(effectState.resolvedFrame.colorTexture, output);
 }
 
 void AppWindow::UpdateGpuExportFailureStatus(const GpuExportRenderPlan& plan) {
@@ -596,7 +587,7 @@ void AppWindow::UpdateGpuExportFailureStatus(const GpuExportRenderPlan& plan) {
         checks,
         plan.scene.denoiser.enabled,
         plan.scene.depthOfField.enabled,
-        plan.scene.postProcess.enabled);
+        HasActivePostProcess(plan.scene.postProcess));
     if (!status.empty()) {
         statusText_ = status;
     }
@@ -681,10 +672,7 @@ bool AppWindow::RenderExportSceneWithGpuFallback(
         const PreviewPresentationState exportState = MakePreviewPresentationState(
             PreviewRenderDevice::Gpu,
             PreviewContentForMode(renderScene.mode),
-            DetermineResolvedRenderStage(
-                renderScene.denoiser.enabled,
-                renderScene.depthOfField.enabled,
-                renderScene.postProcess.enabled));
+            DetermineResolvedRenderStage(renderScene));
         statusText_ = BuildGpuFallbackStatusMessage(exportState, gpuFailureStatus);
     }
     if (!useGpuRender && !RenderSceneToPixels(renderScene, width, height, iterations, transparentBackground, hideGrid, false, pixels, renderState)) {

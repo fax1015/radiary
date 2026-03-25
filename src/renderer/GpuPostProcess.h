@@ -23,9 +23,9 @@ public:
         int height,
         const GpuPostProcessInputs& inputs);
 
-    ID3D11ShaderResourceView* ShaderResourceView() const { return outputSrv_; }
-    ID3D11Texture2D* OutputTexture() const { return outputTexture_; }
-    GpuPassOutput Output() const { return {outputSrv_, outputTexture_, nullptr, nullptr}; }
+    ID3D11ShaderResourceView* ShaderResourceView() const { return outputSrvs_[currentOutputIndex_]; }
+    ID3D11Texture2D* OutputTexture() const { return outputTextures_[currentOutputIndex_]; }
+    GpuPassOutput Output() const { return {outputSrvs_[currentOutputIndex_], outputTextures_[currentOutputIndex_], nullptr, nullptr}; }
     bool IsReady() const { return device_ != nullptr && postProcessShader_ != nullptr && bloomDownShader_ != nullptr && bloomUpShader_ != nullptr && paramsBuffer_ != nullptr; }
     const std::string& LastError() const { return lastError_; }
 
@@ -35,17 +35,31 @@ private:
         std::uint32_t height = 0;
         float bloomIntensity = 0.35f;
         float bloomThreshold = 0.6f;
+        std::uint32_t curvesEnabled = 0;
+        std::uint32_t sharpenEnabled = 0;
+        std::uint32_t hueShiftEnabled = 0;
+        std::uint32_t chromaticAberrationEnabled = 0;
+        float curveBlackPoint = 0.0f;
+        float curveWhitePoint = 1.0f;
+        float curveGamma = 1.0f;
+        float sharpenAmount = 0.0f;
+        float hueShiftDegrees = 0.0f;
         float chromaticAberration = 0.0f;
         float vignetteIntensity = 0.0f;
         float vignetteRoundness = 0.5f;
-        std::uint32_t acesToneMap = 0;
+        std::uint32_t vignetteEnabled = 0;
+        std::uint32_t toneMappingEnabled = 0;
+        std::uint32_t filmGrainEnabled = 0;
+        std::uint32_t colorTemperatureEnabled = 0;
         float filmGrain = 0.0f;
         float colorTemperature = 6500.0f;
         float saturationBoost = 0.0f;
+        float padding0 = 0.0f;
+        std::uint32_t saturationEnabled = 0;
         std::uint32_t randomSeed = 0;
         std::uint32_t mipWidth = 0;
         std::uint32_t mipHeight = 0;
-        float padding[2] {};
+        float padding[4] {};
     };
 
     static constexpr int kBloomMipCount = 5;
@@ -64,9 +78,11 @@ private:
     ID3D11ComputeShader* bloomUpShader_ = nullptr;
     ID3D11Buffer* paramsBuffer_ = nullptr;
 
-    ID3D11Texture2D* outputTexture_ = nullptr;
-    ID3D11UnorderedAccessView* outputUav_ = nullptr;
-    ID3D11ShaderResourceView* outputSrv_ = nullptr;
+    static constexpr int kOutputBufferCount = 2;
+
+    ID3D11Texture2D* outputTextures_[kOutputBufferCount] {};
+    ID3D11UnorderedAccessView* outputUavs_[kOutputBufferCount] {};
+    ID3D11ShaderResourceView* outputSrvs_[kOutputBufferCount] {};
 
     ID3D11Texture2D* bloomTextures_[kBloomMipCount] {};
     ID3D11UnorderedAccessView* bloomUavs_[kBloomMipCount] {};
@@ -75,6 +91,7 @@ private:
     DXGI_FORMAT outputFormat_ = DXGI_FORMAT_UNKNOWN;
     int outputWidth_ = 0;
     int outputHeight_ = 0;
+    int currentOutputIndex_ = 0;
     std::uint32_t frameCounter_ = 0;
     std::string lastError_;
 };

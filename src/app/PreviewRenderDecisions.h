@@ -18,5 +18,6 @@ enum class PreviewResetReason {
 PreviewResetReason DeterminePreviewResetReason(const Scene& before, const Scene& after);
 PreviewRenderContent PreviewContentForMode(SceneMode mode);
 PreviewRenderStage DetermineResolvedRenderStage(bool useDenoiser, bool useDof, bool usePostProcess);
+PreviewRenderStage DetermineResolvedRenderStage(const Scene& scene);
 
 }  // namespace radiary

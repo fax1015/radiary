@@ -47,11 +47,11 @@ const UiTheme kUiTheme {
     .frameBackground = ImVec4(0.13f, 0.13f, 0.15f, 1.0f),
     .frameBackgroundHover = ImVec4(0.18f, 0.18f, 0.21f, 1.0f),
     .frameBackgroundActive = ImVec4(0.22f, 0.22f, 0.26f, 1.0f),
-    .accent = ImVec4(0.44f, 0.58f, 0.92f, 1.0f),
-    .accentHover = ImVec4(0.48f, 0.58f, 0.92f, 1.0f),
-    .accentActive = ImVec4(0.36f, 0.47f, 0.78f, 1.0f),
-    .accentSoft = ImVec4(0.44f, 0.58f, 0.92f, 0.12f),
-    .accentSurface = ImVec4(0.13f, 0.19f, 0.32f, 1.0f),
+    .accent = ImVec4(0.45f, 0.58f, 0.92f, 1.0f),
+    .accentHover = ImVec4(0.52f, 0.65f, 0.97f, 1.0f),
+    .accentActive = ImVec4(0.35f, 0.47f, 0.79f, 1.0f),
+    .accentSoft = ImVec4(0.45f, 0.58f, 0.92f, 0.12f),
+    .accentSurface = ImVec4(0.12f, 0.17f, 0.29f, 1.0f),
     .border = ImVec4(0.30f, 0.29f, 0.28f, 0.42f),
     .borderStrong = ImVec4(0.34f, 0.33f, 0.31f, 0.52f),
     .borderSubtle = ImVec4(0.34f, 0.33f, 0.31f, 0.34f),
@@ -76,16 +76,27 @@ struct ActionPalette {
 };
 
 ActionPalette GetActionPalette(const ActionTone tone, const bool toggled) {
+    const UiTheme& theme = kUiTheme;
     switch (tone) {
     case ActionTone::Accent:
         return toggled
-            ? ActionPalette {{0.23f, 0.27f, 0.34f, 1.0f}, {0.29f, 0.34f, 0.42f, 1.0f}, {0.19f, 0.23f, 0.29f, 1.0f}, {0.53f, 0.57f, 0.66f, 0.42f}, {0.95f, 0.95f, 0.94f, 1.0f}}
-            : ActionPalette {{0.14f, 0.17f, 0.21f, 1.0f}, {0.19f, 0.22f, 0.27f, 1.0f}, {0.11f, 0.14f, 0.18f, 1.0f}, {0.35f, 0.39f, 0.46f, 0.34f}, {0.90f, 0.91f, 0.92f, 1.0f}};
+            ? ActionPalette {
+                Mix(theme.accentSurface, theme.accentHover, 0.42f),
+                Mix(theme.accentSurface, theme.accentHover, 0.34f),
+                Mix(theme.panelBackgroundInset, theme.accentActive, 0.32f),
+                WithAlpha(Mix(theme.accentSurface, theme.accentHover, 0.62f), 0.46f),
+                theme.textOnAccent}
+            : ActionPalette {
+                Mix(theme.frameBackgroundHover, theme.accentSurface, 0.46f),
+                Mix(theme.frameBackgroundHover, theme.accent, 0.16f),
+                Mix(theme.panelBackgroundInset, theme.accentSurface, 0.58f),
+                WithAlpha(Mix(theme.borderStrong, theme.accent, 0.32f), 0.36f),
+                theme.text};
     case ActionTone::Slate:
     default:
         return toggled
-            ? ActionPalette {{0.27f, 0.29f, 0.33f, 1.0f}, {0.33f, 0.35f, 0.40f, 1.0f}, {0.21f, 0.23f, 0.27f, 1.0f}, {0.47f, 0.49f, 0.56f, 0.38f}, {0.93f, 0.93f, 0.92f, 1.0f}}
-            : ActionPalette {{0.13f, 0.14f, 0.17f, 1.0f}, {0.18f, 0.19f, 0.23f, 1.0f}, {0.10f, 0.11f, 0.15f, 1.0f}, {0.29f, 0.31f, 0.37f, 0.30f}, {0.88f, 0.89f, 0.90f, 1.0f}};
+            ? ActionPalette {{0.33f, 0.35f, 0.40f, 1.0f}, {0.40f, 0.42f, 0.48f, 1.0f}, {0.24f, 0.26f, 0.31f, 1.0f}, {0.47f, 0.49f, 0.56f, 0.38f}, {0.93f, 0.93f, 0.92f, 1.0f}}
+            : ActionPalette {{0.18f, 0.19f, 0.23f, 1.0f}, {0.25f, 0.26f, 0.31f, 1.0f}, {0.13f, 0.14f, 0.18f, 1.0f}, {0.29f, 0.31f, 0.37f, 0.30f}, {0.88f, 0.89f, 0.90f, 1.0f}};
     }
 }
 
@@ -578,12 +589,12 @@ void ApplyRadiaryStyle(ImGuiStyle& style) {
     style.Colors[ImGuiCol_CheckMark] = theme.accentHover;
     style.Colors[ImGuiCol_SliderGrab] = theme.accent;
     style.Colors[ImGuiCol_SliderGrabActive] = theme.accentHover;
-    style.Colors[ImGuiCol_Button] = theme.panelBackgroundAlt;
-    style.Colors[ImGuiCol_ButtonHovered] = theme.frameBackgroundHover;
+    style.Colors[ImGuiCol_Button] = theme.frameBackgroundHover;
+    style.Colors[ImGuiCol_ButtonHovered] = Mix(theme.frameBackgroundHover, theme.textMuted, 0.28f);
     style.Colors[ImGuiCol_ButtonActive] = theme.frameBackgroundActive;
-    style.Colors[ImGuiCol_Header] = ImVec4(0.16f, 0.16f, 0.19f, 0.96f);
-    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.22f, 0.21f, 0.25f, 1.0f);
-    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.28f, 0.27f, 0.31f, 1.0f);
+    style.Colors[ImGuiCol_Header] = ImVec4(0.22f, 0.21f, 0.25f, 1.0f);
+    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.32f, 0.31f, 0.37f, 1.0f);
+    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.31f, 0.30f, 0.35f, 1.0f);
     style.Colors[ImGuiCol_Separator] = theme.borderSubtle;
     style.Colors[ImGuiCol_SeparatorHovered] = WithAlpha(theme.accent, 0.62f);
     style.Colors[ImGuiCol_SeparatorActive] = WithAlpha(theme.accentHover, 0.86f);
@@ -592,9 +603,11 @@ void ApplyRadiaryStyle(ImGuiStyle& style) {
     style.Colors[ImGuiCol_ResizeGripActive] = WithAlpha(theme.accentHover, 0.68f);
     style.Colors[ImGuiCol_Tab] = theme.panelBackgroundAlt;
     style.Colors[ImGuiCol_TabHovered] = ImVec4(0.21f, 0.20f, 0.23f, 0.98f);
-    style.Colors[ImGuiCol_TabActive] = ImVec4(0.17f, 0.17f, 0.20f, 0.98f);
-    style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.09f, 0.09f, 0.11f, 0.86f);
-    style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.14f, 0.14f, 0.17f, 0.92f);
+    style.Colors[ImGuiCol_TabSelected] = ImVec4(0.17f, 0.17f, 0.20f, 0.98f);
+    style.Colors[ImGuiCol_TabSelectedOverline] = theme.accent;
+    style.Colors[ImGuiCol_TabDimmed] = ImVec4(0.09f, 0.09f, 0.11f, 0.86f);
+    style.Colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.14f, 0.14f, 0.17f, 0.92f);
+    style.Colors[ImGuiCol_TabDimmedSelectedOverline] = WithAlpha(theme.accent, 0.72f);
     style.Colors[ImGuiCol_DockingPreview] = WithAlpha(theme.accent, 0.24f);
     style.Colors[ImGuiCol_DockingEmptyBg] = theme.appBackgroundBottom;
     style.Colors[ImGuiCol_Text] = theme.text;
