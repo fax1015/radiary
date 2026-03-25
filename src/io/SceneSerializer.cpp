@@ -809,13 +809,12 @@ void LoadScenePose(const JsonValue& poseValue, ScenePose& pose) {
         pose.postProcess.saturationBoost = Number(*postProcess, "saturationBoost", pose.postProcess.saturationBoost);
     }
     if (const JsonValue* effectStack = poseValue.Find("effectStack"); effectStack && effectStack->type == JsonValue::Type::Array) {
-        EffectStackOrder loadedOrder = pose.effectStack;
-        std::size_t writeIndex = 0;
+        EffectStackOrder loadedOrder;
         for (const JsonValue& stageValue : effectStack->arrayValue) {
-            if (stageValue.type != JsonValue::Type::String || writeIndex >= loadedOrder.size()) {
+            if (stageValue.type != JsonValue::Type::String) {
                 continue;
             }
-            loadedOrder[writeIndex++] = EffectStackStageFromString(stageValue.stringValue);
+            loadedOrder.push_back(EffectStackStageFromString(stageValue.stringValue));
         }
         NormalizeEffectStackOrder(loadedOrder);
         pose.effectStack = loadedOrder;
@@ -1018,13 +1017,12 @@ std::optional<Scene> SceneSerializer::Load(const std::filesystem::path& path, st
         scene.postProcess.saturationBoost = Number(*postProcess, "saturationBoost", scene.postProcess.saturationBoost);
     }
     if (const JsonValue* effectStack = root.Find("effectStack"); effectStack && effectStack->type == JsonValue::Type::Array) {
-        EffectStackOrder loadedOrder = scene.effectStack;
-        std::size_t writeIndex = 0;
+        EffectStackOrder loadedOrder;
         for (const JsonValue& stageValue : effectStack->arrayValue) {
-            if (stageValue.type != JsonValue::Type::String || writeIndex >= loadedOrder.size()) {
+            if (stageValue.type != JsonValue::Type::String) {
                 continue;
             }
-            loadedOrder[writeIndex++] = EffectStackStageFromString(stageValue.stringValue);
+            loadedOrder.push_back(EffectStackStageFromString(stageValue.stringValue));
         }
         NormalizeEffectStackOrder(loadedOrder);
         scene.effectStack = loadedOrder;

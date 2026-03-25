@@ -46,6 +46,7 @@ void AppWindow::ResetScene(Scene scene) {
     scene_.selectedPath = 0;
     selectedTransformLayers_.clear();
     selectedPathLayers_.clear();
+    ClearEffectSelections();
     selectedTimelineKeyframe_ = FindKeyframeIndex(scene_, static_cast<int>(std::round(scene_.timelineFrame)));
     inspectorTarget_ = InspectorTarget::FlameLayer;
     renameTarget_ = RenameTarget::None;
@@ -68,6 +69,10 @@ void AppWindow::HandleShortcuts() {
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+        if (effectsPanelActive_) {
+            RemoveSelectedEffect();
+            return;
+        }
         if ((playbackPanelActive_ || keyframeListPanelActive_) && RemoveSelectedOrCurrentKeyframe()) {
             return;
         }
@@ -77,7 +82,9 @@ void AppWindow::HandleShortcuts() {
         if (RemoveSelectedLayers()) {
             return;
         }
-        RemoveSelectedOrCurrentKeyframe();
+        if (playbackPanelActive_ || keyframeListPanelActive_ || HasSelectedLayer()) {
+            RemoveSelectedOrCurrentKeyframe();
+        }
         return;
     }
 
@@ -86,6 +93,11 @@ void AppWindow::HandleShortcuts() {
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+        if (effectsPanelActive_) {
+            SelectAllEffects();
+            statusText_ = L"All effects selected";
+            return;
+        }
         SelectAllLayers(inspectorTarget_);
         statusText_ = L"All layers selected";
         return;
@@ -353,6 +365,7 @@ void AppWindow::Undo() {
     currentHistoryLabel_ = entry.label;
     selectedTransformLayers_.clear();
     selectedPathLayers_.clear();
+    ClearEffectSelections();
     EnsureSelectionIsValid();
     ClearPendingUndoCapture();
     renameTarget_ = RenameTarget::None;
@@ -379,6 +392,7 @@ void AppWindow::Redo() {
     currentHistoryLabel_ = entry.label;
     selectedTransformLayers_.clear();
     selectedPathLayers_.clear();
+    ClearEffectSelections();
     EnsureSelectionIsValid();
     ClearPendingUndoCapture();
     renameTarget_ = RenameTarget::None;
@@ -417,14 +431,121 @@ void AppWindow::NormalizeLayerSelections() {
     pathSelectionAnchor_ = scene_.paths.empty()
         ? 0
         : std::clamp(pathSelectionAnchor_, 0, static_cast<int>(scene_.paths.size()) - 1);
-    if (selectedTransformLayers_.empty() && selectedPathLayers_.empty()) {
-        if (inspectorTarget_ == InspectorTarget::PathLayer && !scene_.paths.empty()) {
-            selectedPathLayers_.push_back(scene_.selectedPath);
-        } else if (!scene_.transforms.empty()) {
-            selectedTransformLayers_.push_back(scene_.selectedTransform);
-        }
-    }
     layerSelectionAnchorGlobal_ = std::clamp(layerSelectionAnchorGlobal_, 0, std::max(0, GlobalLayerCount() - 1));
+}
+
+void AppWindow::NormalizeEffectSelections() {
+    int primaryIndex = selectedEffect_ < 0 ? 0 : selectedEffect_;
+    NormalizeIndices(selectedEffects_, static_cast<int>(scene_.effectStack.size()), primaryIndex);
+    if (scene_.effectStack.empty() || selectedEffects_.empty()) {
+        selectedEffects_.clear();
+        selectedEffect_ = -1;
+        effectSelectionAnchor_ = 0;
+        if (rightClickedEffectIndex_ >= static_cast<int>(scene_.effectStack.size())) {
+            rightClickedEffectIndex_ = -1;
+        }
+        return;
+    }
+
+    selectedEffect_ = primaryIndex;
+    effectSelectionAnchor_ = std::clamp(effectSelectionAnchor_, 0, static_cast<int>(scene_.effectStack.size()) - 1);
+    if (!ContainsIndex(selectedEffects_, effectSelectionAnchor_)) {
+        effectSelectionAnchor_ = selectedEffect_;
+    }
+    if (rightClickedEffectIndex_ >= static_cast<int>(scene_.effectStack.size())) {
+        rightClickedEffectIndex_ = -1;
+    }
+}
+
+void AppWindow::ClearEffectSelections() {
+    selectedEffects_.clear();
+    selectedEffect_ = -1;
+    effectSelectionAnchor_ = 0;
+    rightClickedEffectIndex_ = -1;
+}
+
+void AppWindow::SetEffectSelection(std::vector<int> indices, const int primaryIndex, const int anchorIndex) {
+    selectedEffects_ = std::move(indices);
+    selectedEffect_ = primaryIndex;
+    effectSelectionAnchor_ = anchorIndex;
+    NormalizeEffectSelections();
+}
+
+void AppWindow::SelectSingleEffect(const int index) {
+    if (scene_.effectStack.empty()) {
+        return;
+    }
+    ClearLayerSelections();
+    const int clampedIndex = std::clamp(index, 0, static_cast<int>(scene_.effectStack.size()) - 1);
+    SetEffectSelection({clampedIndex}, clampedIndex, clampedIndex);
+}
+
+void AppWindow::ToggleEffectSelection(const int index) {
+    if (scene_.effectStack.empty()) {
+        return;
+    }
+    ClearLayerSelections();
+    const int clampedIndex = std::clamp(index, 0, static_cast<int>(scene_.effectStack.size()) - 1);
+    std::vector<int> selection = selectedEffects_;
+    auto it = std::find(selection.begin(), selection.end(), clampedIndex);
+    if (it != selection.end()) {
+        if (selection.size() > 1) {
+            selection.erase(it);
+        }
+    } else {
+        selection.push_back(clampedIndex);
+    }
+
+    int nextPrimary = clampedIndex;
+    if (!ContainsIndex(selection, clampedIndex)) {
+        nextPrimary = selection.empty() ? -1 : selection.front();
+    }
+    SetEffectSelection(std::move(selection), nextPrimary, clampedIndex);
+}
+
+void AppWindow::SelectEffectRange(const int index) {
+    if (scene_.effectStack.empty()) {
+        return;
+    }
+    ClearLayerSelections();
+    const int clampedIndex = std::clamp(index, 0, static_cast<int>(scene_.effectStack.size()) - 1);
+    const int anchorIndex = std::clamp(effectSelectionAnchor_, 0, static_cast<int>(scene_.effectStack.size()) - 1);
+    const int rangeStart = std::min(anchorIndex, clampedIndex);
+    const int rangeEnd = std::max(anchorIndex, clampedIndex);
+    std::vector<int> selection;
+    selection.reserve(static_cast<std::size_t>(rangeEnd - rangeStart + 1));
+    for (int current = rangeStart; current <= rangeEnd; ++current) {
+        selection.push_back(current);
+    }
+    SetEffectSelection(std::move(selection), clampedIndex, clampedIndex);
+}
+
+void AppWindow::SelectAllEffects() {
+    ClearLayerSelections();
+    selectedEffects_.clear();
+    selectedEffects_.reserve(scene_.effectStack.size());
+    for (int index = 0; index < static_cast<int>(scene_.effectStack.size()); ++index) {
+        selectedEffects_.push_back(index);
+    }
+    if (selectedEffects_.empty()) {
+        ClearEffectSelections();
+        return;
+    }
+    selectedEffect_ = selectedEffects_.front();
+    effectSelectionAnchor_ = selectedEffect_;
+    NormalizeEffectSelections();
+}
+
+bool AppWindow::IsEffectSelected(const int index) const {
+    return ContainsIndex(selectedEffects_, index);
+}
+
+int AppWindow::SelectedEffectCount() const {
+    return static_cast<int>(selectedEffects_.size());
+}
+
+bool AppWindow::HasMultipleEffectsSelected() const {
+    return SelectedEffectCount() > 1;
 }
 
 std::vector<int>& AppWindow::MutableLayerSelection(const InspectorTarget target) {
@@ -558,6 +679,7 @@ void AppWindow::SelectSingleLayer(const InspectorTarget target, const int index)
     if (LayerCount(target) <= 0) {
         return;
     }
+    ClearEffectSelections();
     const int clampedIndex = std::clamp(index, 0, std::max(0, LayerCount(target) - 1));
     ClearLayerSelections();
     SetLayerSelection(target, {clampedIndex}, clampedIndex, clampedIndex);
@@ -568,6 +690,7 @@ void AppWindow::ToggleLayerSelection(const InspectorTarget target, const int ind
     if (itemCount <= 0) {
         return;
     }
+    ClearEffectSelections();
     const int clampedIndex = std::clamp(index, 0, std::max(0, itemCount - 1));
     std::vector<int> selection = LayerSelection(target);
     auto it = std::find(selection.begin(), selection.end(), clampedIndex);
@@ -593,6 +716,7 @@ void AppWindow::SelectLayerRange(const InspectorTarget target, const int index) 
     if (LayerCount(target) <= 0 || GlobalLayerCount() <= 0) {
         return;
     }
+    ClearEffectSelections();
     const int clampedGlobalIndex = std::clamp(GlobalLayerIndex(target, index), 0, std::max(0, GlobalLayerCount() - 1));
     const int anchorGlobalIndex = std::clamp(layerSelectionAnchorGlobal_, 0, std::max(0, GlobalLayerCount() - 1));
     const int rangeStart = std::min(anchorGlobalIndex, clampedGlobalIndex);
@@ -614,6 +738,7 @@ void AppWindow::SelectLayerRange(const InspectorTarget target, const int index) 
 }
 
 void AppWindow::SelectAllLayers(const InspectorTarget target) {
+    ClearEffectSelections();
     selectedTransformLayers_.clear();
     selectedTransformLayers_.reserve(scene_.transforms.size());
     for (int index = 0; index < static_cast<int>(scene_.transforms.size()); ++index) {
@@ -697,6 +822,10 @@ int AppWindow::SelectedLayerCount() const {
     return static_cast<int>(selectedTransformLayers_.size() + selectedPathLayers_.size());
 }
 
+bool AppWindow::HasSelectedLayer() const {
+    return SelectedLayerCount() > 0;
+}
+
 bool AppWindow::HasMultipleLayersSelected() const {
     return SelectedLayerCount() > 1;
 }
@@ -731,29 +860,91 @@ bool AppWindow::RemoveSelectedLayers() {
     scene_.selectedTransform = scene_.transforms.empty() ? 0 : std::clamp(scene_.selectedTransform, 0, static_cast<int>(scene_.transforms.size()) - 1);
     scene_.selectedPath = scene_.paths.empty() ? 0 : std::clamp(scene_.selectedPath, 0, static_cast<int>(scene_.paths.size()) - 1);
     ClearLayerSelections();
-    if (inspectorTarget_ == InspectorTarget::PathLayer && !scene_.paths.empty()) {
-        selectedPathLayers_.assign(1, scene_.selectedPath);
-    } else if (!scene_.transforms.empty()) {
-        selectedTransformLayers_.assign(1, scene_.selectedTransform);
-        inspectorTarget_ = InspectorTarget::FlameLayer;
-    } else if (!scene_.paths.empty()) {
-        selectedPathLayers_.assign(1, scene_.selectedPath);
-        inspectorTarget_ = InspectorTarget::PathLayer;
-    }
     NormalizeLayerSelections();
     MarkViewportDirty(PreviewResetReason::SceneChanged);
     statusText_ = removedCount > 1 ? L"Layers removed" : L"Layer removed";
     return true;
 }
 
+bool AppWindow::CanRemoveSelectedEffect() const {
+    return SelectedEffectCount() > 0;
+}
+
+bool AppWindow::RemoveSelectedEffect() {
+    if (!CanRemoveSelectedEffect()) {
+        return false;
+    }
+
+    NormalizeEffectSelections();
+    if (selectedEffects_.empty()) {
+        return false;
+    }
+    if (selectedEffects_.size() == 1) {
+        const int effectIndex = selectedEffects_.front();
+        return RemoveEffectAtIndex(effectIndex, std::string("Delete ") + EffectStageDisplayName(scene_.effectStack[effectIndex]));
+    }
+
+    const Scene beforeDelete = scene_;
+    std::vector<int> indices = selectedEffects_;
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
+        if (*it >= 0 && *it < static_cast<int>(scene_.effectStack.size())) {
+            scene_.effectStack.erase(scene_.effectStack.begin() + *it);
+        }
+    }
+    ClearEffectSelections();
+    SyncCurrentKeyframeFromScene();
+    PushUndoState(beforeDelete, "Delete Effects");
+    MarkViewportDirty(DeterminePreviewResetReason(beforeDelete, scene_));
+    return true;
+}
+
+bool AppWindow::RemoveEffectAtIndex(const int effectIndex, const std::string& actionLabel) {
+    if (effectIndex < 0 || effectIndex >= static_cast<int>(scene_.effectStack.size())) {
+        return false;
+    }
+
+    const Scene beforeDelete = scene_;
+    scene_.effectStack.erase(scene_.effectStack.begin() + effectIndex);
+    for (int& selectedIndex : selectedEffects_) {
+        if (selectedIndex > effectIndex) {
+            --selectedIndex;
+        }
+    }
+    selectedEffects_.erase(std::remove(selectedEffects_.begin(), selectedEffects_.end(), effectIndex), selectedEffects_.end());
+    if (selectedEffect_ > effectIndex) {
+        --selectedEffect_;
+    }
+    if (rightClickedEffectIndex_ == effectIndex) {
+        rightClickedEffectIndex_ = -1;
+    } else if (rightClickedEffectIndex_ > effectIndex) {
+        --rightClickedEffectIndex_;
+    }
+    NormalizeEffectSelections();
+    SyncCurrentKeyframeFromScene();
+    PushUndoState(beforeDelete, actionLabel);
+    MarkViewportDirty(DeterminePreviewResetReason(beforeDelete, scene_));
+    return true;
+}
+
 bool AppWindow::CanRemoveSelectedOrCurrentKeyframe() const {
+    if (selectedTimelineKeyframe_ >= 0) {
+        return selectedTimelineKeyframe_ < static_cast<int>(scene_.keyframes.size());
+    }
+    if (!HasSelectedLayer()) {
+        return false;
+    }
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
     const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
     const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
-    return selectedTimelineKeyframe_ >= 0 || FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex) >= 0;
+    return FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex) >= 0;
 }
 
 bool AppWindow::RemoveSelectedOrCurrentKeyframe() {
+    if (selectedTimelineKeyframe_ < 0 && !HasSelectedLayer()) {
+        return false;
+    }
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
     const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
     const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
@@ -774,6 +965,11 @@ bool AppWindow::RemoveSelectedOrCurrentKeyframe() {
 void AppWindow::CopySelectedLayer() {
     FinishLayerRename(false);
     EnsureSelectionIsValid();
+
+    if (!HasSelectedLayer()) {
+        statusText_ = L"No layer selected to copy";
+        return;
+    }
 
     if (inspectorTarget_ == InspectorTarget::PathLayer) {
         if (scene_.paths.empty()) {
@@ -809,7 +1005,10 @@ void AppWindow::PasteCopiedLayer() {
         PathSettings path = copiedPathLayer_;
         path.name = MakeUniqueCopyName(path.name, "Path Layer", scene_.paths);
         path.visible = true;
-        const int insertIndex = InsertLayerCopy(scene_.paths, scene_.selectedPath, std::move(path));
+        const int insertAfterIndex = LayerSelection(InspectorTarget::PathLayer).empty()
+            ? static_cast<int>(scene_.paths.size()) - 1
+            : scene_.selectedPath;
+        const int insertIndex = InsertLayerCopy(scene_.paths, insertAfterIndex, std::move(path));
         AdjustKeyframeOwnerIndicesForInsertedLayer(InspectorTarget::PathLayer, insertIndex);
         SelectSingleLayer(InspectorTarget::PathLayer, insertIndex);
         MarkViewportDirty(PreviewResetReason::SceneChanged);
@@ -820,7 +1019,10 @@ void AppWindow::PasteCopiedLayer() {
     TransformLayer layer = copiedTransformLayer_;
     layer.name = MakeUniqueCopyName(layer.name, "Layer", scene_.transforms);
     layer.visible = true;
-    const int insertIndex = InsertLayerCopy(scene_.transforms, scene_.selectedTransform, std::move(layer));
+    const int insertAfterIndex = LayerSelection(InspectorTarget::FlameLayer).empty()
+        ? static_cast<int>(scene_.transforms.size()) - 1
+        : scene_.selectedTransform;
+    const int insertIndex = InsertLayerCopy(scene_.transforms, insertAfterIndex, std::move(layer));
     AdjustKeyframeOwnerIndicesForInsertedLayer(InspectorTarget::FlameLayer, insertIndex);
     SelectSingleLayer(InspectorTarget::FlameLayer, insertIndex);
     MarkViewportDirty(PreviewResetReason::SceneChanged);
@@ -830,6 +1032,12 @@ void AppWindow::PasteCopiedLayer() {
 void AppWindow::DuplicateSelectedLayer() {
     FinishLayerRename(false);
     EnsureSelectionIsValid();
+
+    if (!HasSelectedLayer()) {
+        statusText_ = L"No layer selected to duplicate";
+        return;
+    }
+
     PushUndoState(scene_);
 
     if (inspectorTarget_ == InspectorTarget::PathLayer) {
@@ -949,7 +1157,7 @@ void AppWindow::RefreshTimelinePose() {
 }
 
 void AppWindow::AutoKeyCurrentFrame() {
-    if (scene_.keyframes.empty()) {
+    if (scene_.keyframes.empty() || !HasSelectedLayer()) {
         return;
     }
 
@@ -971,6 +1179,9 @@ void AppWindow::AutoKeyCurrentFrame() {
 }
 
 void AppWindow::SyncCurrentKeyframeFromScene() {
+    if (!HasSelectedLayer()) {
+        return;
+    }
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
     const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
     const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;

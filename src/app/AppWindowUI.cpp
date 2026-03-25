@@ -1285,12 +1285,15 @@ void AppWindow::DrawEasingPanel() {
         return;
     }
 
+    const bool hasSelectedLayer = HasSelectedLayer();
     const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
     const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
     const int editableKeyframeIndex =
         selectedTimelineKeyframe_ >= 0
         ? selectedTimelineKeyframe_
-        : FindKeyframeIndex(scene_, static_cast<int>(std::round(scene_.timelineFrame)), currentOwnerType, currentOwnerIndex);
+        : (hasSelectedLayer
+            ? FindKeyframeIndex(scene_, static_cast<int>(std::round(scene_.timelineFrame)), currentOwnerType, currentOwnerIndex)
+            : -1);
     if (editableKeyframeIndex < 0 || editableKeyframeIndex >= static_cast<int>(scene_.keyframes.size())) {
         easingPanelOpen_ = false;
         return;
@@ -2691,9 +2694,12 @@ void AppWindow::DrawTimelinePanel() {
         DrawSubtleToolbarDivider(8.0f);
     };
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
+    const bool hasSelectedLayer = HasSelectedLayer();
     const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
     const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
-    const int currentKeyframeIndex = FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex);
+    const int currentKeyframeIndex = hasSelectedLayer
+        ? FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex)
+        : -1;
     int previousKeyframeIndex = -1;
     int nextKeyframeIndex = -1;
     for (std::size_t index = 0; index < scene_.keyframes.size(); ++index) {
@@ -2771,7 +2777,7 @@ void AppWindow::DrawTimelinePanel() {
         selectedTimelineKeyframe_ = nextKeyframeIndex;
     }
     drawHeaderDivider();
-    if (DrawActionButton("##timeline_add_key", "", IconGlyph::Add, ActionTone::Accent, false, true, 0.0f, "Add keyframe at current frame")) {
+    if (DrawActionButton("##timeline_add_key", "", IconGlyph::Add, ActionTone::Accent, false, hasSelectedLayer, 0.0f, "Add keyframe at current frame")) {
         PushUndoState(scene_);
         const int frame = currentFrame;
         const int existingIndex = FindKeyframeIndex(scene_, frame, currentOwnerType, currentOwnerIndex);
@@ -3300,6 +3306,7 @@ void AppWindow::DrawPreviewPanel() {
 
 void AppWindow::DrawEffectsPanel() {
     if (!effectsPanelOpen_) {
+        effectsPanelActive_ = false;
         return;
     }
 
@@ -3307,25 +3314,108 @@ void AppWindow::DrawEffectsPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::Begin("Effects", nullptr, ImGuiWindowFlags_NoCollapse);
     ImGui::PopStyleVar();
+    effectsPanelActive_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
     DrawDockPanelTabContextMenu("Effects", effectsPanelOpen_);
+    const ImGuiIO& effectsIo = ImGui::GetIO();
+    bool rightClickStartedOnEffectControl = false;
+    const auto markEffectControlRect = [&](const ImRect& rect) {
+        if (rect.Contains(effectsIo.MouseClickedPos[ImGuiMouseButton_Right])) {
+            rightClickStartedOnEffectControl = true;
+        }
+    };
+    NormalizeEffectSelections();
 
     const Scene defaultScene = CreateDefaultScene();
-    const int activeEffectCount = static_cast<int>(std::count_if(
-        scene_.effectStack.begin(),
-        scene_.effectStack.end(),
-        [&](const EffectStackStage stage) {
-            return IsEffectStageEnabled(scene_, stage);
-        }));
-    const std::string effectSummary = std::to_string(activeEffectCount) + " active";
-    DrawSectionChip(
-        effectSummary.c_str(),
-        activeEffectCount > 0
-            ? Mix(theme.accentSurface, theme.accent, 0.30f)
-            : Mix(theme.panelBackgroundAlt, theme.textMuted, 0.18f));
+
+    if (scene_.effectStack.empty()) {
+        ImGui::Spacing();
+        ImGui::Spacing();
+        const float availWidth = ImGui::GetContentRegionAvail().x;
+        const float textWidth = ImGui::CalcTextSize("No effects").x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availWidth - textWidth) * 0.5f);
+        ImGui::TextDisabled("No effects");
+        ImGui::Spacing();
+    }
+
+    ImGui::Spacing();
+    const float addButtonWidth = ImGui::GetContentRegionAvail().x;
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetColorU32(WithAlpha(theme.accent, 0.18f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetColorU32(WithAlpha(theme.accent, 0.35f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetColorU32(WithAlpha(theme.accent, 0.50f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 6.0f));
+    if (ImGui::Button("+ Add Effect", ImVec2(addButtonWidth, 0.0f))) {
+        ImGui::OpenPopup("##add_effect_popup");
+        effectsPopupSearchText_[0] = '\0';
+    }
+    markEffectControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(3);
+
+    ImGui::SetNextWindowSizeConstraints(ImVec2(220.0f, 100.0f), ImVec2(400.0f, 400.0f));
+    if (ImGui::BeginPopup("##add_effect_popup")) {
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::IsWindowAppearing()) {
+            ImGui::SetKeyboardFocusHere();
+        }
+        ImGui::InputTextWithHint("##effect_search", "Search effects...", effectsPopupSearchText_, sizeof(effectsPopupSearchText_));
+        ImGui::Spacing();
+
+        const std::string filterLower = [&]() {
+            std::string s(effectsPopupSearchText_);
+            for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return s;
+        }();
+
+        std::array<bool, kEffectStackStageCount> alreadyAdded {};
+        for (const EffectStackStage stage : scene_.effectStack) {
+            const std::size_t idx = static_cast<std::size_t>(stage);
+            if (idx < kEffectStackStageCount) alreadyAdded[idx] = true;
+        }
+
+        bool anyVisible = false;
+        for (const EffectStackStage stage : kAllEffectStages) {
+            const char* displayName = EffectStageDisplayName(stage);
+            if (!filterLower.empty()) {
+                std::string nameLower(displayName);
+                for (char& c : nameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (nameLower.find(filterLower) == std::string::npos) {
+                    continue;
+                }
+            }
+            anyVisible = true;
+            const bool added = alreadyAdded[static_cast<std::size_t>(stage)];
+            if (added) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            }
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
+            const bool selected = ImGui::Selectable(displayName, false, added ? ImGuiSelectableFlags_Disabled : 0);
+            ImGui::PopStyleVar();
+            if (added) {
+                ImGui::PopStyleColor();
+            }
+            if (selected && !added) {
+                const Scene beforeAdd = scene_;
+                scene_.effectStack.push_back(stage);
+                EnableEffectStage(scene_, stage, true);
+                ClearLayerSelections();
+                SelectSingleEffect(static_cast<int>(scene_.effectStack.size()) - 1);
+                SyncCurrentKeyframeFromScene();
+                PushUndoState(beforeAdd, std::string("Add ") + displayName);
+                MarkViewportDirty(DeterminePreviewResetReason(beforeAdd, scene_));
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        if (!anyVisible) {
+            ImGui::TextDisabled("No matching effects");
+        }
+        ImGui::EndPopup();
+    }
+
     ImGui::Spacing();
 
     int requestedMoveFrom = -1;
     int requestedMoveTo = -1;
+    bool requestOpenEffectsContextMenu = false;
     const auto drawEffectFieldLabel = [&](const char* label) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", label);
@@ -3338,111 +3428,188 @@ void AppWindow::DrawEffectsPanel() {
         return ImGui::BeginTable(id, columns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings);
     };
     const auto beginEffectSubsection = [&](const char* id, const char* title, const bool defaultOpen = true) {
+        ImGui::Dummy(ImVec2(0.0f, 8.0f));
         ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetColorU32(WithAlpha(theme.frameBackgroundHover, 0.26f)));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::GetColorU32(WithAlpha(Mix(theme.frameBackgroundHover, theme.textMuted, 0.30f), 0.50f)));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::GetColorU32(WithAlpha(theme.frameBackgroundActive, 0.28f)));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(7.0f, 5.0f));
         ImGui::SetNextItemOpen(defaultOpen, ImGuiCond_Once);
-        return ImGui::TreeNodeEx(id, ImGuiTreeNodeFlags_SpanAvailWidth, "%s", title);
+        return ImGui::TreeNodeEx(id, ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen, "%s", title);
     };
     const auto endEffectSubsection = [&](const bool open) {
-        if (open) {
-            ImGui::TreePop();
-        }
+        (void)open;
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(3);
     };
-    bool effectHeaderRowOpen = false;
     bool effectContentIndented = false;
     struct EffectHeaderState {
         bool contentOpen = false;
         bool resetPressed = false;
+        bool enabledChanged = false;
+        bool enabled = false;
     };
     const auto beginEffectCard = [&](const char* id, const char* title, const bool defaultOpen, const bool enabled, const int stackIndex) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::PushID(id);
-        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0.0f, 0.0f));
-        effectHeaderRowOpen = ImGui::BeginTable("##effect_header", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings);
-        EffectHeaderState headerState;
-        if (effectHeaderRowOpen) {
-            ImGui::TableSetupColumn("##effect_header_title", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("##effect_header_reset", ImGuiTableColumnFlags_WidthFixed, 54.0f);
-            ImGui::TableSetupColumn("##effect_header_toggle", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-            ImGui::TableNextColumn();
-            const ImVec4 headerColor = enabled
+
+        const bool selected = IsEffectSelected(stackIndex);
+        const ImVec4 headerColor = selected
+            ? (enabled
                 ? Mix(theme.accentSurface, theme.accent, 0.18f)
-                : Mix(Mix(theme.accentSurface, theme.accent, 0.18f), theme.panelBackgroundAlt, 0.45f);
-            const ImVec4 hoverColor = enabled
+                : Mix(Mix(theme.accentSurface, theme.accent, 0.18f), theme.panelBackgroundAlt, 0.45f))
+            : (enabled
+                ? Mix(theme.panelBackgroundAlt, theme.accentSurface, 0.72f)
+                : Mix(theme.panelBackgroundAlt, theme.accentSurface, 0.54f));
+        const ImVec4 hoverColor = selected
+            ? (enabled
                 ? Mix(theme.accentSurface, theme.accentHover, 0.48f)
-                : Mix(Mix(theme.accentSurface, theme.accentHover, 0.48f), theme.frameBackgroundHover, 0.22f);
-            const ImVec4 activeColor = enabled
+                : Mix(Mix(theme.accentSurface, theme.accentHover, 0.48f), theme.frameBackgroundHover, 0.22f))
+            : (enabled
+                ? Mix(theme.panelBackgroundAlt, theme.frameBackgroundHover, 0.56f)
+                : Mix(theme.panelBackgroundAlt, theme.frameBackgroundHover, 0.42f));
+        const ImVec4 activeColor = selected
+            ? (enabled
                 ? Mix(theme.accentSurface, theme.accentHover, 0.36f)
-                : Mix(Mix(theme.accentSurface, theme.accentHover, 0.36f), theme.frameBackgroundActive, 0.35f);
-            ImGui::PushStyleColor(ImGuiCol_Header, headerColor);
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
-            ImGui::PushStyleColor(ImGuiCol_HeaderActive, activeColor);
-            if (!enabled) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            }
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
-            ImGui::SetNextItemOpen(defaultOpen, ImGuiCond_Once);
-            headerState.contentOpen = ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_SpanAvailWidth);
-            const ImRect headerRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoDisableHover)) {
-                ImGui::SetDragDropPayload("effects_stack_stage", &stackIndex, sizeof(stackIndex));
-                ImGui::TextUnformatted(title);
-                ImGui::EndDragDropSource();
-            }
-            if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("effects_stack_stage", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
-                    if (payload->IsPreview() || payload->IsDelivery()) {
-                        ImDrawList* drawList = ImGui::GetWindowDrawList();
-                        const float inset = 1.5f;
-                        const ImVec2 outlineMin(headerRect.Min.x + inset, headerRect.Min.y + inset);
-                        const ImVec2 outlineMax(headerRect.Max.x - inset, headerRect.Max.y - inset);
-                        drawList->AddRectFilled(
-                            outlineMin,
-                            outlineMax,
-                            ImGui::GetColorU32(WithAlpha(theme.accent, 0.10f)),
-                            theme.roundingMedium);
-                        drawList->AddRect(
-                            outlineMin,
-                            outlineMax,
-                            ImGui::GetColorU32(WithAlpha(theme.accent, 0.92f)),
-                            theme.roundingMedium,
-                            0,
-                            1.5f);
-                    }
-                    const int payloadIndex = *static_cast<const int*>(payload->Data);
-                    if (payloadIndex != stackIndex) {
-                        requestedMoveFrom = payloadIndex;
-                        requestedMoveTo = stackIndex;
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-            ImGui::PopStyleVar();
-            if (!enabled) {
-                ImGui::PopStyleColor();
-            }
-            ImGui::PopStyleColor(3);
-            ImGui::TableNextColumn();
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 2.0f));
-            headerState.resetPressed = ImGui::Button("Reset");
-            ImGui::PopStyleVar();
-            ImGui::TableNextColumn();
+                : Mix(Mix(theme.accentSurface, theme.accentHover, 0.36f), theme.frameBackgroundActive, 0.35f))
+            : (enabled
+                ? Mix(theme.panelBackgroundAlt, theme.frameBackgroundActive, 0.60f)
+                : Mix(theme.panelBackgroundAlt, theme.frameBackgroundActive, 0.46f));
+        ImGui::PushStyleColor(ImGuiCol_Header, headerColor);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hoverColor);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, activeColor);
+        if (!enabled) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
         }
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
+        ImGui::SetNextItemOpen(defaultOpen, ImGuiCond_Once);
+        ImGui::SetNextItemAllowOverlap();
+        EffectHeaderState headerState;
+        headerState.contentOpen = ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap);
+        const bool headerLeftClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+        const bool headerRightClicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
+        const ImRect headerRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        markEffectControlRect(headerRect);
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoDisableHover)) {
+            ImGui::SetDragDropPayload("effects_stack_stage", &stackIndex, sizeof(stackIndex));
+            ImGui::TextUnformatted(title);
+            ImGui::EndDragDropSource();
+        }
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("effects_stack_stage", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                if (payload->IsPreview() || payload->IsDelivery()) {
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    const float inset = 1.5f;
+                    const ImVec2 outlineMin(headerRect.Min.x + inset, headerRect.Min.y + inset);
+                    const ImVec2 outlineMax(headerRect.Max.x - inset, headerRect.Max.y - inset);
+                    drawList->AddRectFilled(outlineMin, outlineMax, ImGui::GetColorU32(WithAlpha(theme.accent, 0.10f)), theme.roundingMedium);
+                    drawList->AddRect(outlineMin, outlineMax, ImGui::GetColorU32(WithAlpha(theme.accent, 0.92f)), theme.roundingMedium, 0, 1.5f);
+                }
+                const int payloadIndex = *static_cast<const int*>(payload->Data);
+                if (payloadIndex != stackIndex) {
+                    requestedMoveFrom = payloadIndex;
+                    requestedMoveTo = stackIndex;
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        ImGui::PopStyleVar();
+        if (!enabled) {
+            ImGui::PopStyleColor();
+        }
+        ImGui::PopStyleColor(3);
+
+        // Overlay controls on the header using screen-space coords
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const float headerH = headerRect.GetHeight();
+        const float headerCenterY = headerRect.Min.y + headerH * 0.5f;
+
+        // Toggle switch — rightmost, vertically centered
+        const float toggleW = 36.0f;
+        const float toggleH = 18.0f;
+        const float toggleMarginRight = 12.0f;
+        const ImVec2 toggleMin(headerRect.Max.x - toggleMarginRight - toggleW, headerCenterY - toggleH * 0.5f);
+        const ImVec2 toggleMax(toggleMin.x + toggleW, toggleMin.y + toggleH);
+        headerState.enabled = enabled;
+        bool togglePressed = false;
+        {
+            ImGui::SetCursorScreenPos(toggleMin);
+            togglePressed = ImGui::InvisibleButton("##toggle", ImVec2(toggleW, toggleH));
+            markEffectControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
+            const bool toggleHovered = ImGui::IsItemHovered();
+            if (togglePressed) {
+                headerState.enabled = !headerState.enabled;
+                headerState.enabledChanged = true;
+            }
+            const float toggleR = toggleH * 0.5f;
+            const float knobR = toggleR - 3.0f;
+            const ImU32 trackColor = headerState.enabled
+                ? ImGui::GetColorU32(WithAlpha(theme.accent, toggleHovered ? 0.95f : 0.80f))
+                : ImGui::GetColorU32(WithAlpha(theme.textMuted, toggleHovered ? 0.40f : 0.28f));
+            const float knobX = headerState.enabled ? toggleMax.x - toggleR : toggleMin.x + toggleR;
+            dl->AddRectFilled(toggleMin, toggleMax, trackColor, toggleR);
+            dl->AddRect(toggleMin, toggleMax, ImGui::GetColorU32(WithAlpha(theme.panelBackgroundAlt, headerState.enabled ? 0.14f : 0.28f)), toggleR, 0, 1.0f);
+            dl->AddCircleFilled(ImVec2(knobX, headerCenterY), knobR, ImGui::GetColorU32(ImVec4(0.95f, 0.95f, 0.97f, 1.0f)));
+        }
+
+        // Reset button — left of toggle, vertically centered
+        {
+            const float resetPadX = 9.0f;
+            const float resetPadY = 4.0f;
+            const ImVec2 resetTextSize = ImGui::CalcTextSize("Reset");
+            const float resetW = resetTextSize.x + resetPadX * 2.0f;
+            const float resetH = resetTextSize.y + resetPadY * 2.0f;
+            const float resetGap = 8.0f;
+            const ImVec2 resetMin(toggleMin.x - resetGap - resetW, headerCenterY - resetH * 0.5f);
+            ImGui::SetCursorScreenPos(resetMin);
+            const ImVec4 resetBase = enabled
+                ? Mix(theme.accentSurface, theme.panelBackgroundAlt, 0.26f)
+                : Mix(theme.panelBackgroundAlt, theme.frameBackgroundHover, 0.45f);
+            const ImVec4 resetHover = enabled
+                ? Mix(theme.accentSurface, theme.accentHover, 0.22f)
+                : Mix(theme.frameBackgroundHover, theme.textMuted, 0.18f);
+            const ImVec4 resetActive = enabled
+                ? Mix(theme.accentSurface, theme.accent, 0.26f)
+                : Mix(theme.frameBackgroundActive, theme.textMuted, 0.14f);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetColorU32(WithAlpha(resetBase, 0.92f)));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetColorU32(WithAlpha(resetHover, 0.98f)));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetColorU32(WithAlpha(resetActive, 1.0f)));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetColorU32(WithAlpha(enabled ? theme.accent : theme.textMuted, enabled ? 0.24f : 0.18f)));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(enabled ? ImVec4(0.92f, 0.94f, 0.99f, 0.96f) : ImVec4(0.74f, 0.76f, 0.82f, 0.92f)));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(resetPadX, resetPadY));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 7.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+            headerState.resetPressed = ImGui::Button("Reset");
+            markEffectControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
+            ImGui::PopStyleVar(3);
+            ImGui::PopStyleColor(5);
+        }
+
+        if (headerLeftClicked) {
+            ClearLayerSelections();
+            if (effectsIo.KeyShift) {
+                SelectEffectRange(stackIndex);
+            } else if (effectsIo.KeyCtrl) {
+                ToggleEffectSelection(stackIndex);
+            } else {
+                SelectSingleEffect(stackIndex);
+            }
+        } else if (togglePressed || headerState.resetPressed) {
+            ClearLayerSelections();
+            SelectSingleEffect(stackIndex);
+        }
+        if (headerRightClicked) {
+            ClearLayerSelections();
+            SelectSingleEffect(stackIndex);
+            rightClickedEffectIndex_ = stackIndex;
+            requestOpenEffectsContextMenu = true;
+        }
+
         return headerState;
     };
     const auto endEffectHeader = [&](const bool contentOpen, const char* description) {
-        if (effectHeaderRowOpen) {
-            ImGui::EndTable();
-            effectHeaderRowOpen = false;
-        }
-        ImGui::PopStyleVar();
         if (contentOpen) {
-            ImGui::Indent(14.0f);
+            ImGui::Indent(10.0f);
             effectContentIndented = true;
         } else {
             effectContentIndented = false;
@@ -3452,10 +3619,10 @@ void AppWindow::DrawEffectsPanel() {
     };
     const auto endEffectCard = [&]() {
         if (effectContentIndented) {
-            ImGui::Unindent(14.0f);
+            ImGui::Unindent(10.0f);
             effectContentIndented = false;
         }
-        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
         ImGui::PopID();
     };
     const auto commitEffectReset = [&](const Scene& beforeReset, const char* effectName) {
@@ -3477,7 +3644,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.denoiser.enabled,
             static_cast<int>(index));
         const Scene beforeDenoiserEnabled = scene_;
-        bool denoiserEnabledChanged = ImGui::Checkbox("##effect_denoiser", &scene_.denoiser.enabled);
+        if (denoiserHeader.enabledChanged) {
+            scene_.denoiser.enabled = denoiserHeader.enabled;
+        }
+        bool denoiserEnabledChanged = denoiserHeader.enabledChanged;
         denoiserEnabledChanged = ResetValueOnDoubleClick(scene_.denoiser.enabled, defaultScene.denoiser.enabled) || denoiserEnabledChanged;
         if (denoiserHeader.resetPressed) {
             scene_.denoiser = defaultScene.denoiser;
@@ -3509,8 +3679,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(denoiserControlsOpen);
-        } else if (denoiserHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -3524,7 +3692,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.depthOfField.enabled,
             static_cast<int>(index));
         const Scene beforeDofEnabled = scene_;
-        bool dofEnabledChanged = ImGui::Checkbox("##effect_dof", &scene_.depthOfField.enabled);
+        if (dofHeader.enabledChanged) {
+            scene_.depthOfField.enabled = dofHeader.enabled;
+        }
+        bool dofEnabledChanged = dofHeader.enabledChanged;
         dofEnabledChanged = ResetValueOnDoubleClick(scene_.depthOfField.enabled, defaultScene.depthOfField.enabled) || dofEnabledChanged;
         if (dofHeader.resetPressed) {
             scene_.depthOfField = defaultScene.depthOfField;
@@ -3585,8 +3756,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(dofFocusOpen);
-        } else if (dofHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -3600,7 +3769,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.enabled,
             static_cast<int>(index));
         const Scene beforePostProcessEnabled = scene_;
-        bool postProcessEnabledChanged = ImGui::Checkbox("##effect_post_process", &scene_.postProcess.enabled);
+        if (glowHeader.enabledChanged) {
+            scene_.postProcess.enabled = glowHeader.enabled;
+        }
+        bool postProcessEnabledChanged = glowHeader.enabledChanged;
         postProcessEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.enabled, defaultScene.postProcess.enabled) || postProcessEnabledChanged;
         if (glowHeader.resetPressed) {
             scene_.postProcess.enabled = defaultScene.postProcess.enabled;
@@ -3648,8 +3820,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(glowBloomOpen);
-        } else if (glowHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -3663,7 +3833,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.chromaticAberrationEnabled,
             static_cast<int>(index));
         const Scene beforeChromaticEnabled = scene_;
-        bool chromaticEnabledChanged = ImGui::Checkbox("##effect_chromatic_enabled", &scene_.postProcess.chromaticAberrationEnabled);
+        if (chromaticHeader.enabledChanged) {
+            scene_.postProcess.chromaticAberrationEnabled = chromaticHeader.enabled;
+        }
+        bool chromaticEnabledChanged = chromaticHeader.enabledChanged;
         chromaticEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.chromaticAberrationEnabled, defaultScene.postProcess.chromaticAberrationEnabled) || chromaticEnabledChanged;
         if (chromaticHeader.resetPressed) {
             scene_.postProcess.chromaticAberrationEnabled = defaultScene.postProcess.chromaticAberrationEnabled;
@@ -3696,8 +3869,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(chromaticLensOpen);
-        } else if (chromaticHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -3711,7 +3882,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.colorTemperatureEnabled,
             static_cast<int>(index));
         const Scene beforeTemperatureEnabled = scene_;
-        bool temperatureEnabledChanged = ImGui::Checkbox("##effect_temperature_enabled", &scene_.postProcess.colorTemperatureEnabled);
+        if (temperatureHeader.enabledChanged) {
+            scene_.postProcess.colorTemperatureEnabled = temperatureHeader.enabled;
+        }
+        bool temperatureEnabledChanged = temperatureHeader.enabledChanged;
         temperatureEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.colorTemperatureEnabled, defaultScene.postProcess.colorTemperatureEnabled) || temperatureEnabledChanged;
         if (temperatureHeader.resetPressed) {
             scene_.postProcess.colorTemperatureEnabled = defaultScene.postProcess.colorTemperatureEnabled;
@@ -3744,8 +3918,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(temperatureBalanceOpen);
-        } else if (temperatureHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -3759,7 +3931,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.saturationEnabled,
             static_cast<int>(index));
         const Scene beforeSaturationEnabled = scene_;
-        bool saturationEnabledChanged = ImGui::Checkbox("##effect_saturation_enabled", &scene_.postProcess.saturationEnabled);
+        if (saturationHeader.enabledChanged) {
+            scene_.postProcess.saturationEnabled = saturationHeader.enabled;
+        }
+        bool saturationEnabledChanged = saturationHeader.enabledChanged;
         saturationEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.saturationEnabled, defaultScene.postProcess.saturationEnabled) || saturationEnabledChanged;
         if (saturationHeader.resetPressed) {
             scene_.postProcess.saturationEnabled = defaultScene.postProcess.saturationEnabled;
@@ -3792,8 +3967,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(saturationColorOpen);
-        } else if (saturationHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -3807,7 +3980,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.toneMappingEnabled,
             static_cast<int>(index));
         const Scene beforeToneMappingEnabled = scene_;
-        bool toneMappingEnabledChanged = ImGui::Checkbox("##effect_tonemap_enabled", &scene_.postProcess.toneMappingEnabled);
+        if (toneMappingHeader.enabledChanged) {
+            scene_.postProcess.toneMappingEnabled = toneMappingHeader.enabled;
+        }
+        bool toneMappingEnabledChanged = toneMappingHeader.enabledChanged;
         toneMappingEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.toneMappingEnabled, defaultScene.postProcess.toneMappingEnabled) || toneMappingEnabledChanged;
         if (toneMappingHeader.resetPressed) {
             scene_.postProcess.toneMappingEnabled = defaultScene.postProcess.toneMappingEnabled;
@@ -3824,8 +4000,6 @@ void AppWindow::DrawEffectsPanel() {
         if (toneMappingHeader.contentOpen && scene_.postProcess.toneMappingEnabled) {
             const bool toneCurveOpen = beginEffectSubsection("##effect_tonemap_section", "Curve");
             endEffectSubsection(toneCurveOpen);
-        } else if (toneMappingHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -3839,7 +4013,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.filmGrainEnabled,
             static_cast<int>(index));
         const Scene beforeFilmGrainEnabled = scene_;
-        bool filmGrainEnabledChanged = ImGui::Checkbox("##effect_film_grain_enabled", &scene_.postProcess.filmGrainEnabled);
+        if (filmGrainHeader.enabledChanged) {
+            scene_.postProcess.filmGrainEnabled = filmGrainHeader.enabled;
+        }
+        bool filmGrainEnabledChanged = filmGrainHeader.enabledChanged;
         filmGrainEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.filmGrainEnabled, defaultScene.postProcess.filmGrainEnabled) || filmGrainEnabledChanged;
         if (filmGrainHeader.resetPressed) {
             scene_.postProcess.filmGrainEnabled = defaultScene.postProcess.filmGrainEnabled;
@@ -3872,8 +4049,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(filmTextureOpen);
-        } else if (filmGrainHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -3887,7 +4062,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.vignetteEnabled,
             static_cast<int>(index));
         const Scene beforeVignetteEnabled = scene_;
-        bool vignetteEnabledChanged = ImGui::Checkbox("##effect_vignette_enabled", &scene_.postProcess.vignetteEnabled);
+        if (vignetteHeader.enabledChanged) {
+            scene_.postProcess.vignetteEnabled = vignetteHeader.enabled;
+        }
+        bool vignetteEnabledChanged = vignetteHeader.enabledChanged;
         vignetteEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.vignetteEnabled, defaultScene.postProcess.vignetteEnabled) || vignetteEnabledChanged;
         if (vignetteHeader.resetPressed) {
             scene_.postProcess.vignetteEnabled = defaultScene.postProcess.vignetteEnabled;
@@ -3934,8 +4112,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(vignetteShapeOpen);
-        } else if (vignetteHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -3949,7 +4125,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.curvesEnabled,
             static_cast<int>(index));
         const Scene beforeCurvesEnabled = scene_;
-        bool curvesEnabledChanged = ImGui::Checkbox("##effect_curves", &scene_.postProcess.curvesEnabled);
+        if (curvesHeader.enabledChanged) {
+            scene_.postProcess.curvesEnabled = curvesHeader.enabled;
+        }
+        bool curvesEnabledChanged = curvesHeader.enabledChanged;
         curvesEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.curvesEnabled, defaultScene.postProcess.curvesEnabled) || curvesEnabledChanged;
         if (curvesHeader.resetPressed) {
             scene_.postProcess.curvesEnabled = defaultScene.postProcess.curvesEnabled;
@@ -4016,8 +4195,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(curvesLevelsOpen);
-        } else if (curvesHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -4031,7 +4208,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.sharpenEnabled,
             static_cast<int>(index));
         const Scene beforeSharpenEnabled = scene_;
-        bool sharpenEnabledChanged = ImGui::Checkbox("##effect_sharpen", &scene_.postProcess.sharpenEnabled);
+        if (sharpenHeader.enabledChanged) {
+            scene_.postProcess.sharpenEnabled = sharpenHeader.enabled;
+        }
+        bool sharpenEnabledChanged = sharpenHeader.enabledChanged;
         sharpenEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.sharpenEnabled, defaultScene.postProcess.sharpenEnabled) || sharpenEnabledChanged;
         if (sharpenHeader.resetPressed) {
             scene_.postProcess.sharpenEnabled = defaultScene.postProcess.sharpenEnabled;
@@ -4064,8 +4244,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(sharpenDetailOpen);
-        } else if (sharpenHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -4079,7 +4257,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.hueShiftEnabled,
             static_cast<int>(index));
         const Scene beforeHueShiftEnabled = scene_;
-        bool hueShiftEnabledChanged = ImGui::Checkbox("##effect_hue_shift", &scene_.postProcess.hueShiftEnabled);
+        if (hueShiftHeader.enabledChanged) {
+            scene_.postProcess.hueShiftEnabled = hueShiftHeader.enabled;
+        }
+        bool hueShiftEnabledChanged = hueShiftHeader.enabledChanged;
         hueShiftEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.hueShiftEnabled, defaultScene.postProcess.hueShiftEnabled) || hueShiftEnabledChanged;
         if (hueShiftHeader.resetPressed) {
             scene_.postProcess.hueShiftEnabled = defaultScene.postProcess.hueShiftEnabled;
@@ -4112,8 +4293,6 @@ void AppWindow::DrawEffectsPanel() {
                 }
             }
             endEffectSubsection(hueColorOpen);
-        } else if (hueShiftHeader.contentOpen) {
-            ImGui::TextDisabled("Disabled");
         }
         endEffectCard();
                 break;
@@ -4134,15 +4313,107 @@ void AppWindow::DrawEffectsPanel() {
         && requestedMoveTo < static_cast<int>(scene_.effectStack.size())
         && requestedMoveFrom != requestedMoveTo) {
         const Scene beforeReorder = scene_;
+        std::vector<EffectStackStage> selectedStages;
+        selectedStages.reserve(selectedEffects_.size());
+        for (const int selectedIndex : selectedEffects_) {
+            if (selectedIndex >= 0 && selectedIndex < static_cast<int>(scene_.effectStack.size())) {
+                selectedStages.push_back(scene_.effectStack[static_cast<std::size_t>(selectedIndex)]);
+            }
+        }
+        const bool hadPrimarySelection = selectedEffect_ >= 0 && selectedEffect_ < static_cast<int>(scene_.effectStack.size());
+        const EffectStackStage primarySelectedStage = hadPrimarySelection
+            ? scene_.effectStack[static_cast<std::size_t>(selectedEffect_)]
+            : EffectStackStage::Denoiser;
+        const bool hadRightClickedSelection = rightClickedEffectIndex_ >= 0 && rightClickedEffectIndex_ < static_cast<int>(scene_.effectStack.size());
+        const EffectStackStage rightClickedStage = hadRightClickedSelection
+            ? scene_.effectStack[static_cast<std::size_t>(rightClickedEffectIndex_)]
+            : EffectStackStage::Denoiser;
         auto begin = scene_.effectStack.begin();
         if (requestedMoveFrom < requestedMoveTo) {
             std::rotate(begin + requestedMoveFrom, begin + requestedMoveFrom + 1, begin + requestedMoveTo + 1);
         } else {
             std::rotate(begin + requestedMoveTo, begin + requestedMoveFrom, begin + requestedMoveFrom + 1);
         }
+        selectedEffects_.clear();
+        selectedEffect_ = -1;
+        rightClickedEffectIndex_ = -1;
+        for (std::size_t index = 0; index < scene_.effectStack.size(); ++index) {
+            if (std::find(selectedStages.begin(), selectedStages.end(), scene_.effectStack[index]) != selectedStages.end()) {
+                selectedEffects_.push_back(static_cast<int>(index));
+            }
+            if (hadPrimarySelection && scene_.effectStack[index] == primarySelectedStage) {
+                selectedEffect_ = static_cast<int>(index);
+            }
+            if (hadRightClickedSelection && scene_.effectStack[index] == rightClickedStage) {
+                rightClickedEffectIndex_ = static_cast<int>(index);
+            }
+        }
+        NormalizeEffectSelections();
         SyncCurrentKeyframeFromScene();
         PushUndoState(beforeReorder, "Reorder Effects");
         MarkViewportDirty(DeterminePreviewResetReason(beforeReorder, scene_));
+    }
+
+    NormalizeEffectSelections();
+
+    const bool addPopupOpen = ImGui::IsPopupOpen("##add_effect_popup", ImGuiPopupFlags_None);
+    const bool panelTabCtxOpen = ImGui::IsPopupOpen("##panel_tab_context_menu", ImGuiPopupFlags_None);
+    ImGuiWindow* effectsWindow = ImGui::GetCurrentWindow();
+    const ImRect effectsRect = effectsWindow != nullptr ? effectsWindow->InnerRect : ImRect();
+    if (requestOpenEffectsContextMenu) {
+        ImGui::OpenPopup("##effects_context_menu");
+    } else if (!rightClickStartedOnEffectControl
+        && !addPopupOpen
+        && !panelTabCtxOpen
+        && !ImGui::IsPopupOpen("##effects_context_menu", ImGuiPopupFlags_None)
+        && effectsRect.Contains(effectsIo.MouseClickedPos[ImGuiMouseButton_Right])
+        && effectsRect.Contains(effectsIo.MousePos)
+        && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        ImGui::OpenPopup("##effects_context_menu");
+    }
+    if (ImGui::BeginPopup("##effects_context_menu")) {
+        const bool hasSelection = rightClickedEffectIndex_ >= 0 && rightClickedEffectIndex_ < static_cast<int>(scene_.effectStack.size());
+        if (hasSelection) {
+            const bool affectsSelection = IsEffectSelected(rightClickedEffectIndex_) && HasMultipleEffectsSelected();
+            const char* effectName = EffectStageDisplayName(scene_.effectStack[rightClickedEffectIndex_]);
+            const std::string deleteLabel = affectsSelection
+                ? "Delete Selected Effects"
+                : std::string("Delete ") + effectName;
+            if (ImGui::MenuItem(deleteLabel.c_str(), "Delete")) {
+                if (affectsSelection) {
+                    RemoveSelectedEffect();
+                } else {
+                    RemoveEffectAtIndex(rightClickedEffectIndex_, deleteLabel);
+                }
+            }
+            ImGui::Separator();
+        }
+
+        if (ImGui::BeginMenu("Add Effect")) {
+            std::array<bool, kEffectStackStageCount> ctxAdded {};
+            for (const EffectStackStage stage : scene_.effectStack) {
+                const std::size_t idx = static_cast<std::size_t>(stage);
+                if (idx < kEffectStackStageCount) ctxAdded[idx] = true;
+            }
+            for (const EffectStackStage stage : kAllEffectStages) {
+                const char* displayName = EffectStageDisplayName(stage);
+                const bool alreadyInStack = ctxAdded[static_cast<std::size_t>(stage)];
+                if (ImGui::MenuItem(displayName, nullptr, false, !alreadyInStack)) {
+                    const Scene beforeAdd = scene_;
+                    scene_.effectStack.push_back(stage);
+                    EnableEffectStage(scene_, stage, true);
+                    ClearLayerSelections();
+                    SelectSingleEffect(static_cast<int>(scene_.effectStack.size()) - 1);
+                    SyncCurrentKeyframeFromScene();
+                    PushUndoState(beforeAdd, std::string("Add ") + displayName);
+                    MarkViewportDirty(DeterminePreviewResetReason(beforeAdd, scene_));
+                }
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndPopup();
+    } else {
+        rightClickedEffectIndex_ = -1;
     }
 
     ImGui::End();

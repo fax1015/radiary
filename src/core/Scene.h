@@ -108,8 +108,8 @@ enum class EffectStackStage : std::uint8_t {
 };
 
 constexpr std::size_t kEffectStackStageCount = 12;
-using EffectStackOrder = std::array<EffectStackStage, kEffectStackStageCount>;
-inline constexpr EffectStackOrder kDefaultEffectStackOrder = {
+using EffectStackOrder = std::vector<EffectStackStage>;
+inline constexpr std::array<EffectStackStage, kEffectStackStageCount> kAllEffectStages = {
     EffectStackStage::Denoiser,
     EffectStackStage::DepthOfField,
     EffectStackStage::Curves,
@@ -368,7 +368,7 @@ struct ScenePose {
     DepthOfFieldSettings depthOfField {};
     DenoiserSettings denoiser {};
     PostProcessSettings postProcess {};
-    EffectStackOrder effectStack = kDefaultEffectStackOrder;
+    std::vector<EffectStackStage> effectStack;
     std::vector<TransformLayer> transforms;
     std::vector<PathSettings> paths;
     std::vector<GradientStop> gradientStops;
@@ -397,7 +397,7 @@ struct Scene {
     DepthOfFieldSettings depthOfField {};
     DenoiserSettings denoiser {};
     PostProcessSettings postProcess {};
-    EffectStackOrder effectStack = kDefaultEffectStackOrder;
+    std::vector<EffectStackStage> effectStack;
     std::vector<TransformLayer> transforms;
     std::vector<PathSettings> paths;
     std::vector<GradientStop> gradientStops;
@@ -419,6 +419,8 @@ std::vector<Color> BuildGradientPalette(const std::vector<GradientStop>& stops, 
 bool HasActivePostProcess(const PostProcessSettings& settings);
 bool IsEffectStageEnabled(const Scene& scene, EffectStackStage stage);
 void NormalizeEffectStackOrder(EffectStackOrder& order);
+const char* EffectStageDisplayName(EffectStackStage stage);
+void EnableEffectStage(Scene& scene, EffectStackStage stage, bool enabled);
 Scene CreateDefaultScene();
 Scene CreatePresetScene(const std::string& presetName);
 Scene CreateRandomScene(std::uint32_t seed);

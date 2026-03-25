@@ -1018,13 +1018,32 @@ bool AppWindow::RunGpuDofPass(
     const int height,
     const GpuFrameInputs& inputs,
     GpuPassOutput& output) {
+    GpuFrameInputs dofInputs = inputs;
+    GpuPassOutput sourceFrame {};
+    const bool needsResolvedFrame = inputs.HasGrid() || inputs.HasPath() || !inputs.HasFlame();
+    if (needsResolvedFrame) {
+        GpuPassOutput composedFrame;
+        if (RunGpuCompositePass(width, height, inputs, composedFrame)
+            && composedFrame.colorSrv != nullptr
+            && composedFrame.depthSrv != nullptr) {
+            sourceFrame = composedFrame;
+            dofInputs = MakeGpuFrameInputs(nullptr, composedFrame.colorSrv, composedFrame.depthSrv, nullptr, nullptr);
+        }
+    }
     if (!EnsureGpuDofRendererInitialized()) {
         return false;
     }
-    if (!gpuDofRenderer_.Render(scene, width, height, inputs)) {
+    if (!gpuDofRenderer_.Render(scene, width, height, dofInputs)) {
         return false;
     }
     output = gpuDofRenderer_.Output();
+    if (sourceFrame.depthSrv != nullptr) {
+        output.depthSrv = sourceFrame.depthSrv;
+        output.depthTexture = sourceFrame.depthTexture;
+    } else {
+        output.depthSrv = inputs.flameDepth;
+        output.depthTexture = nullptr;
+    }
     return true;
 }
 

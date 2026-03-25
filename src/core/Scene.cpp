@@ -672,27 +672,58 @@ bool IsEffectStageEnabled(const Scene& scene, const EffectStackStage stage) {
 
 void NormalizeEffectStackOrder(EffectStackOrder& order) {
     std::array<bool, kEffectStackStageCount> seen {};
-    EffectStackOrder normalized {};
-    std::size_t insertIndex = 0;
+    EffectStackOrder normalized;
+    normalized.reserve(order.size());
 
     for (const EffectStackStage stage : order) {
         const std::size_t stageIndex = static_cast<std::size_t>(stage);
         if (stageIndex >= kEffectStackStageCount || seen[stageIndex]) {
             continue;
         }
-        normalized[insertIndex++] = stage;
+        normalized.push_back(stage);
         seen[stageIndex] = true;
     }
 
-    for (const EffectStackStage stage : kDefaultEffectStackOrder) {
-        const std::size_t stageIndex = static_cast<std::size_t>(stage);
-        if (!seen[stageIndex]) {
-            normalized[insertIndex++] = stage;
-            seen[stageIndex] = true;
-        }
-    }
-
     order = normalized;
+}
+
+const char* EffectStageDisplayName(const EffectStackStage stage) {
+    switch (stage) {
+    case EffectStackStage::Denoiser: return "Denoiser";
+    case EffectStackStage::DepthOfField: return "Depth of Field";
+    case EffectStackStage::Curves: return "Curves";
+    case EffectStackStage::Sharpen: return "Sharpen";
+    case EffectStackStage::HueShift: return "Hue Shift";
+    case EffectStackStage::PostProcess: return "Glow";
+    case EffectStackStage::ChromaticAberration: return "Chromatic Aberration";
+    case EffectStackStage::ColorTemperature: return "Temperature";
+    case EffectStackStage::Saturation: return "Saturation";
+    case EffectStackStage::ToneMapping: return "Tone Mapping";
+    case EffectStackStage::FilmGrain: return "Film Grain";
+    case EffectStackStage::Vignette: return "Vignette";
+    default: return "Unknown";
+    }
+}
+
+void EnableEffectStage(Scene& scene, const EffectStackStage stage, const bool enabled) {
+    switch (stage) {
+    case EffectStackStage::Denoiser: scene.denoiser.enabled = enabled; break;
+    case EffectStackStage::DepthOfField: scene.depthOfField.enabled = enabled; break;
+    case EffectStackStage::Curves: scene.postProcess.curvesEnabled = enabled; break;
+    case EffectStackStage::Sharpen: scene.postProcess.sharpenEnabled = enabled; break;
+    case EffectStackStage::HueShift: scene.postProcess.hueShiftEnabled = enabled; break;
+    case EffectStackStage::PostProcess: scene.postProcess.enabled = enabled; break;
+    case EffectStackStage::ChromaticAberration: scene.postProcess.chromaticAberrationEnabled = enabled; break;
+    case EffectStackStage::ColorTemperature: scene.postProcess.colorTemperatureEnabled = enabled; break;
+    case EffectStackStage::Saturation: scene.postProcess.saturationEnabled = enabled; break;
+    case EffectStackStage::ToneMapping:
+        scene.postProcess.toneMappingEnabled = enabled;
+        scene.postProcess.acesToneMap = enabled;
+        break;
+    case EffectStackStage::FilmGrain: scene.postProcess.filmGrainEnabled = enabled; break;
+    case EffectStackStage::Vignette: scene.postProcess.vignetteEnabled = enabled; break;
+    default: break;
+    }
 }
 
 Scene CreateDefaultScene() {
