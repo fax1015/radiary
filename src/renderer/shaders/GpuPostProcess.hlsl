@@ -11,8 +11,15 @@ cbuffer PostProcessParams : register(b0)
     float CurveBlackPoint;
     float CurveWhitePoint;
     float CurveGamma;
+    uint CurveUseCustom;
+    float2 CurvePointsX;       // x,y for points 0-1
+    float2 CurvePointsY;      // x,y for points 2-3
+    float2 CurvePointsX2;     // x,y for points 4-5
+    float2 CurvePointsY2;     // x,y for points 6-7
+    uint CurvePointCount;
     float SharpenAmount;
     float HueShiftDegrees;
+    float HueShiftSaturation;
     float ChromaticAberration;
     float VignetteIntensity;
     float VignetteRoundness;
@@ -21,9 +28,10 @@ cbuffer PostProcessParams : register(b0)
     uint FilmGrainEnabled;
     uint ColorTemperatureEnabled;
     float FilmGrain;
+    float FilmGrainScale;
     float ColorTemperature;
     float SaturationBoost;
-    float Padding0;
+    float SaturationVibrance;
     uint SaturationEnabled;
     uint RandomSeed;
     uint MipWidth;
@@ -103,8 +111,37 @@ float3 HSVToRGB(float3 hsv)
     return hsv.z * lerp(float3(1.0, 1.0, 1.0), saturate(p - 1.0), hsv.y);
 }
 
+float EvaluateCustomCurve(float t)
+{
+    if (CurvePointCount < 2) return t;
+    
+    // Collect points into array
+    float2 points[8];
+    points[0] = float2(0.0, 0.0);
+    points[1] = CurvePointsX;
+    points[2] = CurvePointsY;
+    points[3] = float2(CurvePointsX.y, CurvePointsX2.x);
+    points[4] = float2(CurvePointsX2.y, CurvePointsY2.x);
+    points[5] = float2(CurvePointsY2.y, 1.0);
+    // Use linear interpolation between points
+    for (uint i = 0; i < CurvePointCount - 1; i++) {
+        if (t >= points[i].x && t <= points[i + 1].x) {
+            float localT = (t - points[i].x) / (points[i + 1].x - points[i].x);
+            return lerp(points[i].y, points[i + 1].y, localT);
+        }
+    }
+    return t;
+}
+
 float3 ApplyCurves(float3 color)
 {
+    if (CurveUseCustom != 0u && CurvePointCount >= 2) {
+        color.r = EvaluateCustomCurve(color.r);
+        color.g = EvaluateCustomCurve(color.g);
+        color.b = EvaluateCustomCurve(color.b);
+        return saturate(color);
+    }
+    
     float blackPoint = min(CurveBlackPoint, CurveWhitePoint - 0.001);
     float whitePoint = max(CurveWhitePoint, blackPoint + 0.001);
     float gamma = max(CurveGamma, 0.05);

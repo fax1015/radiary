@@ -902,6 +902,7 @@ Scene CreateRandomScene(const std::uint32_t seed) {
         scene.depthOfField.focusDepth = dofFocusDepth(generator);
         scene.depthOfField.focusRange = dofFocusRange(generator);
         scene.depthOfField.blurStrength = dofBlurStrength(generator);
+        scene.effectStack.push_back(EffectStackStage::DepthOfField);
     }
     const bool isSuperColorful = superColorful(generator);
     if (isSuperColorful) {

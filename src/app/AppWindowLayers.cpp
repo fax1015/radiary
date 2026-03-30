@@ -634,6 +634,12 @@ void AppWindow::SetLayerSelection(const InspectorTarget target, std::vector<int>
 }
 
 void AppWindow::AssignCurrentLayerToKeyframe(SceneKeyframe& keyframe) const {
+    if (!HasSelectedLayer()) {
+        keyframe.ownerType = KeyframeOwnerType::Scene;
+        keyframe.ownerIndex = 0;
+        return;
+    }
+
     if (inspectorTarget_ == InspectorTarget::PathLayer) {
         keyframe.ownerType = KeyframeOwnerType::Path;
         keyframe.ownerIndex = std::clamp(scene_.selectedPath, 0, std::max(0, static_cast<int>(scene_.paths.size()) - 1));
@@ -932,22 +938,29 @@ bool AppWindow::CanRemoveSelectedOrCurrentKeyframe() const {
     if (selectedTimelineKeyframe_ >= 0) {
         return selectedTimelineKeyframe_ < static_cast<int>(scene_.keyframes.size());
     }
-    if (!HasSelectedLayer()) {
-        return false;
-    }
+    const bool hasSelectedLayer = HasSelectedLayer();
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
-    const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
-    const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
+    const KeyframeOwnerType currentOwnerType = !hasSelectedLayer
+        ? KeyframeOwnerType::Scene
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform);
+    const int currentOwnerIndex = !hasSelectedLayer
+        ? 0
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform);
     return FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex) >= 0;
 }
 
 bool AppWindow::RemoveSelectedOrCurrentKeyframe() {
-    if (selectedTimelineKeyframe_ < 0 && !HasSelectedLayer()) {
+    const bool hasSelectedLayer = HasSelectedLayer();
+    if (selectedTimelineKeyframe_ < 0 && scene_.keyframes.empty()) {
         return false;
     }
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
-    const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
-    const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
+    const KeyframeOwnerType currentOwnerType = !hasSelectedLayer
+        ? KeyframeOwnerType::Scene
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform);
+    const int currentOwnerIndex = !hasSelectedLayer
+        ? 0
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform);
     const int currentKeyframeIndex = FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex);
     const int removeIndex = selectedTimelineKeyframe_ >= 0 ? selectedTimelineKeyframe_ : currentKeyframeIndex;
     if (removeIndex < 0 || removeIndex >= static_cast<int>(scene_.keyframes.size())) {
@@ -1157,20 +1170,27 @@ void AppWindow::RefreshTimelinePose() {
 }
 
 void AppWindow::AutoKeyCurrentFrame() {
-    if (scene_.keyframes.empty() || !HasSelectedLayer()) {
+    if (scene_.keyframes.empty()) {
         return;
     }
 
+    const bool hasSelectedLayer = HasSelectedLayer();
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
-    const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
-    const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
+    const KeyframeOwnerType currentOwnerType = !hasSelectedLayer
+        ? KeyframeOwnerType::Scene
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform);
+    const int currentOwnerIndex = !hasSelectedLayer
+        ? 0
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform);
     if (FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex) >= 0) {
         return;
     }
 
     SceneKeyframe keyframe;
     keyframe.frame = currentFrame;
-    keyframe.markerColor = inspectorTarget_ == InspectorTarget::PathLayer ? Color{96, 188, 224, 255} : Color{248, 164, 88, 255};
+    keyframe.markerColor = !hasSelectedLayer
+        ? Color{180, 160, 220, 255}
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? Color{96, 188, 224, 255} : Color{248, 164, 88, 255});
     AssignCurrentLayerToKeyframe(keyframe);
     keyframe.pose = CaptureScenePose(scene_);
     scene_.keyframes.push_back(std::move(keyframe));
@@ -1179,12 +1199,14 @@ void AppWindow::AutoKeyCurrentFrame() {
 }
 
 void AppWindow::SyncCurrentKeyframeFromScene() {
-    if (!HasSelectedLayer()) {
-        return;
-    }
+    const bool hasSelectedLayer = HasSelectedLayer();
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
-    const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
-    const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
+    const KeyframeOwnerType currentOwnerType = !hasSelectedLayer
+        ? KeyframeOwnerType::Scene
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform);
+    const int currentOwnerIndex = !hasSelectedLayer
+        ? 0
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform);
     const int keyframeIndex = FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex);
     if (keyframeIndex < 0) {
         return;

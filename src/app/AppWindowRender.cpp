@@ -919,9 +919,25 @@ bool AppWindow::PrepareGpuEffectChainState(
     state = {};
     state.finalStage = PreviewRenderStage::Base;
 
-    const bool hasActiveEffects = std::any_of(scene.effectStack.begin(), scene.effectStack.end(), [&](const EffectStackStage stage) {
-        return IsEffectStageEnabled(scene, stage);
-    });
+    const auto hasLegacyEffectEnabled = [&]() {
+        return scene.denoiser.enabled
+            || scene.depthOfField.enabled
+            || scene.postProcess.enabled
+            || scene.postProcess.curvesEnabled
+            || scene.postProcess.sharpenEnabled
+            || scene.postProcess.hueShiftEnabled
+            || scene.postProcess.chromaticAberrationEnabled
+            || scene.postProcess.vignetteEnabled
+            || scene.postProcess.toneMappingEnabled
+            || scene.postProcess.filmGrainEnabled
+            || scene.postProcess.colorTemperatureEnabled
+            || scene.postProcess.saturationEnabled;
+    };
+    const bool hasActiveEffects = scene.effectStack.empty()
+        ? hasLegacyEffectEnabled()
+        : std::any_of(scene.effectStack.begin(), scene.effectStack.end(), [&](const EffectStackStage stage) {
+            return IsEffectStageEnabled(scene, stage);
+        });
     if (!hasActiveEffects) {
         state.inputs = baseInputs;
         return true;

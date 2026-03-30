@@ -222,8 +222,15 @@ bool GpuPostProcess::Render(
         params.curveBlackPoint = static_cast<float>(pp.curveBlackPoint);
         params.curveWhitePoint = static_cast<float>(pp.curveWhitePoint);
         params.curveGamma = static_cast<float>(pp.curveGamma);
+        params.curveUseCustom = pp.curveUseCustom ? 1u : 0u;
+        params.curvePointCount = static_cast<std::uint32_t>(std::min<std::size_t>(pp.curveControlPoints.size(), 8u));
+        for (std::size_t i = 0; i < pp.curveControlPoints.size() && i < 8; i++) {
+            params.curvePointsX[i] = static_cast<float>(pp.curveControlPoints[i].x);
+            params.curvePointsY[i] = static_cast<float>(pp.curveControlPoints[i].y);
+        }
         params.sharpenAmount = static_cast<float>(pp.sharpenAmount);
         params.hueShiftDegrees = static_cast<float>(pp.hueShiftDegrees);
+        params.hueShiftSaturation = static_cast<float>(pp.hueShiftSaturation);
         params.chromaticAberration = static_cast<float>(pp.chromaticAberration);
         params.vignetteIntensity = static_cast<float>(pp.vignetteIntensity);
         params.vignetteRoundness = static_cast<float>(pp.vignetteRoundness);
@@ -232,8 +239,10 @@ bool GpuPostProcess::Render(
         params.filmGrainEnabled = pp.filmGrainEnabled ? 1u : 0u;
         params.colorTemperatureEnabled = pp.colorTemperatureEnabled ? 1u : 0u;
         params.filmGrain = static_cast<float>(pp.filmGrain);
+        params.filmGrainScale = static_cast<float>(pp.filmGrainScale);
         params.colorTemperature = static_cast<float>(pp.colorTemperature);
         params.saturationBoost = static_cast<float>(pp.saturationBoost);
+        params.saturationVibrance = static_cast<float>(pp.saturationVibrance);
         params.saturationEnabled = pp.saturationEnabled ? 1u : 0u;
         params.randomSeed = MakePostProcessRandomSeed(frameCounter_, randomSeedOverride);
 

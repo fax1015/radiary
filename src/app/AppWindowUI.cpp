@@ -466,11 +466,10 @@ void AppWindow::DrawDockPanelTabContextMenu(const char* panelName, bool& panelOp
         return;
     }
 
-    const bool hasVisibleDockTab = window->DockIsActive
-        && window->DockTabIsVisible
+    const bool hasDockTab = window->DockIsActive
         && window->DC.DockTabItemRect.GetWidth() > 0.0f
         && window->DC.DockTabItemRect.GetHeight() > 0.0f;
-    if (!hasVisibleDockTab) {
+    if (!hasDockTab) {
         return;
     }
 
@@ -501,10 +500,6 @@ void AppWindow::DrawDockPanelTabContextMenu(const char* panelName, bool& panelOp
         || !viewportPanelOpen_;
     if (ImGui::MenuItem("Show All Panels", nullptr, false, anyHiddenPanels)) {
         OpenAllDockPanels();
-    }
-    if (ImGui::MenuItem("Restore Default Layout")) {
-        OpenAllDockPanels();
-        defaultLayoutBuilt_ = false;
     }
 
     ImGui::EndPopup();
@@ -1510,14 +1505,16 @@ void AppWindow::DrawEasingPanel() {
     }
 
     const bool hasSelectedLayer = HasSelectedLayer();
-    const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
-    const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
+    const KeyframeOwnerType currentOwnerType = !hasSelectedLayer
+        ? KeyframeOwnerType::Scene
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform);
+    const int currentOwnerIndex = !hasSelectedLayer
+        ? 0
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform);
     const int editableKeyframeIndex =
         selectedTimelineKeyframe_ >= 0
         ? selectedTimelineKeyframe_
-        : (hasSelectedLayer
-            ? FindKeyframeIndex(scene_, static_cast<int>(std::round(scene_.timelineFrame)), currentOwnerType, currentOwnerIndex)
-            : -1);
+        : FindKeyframeIndex(scene_, static_cast<int>(std::round(scene_.timelineFrame)), currentOwnerType, currentOwnerIndex);
     if (editableKeyframeIndex < 0 || editableKeyframeIndex >= static_cast<int>(scene_.keyframes.size())) {
         easingPanelOpen_ = false;
         return;
@@ -1910,9 +1907,16 @@ void AppWindow::DrawKeyframeListPanel() {
     }
 
     const auto ownerLabel = [](const KeyframeOwnerType ownerType) {
-        return ownerType == KeyframeOwnerType::Path ? "Path" : "Flame";
+        switch (ownerType) {
+        case KeyframeOwnerType::Path: return "Path";
+        case KeyframeOwnerType::Scene: return "Scene";
+        default: return "Flame";
+        }
     };
     const auto layerNameForKeyframe = [&](const SceneKeyframe& keyframe) {
+        if (keyframe.ownerType == KeyframeOwnerType::Scene) {
+            return std::string("Scene");
+        }
         if (keyframe.ownerType == KeyframeOwnerType::Path) {
             if (keyframe.ownerIndex >= 0 && keyframe.ownerIndex < static_cast<int>(scene_.paths.size())) {
                 return scene_.paths[static_cast<std::size_t>(keyframe.ownerIndex)].name;
@@ -2919,11 +2923,13 @@ void AppWindow::DrawTimelinePanel() {
     };
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
     const bool hasSelectedLayer = HasSelectedLayer();
-    const KeyframeOwnerType currentOwnerType = inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform;
-    const int currentOwnerIndex = inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform;
-    const int currentKeyframeIndex = hasSelectedLayer
-        ? FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex)
-        : -1;
+    const KeyframeOwnerType currentOwnerType = !hasSelectedLayer
+        ? KeyframeOwnerType::Scene
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform);
+    const int currentOwnerIndex = !hasSelectedLayer
+        ? 0
+        : (inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform);
+    const int currentKeyframeIndex = FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex);
     int previousKeyframeIndex = -1;
     int nextKeyframeIndex = -1;
     for (std::size_t index = 0; index < scene_.keyframes.size(); ++index) {
@@ -3001,13 +3007,15 @@ void AppWindow::DrawTimelinePanel() {
         selectedTimelineKeyframe_ = nextKeyframeIndex;
     }
     drawHeaderDivider();
-    if (DrawActionButton("##timeline_add_key", "", IconGlyph::Add, ActionTone::Accent, false, hasSelectedLayer, 0.0f, "Add keyframe at current frame")) {
+    if (DrawActionButton("##timeline_add_key", "", IconGlyph::Add, ActionTone::Accent, false, true, 0.0f, "Add keyframe at current frame")) {
         PushUndoState(scene_);
         const int frame = currentFrame;
         const int existingIndex = FindKeyframeIndex(scene_, frame, currentOwnerType, currentOwnerIndex);
         SceneKeyframe keyframe;
         keyframe.frame = frame;
-        keyframe.markerColor = inspectorTarget_ == InspectorTarget::PathLayer ? Color{96, 188, 224, 255} : Color{248, 164, 88, 255};
+        keyframe.markerColor = !hasSelectedLayer
+            ? Color{180, 160, 220, 255}
+            : (inspectorTarget_ == InspectorTarget::PathLayer ? Color{96, 188, 224, 255} : Color{248, 164, 88, 255});
         AssignCurrentLayerToKeyframe(keyframe);
         if (existingIndex >= 0) {
             keyframe.easing = scene_.keyframes[static_cast<std::size_t>(existingIndex)].easing;
@@ -3164,6 +3172,8 @@ void AppWindow::DrawTimelinePanel() {
         lane.ownerType = keyframe.ownerType;
         if (lane.ownerType == KeyframeOwnerType::Path) {
             lane.ownerIndex = std::clamp(keyframe.ownerIndex, 0, std::max(0, static_cast<int>(scene_.paths.size()) - 1));
+        } else if (lane.ownerType == KeyframeOwnerType::Scene) {
+            lane.ownerIndex = 0;
         } else {
             lane.ownerType = KeyframeOwnerType::Transform;
             lane.ownerIndex = std::clamp(keyframe.ownerIndex, 0, std::max(0, static_cast<int>(scene_.transforms.size()) - 1));
@@ -3871,9 +3881,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.denoiser.enabled = denoiserHeader.enabled;
         }
         bool denoiserEnabledChanged = denoiserHeader.enabledChanged;
-        denoiserEnabledChanged = ResetValueOnDoubleClick(scene_.denoiser.enabled, defaultScene.denoiser.enabled) || denoiserEnabledChanged;
         if (denoiserHeader.resetPressed) {
+            const bool saved = scene_.denoiser.enabled;
             scene_.denoiser = defaultScene.denoiser;
+            scene_.denoiser.enabled = saved;
         }
         endEffectHeader(denoiserHeader.contentOpen, nullptr);
         if (denoiserHeader.resetPressed) {
@@ -3919,9 +3930,10 @@ void AppWindow::DrawEffectsPanel() {
             scene_.depthOfField.enabled = dofHeader.enabled;
         }
         bool dofEnabledChanged = dofHeader.enabledChanged;
-        dofEnabledChanged = ResetValueOnDoubleClick(scene_.depthOfField.enabled, defaultScene.depthOfField.enabled) || dofEnabledChanged;
         if (dofHeader.resetPressed) {
+            const bool saved = scene_.depthOfField.enabled;
             scene_.depthOfField = defaultScene.depthOfField;
+            scene_.depthOfField.enabled = saved;
         }
         endEffectHeader(dofHeader.contentOpen, nullptr);
         if (dofHeader.resetPressed) {
@@ -3996,9 +4008,7 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.enabled = glowHeader.enabled;
         }
         bool postProcessEnabledChanged = glowHeader.enabledChanged;
-        postProcessEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.enabled, defaultScene.postProcess.enabled) || postProcessEnabledChanged;
         if (glowHeader.resetPressed) {
-            scene_.postProcess.enabled = defaultScene.postProcess.enabled;
             scene_.postProcess.bloomIntensity = defaultScene.postProcess.bloomIntensity;
             scene_.postProcess.bloomThreshold = defaultScene.postProcess.bloomThreshold;
         }
@@ -4060,9 +4070,7 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.chromaticAberrationEnabled = chromaticHeader.enabled;
         }
         bool chromaticEnabledChanged = chromaticHeader.enabledChanged;
-        chromaticEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.chromaticAberrationEnabled, defaultScene.postProcess.chromaticAberrationEnabled) || chromaticEnabledChanged;
         if (chromaticHeader.resetPressed) {
-            scene_.postProcess.chromaticAberrationEnabled = defaultScene.postProcess.chromaticAberrationEnabled;
             scene_.postProcess.chromaticAberration = defaultScene.postProcess.chromaticAberration;
         }
         endEffectHeader(chromaticHeader.contentOpen, nullptr);
@@ -4109,9 +4117,7 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.colorTemperatureEnabled = temperatureHeader.enabled;
         }
         bool temperatureEnabledChanged = temperatureHeader.enabledChanged;
-        temperatureEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.colorTemperatureEnabled, defaultScene.postProcess.colorTemperatureEnabled) || temperatureEnabledChanged;
         if (temperatureHeader.resetPressed) {
-            scene_.postProcess.colorTemperatureEnabled = defaultScene.postProcess.colorTemperatureEnabled;
             scene_.postProcess.colorTemperature = defaultScene.postProcess.colorTemperature;
         }
         endEffectHeader(temperatureHeader.contentOpen, nullptr);
@@ -4158,10 +4164,9 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.saturationEnabled = saturationHeader.enabled;
         }
         bool saturationEnabledChanged = saturationHeader.enabledChanged;
-        saturationEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.saturationEnabled, defaultScene.postProcess.saturationEnabled) || saturationEnabledChanged;
         if (saturationHeader.resetPressed) {
-            scene_.postProcess.saturationEnabled = defaultScene.postProcess.saturationEnabled;
             scene_.postProcess.saturationBoost = defaultScene.postProcess.saturationBoost;
+            scene_.postProcess.saturationVibrance = defaultScene.postProcess.saturationVibrance;
         }
         endEffectHeader(saturationHeader.contentOpen, nullptr);
         if (saturationHeader.resetPressed) {
@@ -4173,6 +4178,8 @@ void AppWindow::DrawEffectsPanel() {
         if (saturationHeader.contentOpen && scene_.postProcess.saturationEnabled) {
             const double saturationMin = -1.0;
             const double saturationMax = 1.0;
+            const double vibranceMin = -1.0;
+            const double vibranceMax = 1.0;
             const bool saturationColorOpen = beginEffectSubsection("##effect_saturation_section", "Color");
             if (saturationColorOpen) {
                 if (beginEffectFieldGrid("##effect_saturation_grid")) {
@@ -4186,6 +4193,18 @@ void AppWindow::DrawEffectsPanel() {
                         MarkViewportDirty(DeterminePreviewResetReason(beforeSaturation, scene_));
                     }
                     CaptureWidgetUndo(beforeSaturation, saturationChanged);
+
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Vibrance");
+                    setEffectItemWidth();
+                    beforeSaturation = scene_;
+                    saturationChanged = SliderScalarWithInput("##effect_saturation_vibrance", ImGuiDataType_Double, &scene_.postProcess.saturationVibrance, &vibranceMin, &vibranceMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.saturationVibrance, defaultScene.postProcess.saturationVibrance);
+                    if (saturationChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeSaturation, scene_));
+                    }
+                    CaptureWidgetUndo(beforeSaturation, saturationChanged);
+
                     ImGui::EndTable();
                 }
             }
@@ -4207,22 +4226,15 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.toneMappingEnabled = toneMappingHeader.enabled;
         }
         bool toneMappingEnabledChanged = toneMappingHeader.enabledChanged;
-        toneMappingEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.toneMappingEnabled, defaultScene.postProcess.toneMappingEnabled) || toneMappingEnabledChanged;
         if (toneMappingHeader.resetPressed) {
-            scene_.postProcess.toneMappingEnabled = defaultScene.postProcess.toneMappingEnabled;
             scene_.postProcess.acesToneMap = defaultScene.postProcess.acesToneMap;
         }
-        scene_.postProcess.acesToneMap = scene_.postProcess.toneMappingEnabled;
         endEffectHeader(toneMappingHeader.contentOpen, nullptr);
         if (toneMappingHeader.resetPressed) {
             commitEffectReset(beforeToneMappingEnabled, "Tone Mapping");
         } else if (toneMappingEnabledChanged) {
             MarkViewportDirty(DeterminePreviewResetReason(beforeToneMappingEnabled, scene_));
             CaptureWidgetUndo(beforeToneMappingEnabled, toneMappingEnabledChanged);
-        }
-        if (toneMappingHeader.contentOpen && scene_.postProcess.toneMappingEnabled) {
-            const bool toneCurveOpen = beginEffectSubsection("##effect_tonemap_section", "Curve");
-            endEffectSubsection(toneCurveOpen);
         }
         endEffectCard();
                 break;
@@ -4240,10 +4252,9 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.filmGrainEnabled = filmGrainHeader.enabled;
         }
         bool filmGrainEnabledChanged = filmGrainHeader.enabledChanged;
-        filmGrainEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.filmGrainEnabled, defaultScene.postProcess.filmGrainEnabled) || filmGrainEnabledChanged;
         if (filmGrainHeader.resetPressed) {
-            scene_.postProcess.filmGrainEnabled = defaultScene.postProcess.filmGrainEnabled;
             scene_.postProcess.filmGrain = defaultScene.postProcess.filmGrain;
+            scene_.postProcess.filmGrainScale = defaultScene.postProcess.filmGrainScale;
         }
         endEffectHeader(filmGrainHeader.contentOpen, nullptr);
         if (filmGrainHeader.resetPressed) {
@@ -4255,6 +4266,8 @@ void AppWindow::DrawEffectsPanel() {
         if (filmGrainHeader.contentOpen && scene_.postProcess.filmGrainEnabled) {
             const double filmGrainMin = 0.0;
             const double filmGrainMax = 1.0;
+            const double filmGrainScaleMin = 0.1;
+            const double filmGrainScaleMax = 4.0;
             const bool filmTextureOpen = beginEffectSubsection("##effect_film_grain_section", "Texture");
             if (filmTextureOpen) {
                 if (beginEffectFieldGrid("##effect_film_grain_grid")) {
@@ -4268,6 +4281,18 @@ void AppWindow::DrawEffectsPanel() {
                         MarkViewportDirty(DeterminePreviewResetReason(beforeFilmGrain, scene_));
                     }
                     CaptureWidgetUndo(beforeFilmGrain, filmGrainChanged);
+
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Scale");
+                    setEffectItemWidth();
+                    beforeFilmGrain = scene_;
+                    filmGrainChanged = SliderScalarWithInput("##effect_film_grain_scale", ImGuiDataType_Double, &scene_.postProcess.filmGrainScale, &filmGrainScaleMin, &filmGrainScaleMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.filmGrainScale, defaultScene.postProcess.filmGrainScale);
+                    if (filmGrainChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeFilmGrain, scene_));
+                    }
+                    CaptureWidgetUndo(beforeFilmGrain, filmGrainChanged);
+
                     ImGui::EndTable();
                 }
             }
@@ -4289,9 +4314,7 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.vignetteEnabled = vignetteHeader.enabled;
         }
         bool vignetteEnabledChanged = vignetteHeader.enabledChanged;
-        vignetteEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.vignetteEnabled, defaultScene.postProcess.vignetteEnabled) || vignetteEnabledChanged;
         if (vignetteHeader.resetPressed) {
-            scene_.postProcess.vignetteEnabled = defaultScene.postProcess.vignetteEnabled;
             scene_.postProcess.vignetteIntensity = defaultScene.postProcess.vignetteIntensity;
             scene_.postProcess.vignetteRoundness = defaultScene.postProcess.vignetteRoundness;
         }
@@ -4352,12 +4375,12 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.curvesEnabled = curvesHeader.enabled;
         }
         bool curvesEnabledChanged = curvesHeader.enabledChanged;
-        curvesEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.curvesEnabled, defaultScene.postProcess.curvesEnabled) || curvesEnabledChanged;
         if (curvesHeader.resetPressed) {
-            scene_.postProcess.curvesEnabled = defaultScene.postProcess.curvesEnabled;
             scene_.postProcess.curveBlackPoint = defaultScene.postProcess.curveBlackPoint;
             scene_.postProcess.curveWhitePoint = defaultScene.postProcess.curveWhitePoint;
             scene_.postProcess.curveGamma = defaultScene.postProcess.curveGamma;
+            scene_.postProcess.curveUseCustom = defaultScene.postProcess.curveUseCustom;
+            scene_.postProcess.curveControlPoints.clear();
         }
         endEffectHeader(curvesHeader.contentOpen, nullptr);
         if (curvesHeader.resetPressed) {
@@ -4373,51 +4396,164 @@ void AppWindow::DrawEffectsPanel() {
             const double whitePointMax = 1.0;
             const double curveGammaMin = 0.3;
             const double curveGammaMax = 3.0;
-            const bool curvesLevelsOpen = beginEffectSubsection("##effect_curves_section", "Levels");
-            if (curvesLevelsOpen) {
-                if (beginEffectFieldGrid("##effect_curves_grid")) {
-                    ImGui::TableNextColumn();
-                    drawEffectFieldLabel("Black Point");
-                    setEffectItemWidth();
-                    Scene beforeCurves = scene_;
-                    bool curvesChanged = SliderScalarWithInput("##effect_curves_black", ImGuiDataType_Double, &scene_.postProcess.curveBlackPoint, &blackPointMin, &blackPointMax, "%.2f")
-                        || ResetValueOnDoubleClick(scene_.postProcess.curveBlackPoint, defaultScene.postProcess.curveBlackPoint);
-                    scene_.postProcess.curveBlackPoint = std::min(scene_.postProcess.curveBlackPoint, scene_.postProcess.curveWhitePoint - 0.01);
-                    if (curvesChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
+            const bool curvesTypeOpen = beginEffectSubsection("##effect_curves_type_section", "Type");
+            if (curvesTypeOpen) {
+                if (ImGui::RadioButton("Levels", !scene_.postProcess.curveUseCustom)) {
+                    PushUndoState(scene_, "Switch to Levels");
+                    scene_.postProcess.curveUseCustom = false;
+                    MarkViewportDirty(DeterminePreviewResetReason(beforeCurvesEnabled, scene_));
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Custom Curve", scene_.postProcess.curveUseCustom)) {
+                    PushUndoState(scene_, "Switch to Custom Curve");
+                    scene_.postProcess.curveUseCustom = true;
+                    if (scene_.postProcess.curveControlPoints.empty()) {
+                        scene_.postProcess.curveControlPoints = {{0.0, 0.0}, {0.25, 0.25}, {0.5, 0.5}, {0.75, 0.75}, {1.0, 1.0}};
                     }
-                    CaptureWidgetUndo(beforeCurves, curvesChanged);
-
-                    ImGui::TableNextColumn();
-                    drawEffectFieldLabel("White Point");
-                    setEffectItemWidth();
-                    beforeCurves = scene_;
-                    curvesChanged = SliderScalarWithInput("##effect_curves_white", ImGuiDataType_Double, &scene_.postProcess.curveWhitePoint, &whitePointMin, &whitePointMax, "%.2f")
-                        || ResetValueOnDoubleClick(scene_.postProcess.curveWhitePoint, defaultScene.postProcess.curveWhitePoint);
-                    scene_.postProcess.curveWhitePoint = std::max(scene_.postProcess.curveWhitePoint, scene_.postProcess.curveBlackPoint + 0.01);
-                    if (curvesChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
-                    }
-                    CaptureWidgetUndo(beforeCurves, curvesChanged);
-
-                    if (ImGui::TableGetColumnCount() > 1) {
-                        ImGui::TableNextRow();
-                    }
-                    ImGui::TableNextColumn();
-                    drawEffectFieldLabel("Gamma");
-                    setEffectItemWidth();
-                    beforeCurves = scene_;
-                    curvesChanged = SliderScalarWithInput("##effect_curves_gamma", ImGuiDataType_Double, &scene_.postProcess.curveGamma, &curveGammaMin, &curveGammaMax, "%.2f")
-                        || ResetValueOnDoubleClick(scene_.postProcess.curveGamma, defaultScene.postProcess.curveGamma);
-                    if (curvesChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
-                    }
-                    CaptureWidgetUndo(beforeCurves, curvesChanged);
-
-                    ImGui::EndTable();
+                    MarkViewportDirty(DeterminePreviewResetReason(beforeCurvesEnabled, scene_));
                 }
             }
-            endEffectSubsection(curvesLevelsOpen);
+            endEffectSubsection(curvesTypeOpen);
+
+            if (scene_.postProcess.curveUseCustom) {
+                const bool curvesEditorOpen = beginEffectSubsection("##effect_curves_editor_section", "Curve Editor");
+                if (curvesEditorOpen) {
+                    ImVec2 curveSize(280.0f, 160.0f);
+                    ImGui::InvisibleButton("##curves_editor", curveSize);
+                    ImRect curveRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    const UiTheme& theme = GetUiTheme();
+                    const ImU32 bgColor = ImGui::GetColorU32(theme.panelBackgroundInset);
+                    const ImU32 borderColor = ImGui::GetColorU32(WithAlpha(theme.borderStrong, 0.72f));
+                    const ImU32 gridColor = ImGui::GetColorU32(WithAlpha(theme.borderSubtle, 0.40f));
+                    const ImU32 curveColor = ImGui::GetColorU32(theme.accent);
+                    const ImU32 handleColor = ImGui::GetColorU32(theme.accentHover);
+                    drawList->AddRectFilled(curveRect.Min, curveRect.Max, bgColor, theme.roundingMedium);
+                    drawList->AddRect(curveRect.Min, curveRect.Max, borderColor, theme.roundingMedium);
+                    for (int i = 1; i < 5; i++) {
+                        float x = curveRect.Min.x + curveRect.GetWidth() * (i / 4.0f);
+                        float y = curveRect.Min.y + curveRect.GetHeight() * (i / 4.0f);
+                        drawList->AddLine(ImVec2(x, curveRect.Min.y), ImVec2(x, curveRect.Max.y), gridColor);
+                        drawList->AddLine(ImVec2(curveRect.Min.x, y), ImVec2(curveRect.Max.x, y), gridColor);
+                    }
+                    auto screenToCurve = [&](float sx, float sy) -> Vec2 {
+                        float cx = (sx - curveRect.Min.x) / curveRect.GetWidth();
+                        float cy = 1.0f - (sy - curveRect.Min.y) / curveRect.GetHeight();
+                        return {static_cast<double>(cx), static_cast<double>(cy)};
+                    };
+                    auto curveToScreen = [&](double cx, double cy) -> ImVec2 {
+                        float sx = curveRect.Min.x + static_cast<float>(cx) * curveRect.GetWidth();
+                        float sy = curveRect.Min.y + (1.0f - static_cast<float>(cy)) * curveRect.GetHeight();
+                        return ImVec2(sx, sy);
+                    };
+                    ImVec2 prev = curveToScreen(0.0, 0.0);
+                    for (int i = 1; i <= 32; i++) {
+                        float t = static_cast<float>(i) / 32.0f;
+                        double y = 0.0;
+                        if (!scene_.postProcess.curveControlPoints.empty()) {
+                            double sum = 0.0;
+                            double norm = 0.0;
+                            for (const auto& pt : scene_.postProcess.curveControlPoints) {
+                                double basis = 1.0;
+                                for (int j = 0; j < static_cast<int>(scene_.postProcess.curveControlPoints.size()); j++) {
+                                    if (j == 0) basis *= std::pow(1-t, static_cast<double>(scene_.postProcess.curveControlPoints.size() - 1 - j));
+                                    else if (j == scene_.postProcess.curveControlPoints.size() - 1) basis *= std::pow(t, static_cast<double>(j));
+                                    else basis *= std::pow(t, j) * std::pow(1-t, static_cast<double>(scene_.postProcess.curveControlPoints.size() - 1 - j));
+                                }
+                                sum += pt.y * basis;
+                                norm += basis;
+                            }
+                            y = norm > 0 ? sum / norm : t;
+                        } else {
+                            y = t;
+                        }
+                        ImVec2 curr = curveToScreen(t, y);
+                        drawList->AddLine(prev, curr, curveColor, 2.0f);
+                        prev = curr;
+                    }
+                    ImVec2 mouse = ImGui::GetIO().MousePos;
+                    int dragIndex = -1;
+                    if (ImGui::IsItemHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        for (int i = 0; i < static_cast<int>(scene_.postProcess.curveControlPoints.size()); i++) {
+                            ImVec2 pt = curveToScreen(scene_.postProcess.curveControlPoints[i].x, scene_.postProcess.curveControlPoints[i].y);
+                            float dist = std::hypot(mouse.x - pt.x, mouse.y - pt.y);
+                            if (dist < 12.0f) {
+                                dragIndex = i;
+                                break;
+                            }
+                        }
+                    }
+                    if (dragIndex >= 0) {
+                        Vec2 newPos = screenToCurve(mouse.x, mouse.y);
+                        newPos.x = std::clamp(newPos.x, 0.0, 1.0);
+                        newPos.y = std::clamp(newPos.y, 0.0, 1.0);
+                        if (dragIndex > 0 && dragIndex < static_cast<int>(scene_.postProcess.curveControlPoints.size()) - 1) {
+                            newPos.x = std::clamp(newPos.x, scene_.postProcess.curveControlPoints[dragIndex-1].x + 0.01, scene_.postProcess.curveControlPoints[dragIndex+1].x - 0.01);
+                        }
+                        if (dragIndex == 0) newPos.x = 0.0;
+                        if (dragIndex == static_cast<int>(scene_.postProcess.curveControlPoints.size()) - 1) newPos.x = 1.0;
+                        if (newPos.x != scene_.postProcess.curveControlPoints[dragIndex].x || newPos.y != scene_.postProcess.curveControlPoints[dragIndex].y) {
+                            PushUndoState(scene_, "Adjust Curve Point");
+                            scene_.postProcess.curveControlPoints[dragIndex] = newPos;
+                            MarkViewportDirty(DeterminePreviewResetReason(beforeCurvesEnabled, scene_));
+                        }
+                    }
+                    for (const auto& pt : scene_.postProcess.curveControlPoints) {
+                        ImVec2 screenPt = curveToScreen(pt.x, pt.y);
+                        drawList->AddCircleFilled(screenPt, 5.0f, handleColor);
+                        drawList->AddCircle(screenPt, 5.0f, borderColor);
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted("Drag points to adjust");
+                }
+                endEffectSubsection(curvesEditorOpen);
+            } else {
+                const bool curvesLevelsOpen = beginEffectSubsection("##effect_curves_section", "Levels");
+                if (curvesLevelsOpen) {
+                    if (beginEffectFieldGrid("##effect_curves_grid")) {
+                        ImGui::TableNextColumn();
+                        drawEffectFieldLabel("Black Point");
+                        setEffectItemWidth();
+                        Scene beforeCurves = scene_;
+                        bool curvesChanged = SliderScalarWithInput("##effect_curves_black", ImGuiDataType_Double, &scene_.postProcess.curveBlackPoint, &blackPointMin, &blackPointMax, "%.2f")
+                            || ResetValueOnDoubleClick(scene_.postProcess.curveBlackPoint, defaultScene.postProcess.curveBlackPoint);
+                        scene_.postProcess.curveBlackPoint = std::min(scene_.postProcess.curveBlackPoint, scene_.postProcess.curveWhitePoint - 0.01);
+                        if (curvesChanged) {
+                            MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
+                        }
+                        CaptureWidgetUndo(beforeCurves, curvesChanged);
+
+                        ImGui::TableNextColumn();
+                        drawEffectFieldLabel("White Point");
+                        setEffectItemWidth();
+                        beforeCurves = scene_;
+                        curvesChanged = SliderScalarWithInput("##effect_curves_white", ImGuiDataType_Double, &scene_.postProcess.curveWhitePoint, &whitePointMin, &whitePointMax, "%.2f")
+                            || ResetValueOnDoubleClick(scene_.postProcess.curveWhitePoint, defaultScene.postProcess.curveWhitePoint);
+                        scene_.postProcess.curveWhitePoint = std::max(scene_.postProcess.curveWhitePoint, scene_.postProcess.curveBlackPoint + 0.01);
+                        if (curvesChanged) {
+                            MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
+                        }
+                        CaptureWidgetUndo(beforeCurves, curvesChanged);
+
+                        if (ImGui::TableGetColumnCount() > 1) {
+                            ImGui::TableNextRow();
+                        }
+                        ImGui::TableNextColumn();
+                        drawEffectFieldLabel("Gamma");
+                        setEffectItemWidth();
+                        beforeCurves = scene_;
+                        curvesChanged = SliderScalarWithInput("##effect_curves_gamma", ImGuiDataType_Double, &scene_.postProcess.curveGamma, &curveGammaMin, &curveGammaMax, "%.2f")
+                            || ResetValueOnDoubleClick(scene_.postProcess.curveGamma, defaultScene.postProcess.curveGamma);
+                        if (curvesChanged) {
+                            MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
+                        }
+                        CaptureWidgetUndo(beforeCurves, curvesChanged);
+
+                        ImGui::EndTable();
+                    }
+                }
+                endEffectSubsection(curvesLevelsOpen);
+            }
         }
         endEffectCard();
                 break;
@@ -4435,9 +4571,7 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.sharpenEnabled = sharpenHeader.enabled;
         }
         bool sharpenEnabledChanged = sharpenHeader.enabledChanged;
-        sharpenEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.sharpenEnabled, defaultScene.postProcess.sharpenEnabled) || sharpenEnabledChanged;
         if (sharpenHeader.resetPressed) {
-            scene_.postProcess.sharpenEnabled = defaultScene.postProcess.sharpenEnabled;
             scene_.postProcess.sharpenAmount = defaultScene.postProcess.sharpenAmount;
         }
         endEffectHeader(sharpenHeader.contentOpen, nullptr);
@@ -4484,10 +4618,9 @@ void AppWindow::DrawEffectsPanel() {
             scene_.postProcess.hueShiftEnabled = hueShiftHeader.enabled;
         }
         bool hueShiftEnabledChanged = hueShiftHeader.enabledChanged;
-        hueShiftEnabledChanged = ResetValueOnDoubleClick(scene_.postProcess.hueShiftEnabled, defaultScene.postProcess.hueShiftEnabled) || hueShiftEnabledChanged;
         if (hueShiftHeader.resetPressed) {
-            scene_.postProcess.hueShiftEnabled = defaultScene.postProcess.hueShiftEnabled;
             scene_.postProcess.hueShiftDegrees = defaultScene.postProcess.hueShiftDegrees;
+            scene_.postProcess.hueShiftSaturation = defaultScene.postProcess.hueShiftSaturation;
         }
         endEffectHeader(hueShiftHeader.contentOpen, nullptr);
         if (hueShiftHeader.resetPressed) {
@@ -4499,11 +4632,13 @@ void AppWindow::DrawEffectsPanel() {
         if (hueShiftHeader.contentOpen && scene_.postProcess.hueShiftEnabled) {
             const double hueShiftMin = -180.0;
             const double hueShiftMax = 180.0;
+            const double saturationMin = 0.0;
+            const double saturationMax = 2.0;
             const bool hueColorOpen = beginEffectSubsection("##effect_hue_shift_section", "Color");
             if (hueColorOpen) {
                 if (beginEffectFieldGrid("##effect_hue_shift_grid")) {
                     ImGui::TableNextColumn();
-                    drawEffectFieldLabel("Degrees");
+                    drawEffectFieldLabel("Hue");
                     setEffectItemWidth();
                     Scene beforeHueShift = scene_;
                     bool hueShiftChanged = SliderScalarWithInput("##effect_hue_shift_degrees", ImGuiDataType_Double, &scene_.postProcess.hueShiftDegrees, &hueShiftMin, &hueShiftMax, "%.0f deg")
@@ -4512,6 +4647,18 @@ void AppWindow::DrawEffectsPanel() {
                         MarkViewportDirty(DeterminePreviewResetReason(beforeHueShift, scene_));
                     }
                     CaptureWidgetUndo(beforeHueShift, hueShiftChanged);
+
+                    ImGui::TableNextColumn();
+                    drawEffectFieldLabel("Saturation");
+                    setEffectItemWidth();
+                    beforeHueShift = scene_;
+                    hueShiftChanged = SliderScalarWithInput("##effect_hue_shift_saturation", ImGuiDataType_Double, &scene_.postProcess.hueShiftSaturation, &saturationMin, &saturationMax, "%.2f")
+                        || ResetValueOnDoubleClick(scene_.postProcess.hueShiftSaturation, defaultScene.postProcess.hueShiftSaturation);
+                    if (hueShiftChanged) {
+                        MarkViewportDirty(DeterminePreviewResetReason(beforeHueShift, scene_));
+                    }
+                    CaptureWidgetUndo(beforeHueShift, hueShiftChanged);
+
                     ImGui::EndTable();
                 }
             }
@@ -4583,9 +4730,13 @@ void AppWindow::DrawEffectsPanel() {
     const bool panelTabCtxOpen = ImGui::IsPopupOpen("##panel_tab_context_menu", ImGuiPopupFlags_None);
     ImGuiWindow* effectsWindow = ImGui::GetCurrentWindow();
     const ImRect effectsRect = effectsWindow != nullptr ? effectsWindow->InnerRect : ImRect();
+    const bool effectsTabVisible = effectsWindow != nullptr
+        && effectsWindow->DockIsActive
+        && effectsWindow->DockTabIsVisible;
     if (requestOpenEffectsContextMenu) {
         ImGui::OpenPopup("##effects_context_menu");
-    } else if (!rightClickStartedOnEffectControl
+    } else if (effectsTabVisible
+        && !rightClickStartedOnEffectControl
         && !addPopupOpen
         && !panelTabCtxOpen
         && !ImGui::IsPopupOpen("##effects_context_menu", ImGuiPopupFlags_None)

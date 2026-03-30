@@ -82,7 +82,8 @@ enum class KeyframeEasing : std::uint8_t {
 
 enum class KeyframeOwnerType : std::uint8_t {
     Transform,
-    Path
+    Path,
+    Scene
 };
 
 enum class SymmetryMode : std::uint8_t {
@@ -240,10 +241,13 @@ struct PostProcessSettings {
     double curveBlackPoint = 0.0;
     double curveWhitePoint = 1.0;
     double curveGamma = 1.0;
+    bool curveUseCustom = false;
+    std::vector<Vec2> curveControlPoints;
     bool sharpenEnabled = false;
     double sharpenAmount = 0.0;
     bool hueShiftEnabled = false;
     double hueShiftDegrees = 0.0;
+    double hueShiftSaturation = 1.0;
     bool chromaticAberrationEnabled = false;
     double chromaticAberration = 0.0;
     bool vignetteEnabled = false;
@@ -253,10 +257,12 @@ struct PostProcessSettings {
     bool acesToneMap = false;
     bool filmGrainEnabled = false;
     double filmGrain = 0.0;
+    double filmGrainScale = 1.0;
     bool colorTemperatureEnabled = false;
     double colorTemperature = 6500.0;
     bool saturationEnabled = false;
     double saturationBoost = 0.0;
+    double saturationVibrance = 0.0;
 };
 
 struct TransformLayer {

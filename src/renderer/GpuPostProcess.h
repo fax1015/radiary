@@ -42,8 +42,13 @@ private:
         float curveBlackPoint = 0.0f;
         float curveWhitePoint = 1.0f;
         float curveGamma = 1.0f;
+        std::uint32_t curveUseCustom = 0;
+        float curvePointsX[8] = {};
+        float curvePointsY[8] = {};
+        std::uint32_t curvePointCount = 0;
         float sharpenAmount = 0.0f;
         float hueShiftDegrees = 0.0f;
+        float hueShiftSaturation = 1.0f;
         float chromaticAberration = 0.0f;
         float vignetteIntensity = 0.0f;
         float vignetteRoundness = 0.5f;
@@ -52,9 +57,10 @@ private:
         std::uint32_t filmGrainEnabled = 0;
         std::uint32_t colorTemperatureEnabled = 0;
         float filmGrain = 0.0f;
+        float filmGrainScale = 1.0f;
         float colorTemperature = 6500.0f;
         float saturationBoost = 0.0f;
-        float padding0 = 0.0f;
+        float saturationVibrance = 0.0f;
         std::uint32_t saturationEnabled = 0;
         std::uint32_t randomSeed = 0;
         std::uint32_t mipWidth = 0;

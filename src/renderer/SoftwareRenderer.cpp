@@ -346,7 +346,27 @@ Vec3 ColorTemperatureToRgb(const double kelvin) {
     return {r, g, b};
 }
 
+double EvaluateCustomCurve(double t, const PostProcessSettings& settings) {
+    const auto& points = settings.curveControlPoints;
+    if (points.size() < 2) return t;
+    
+    for (size_t i = 0; i < points.size() - 1; ++i) {
+        if (t >= points[i].x && t <= points[i + 1].x) {
+            double localT = (t - points[i].x) / (points[i + 1].x - points[i].x);
+            return points[i].y + localT * (points[i + 1].y - points[i].y);
+        }
+    }
+    return t;
+}
+
 Vec3 ApplyLevelsCurve(const Vec3& color, const PostProcessSettings& settings) {
+    if (settings.curveUseCustom && settings.curveControlPoints.size() >= 2) {
+        return {
+            Clamp(EvaluateCustomCurve(color.x, settings), 0.0, 1.0),
+            Clamp(EvaluateCustomCurve(color.y, settings), 0.0, 1.0),
+            Clamp(EvaluateCustomCurve(color.z, settings), 0.0, 1.0)
+        };
+    }
     const double blackPoint = std::min(settings.curveBlackPoint, settings.curveWhitePoint - 0.001);
     const double whitePoint = std::max(settings.curveWhitePoint, blackPoint + 0.001);
     const double gamma = std::max(settings.curveGamma, 0.05);
@@ -2266,6 +2286,13 @@ Vec3 ColorTemperatureToRgb(const double kelvin) {
 }
 
 Vec3 ApplyLevelsCurve(const Vec3& color, const PostProcessSettings& settings) {
+    if (settings.curveUseCustom && settings.curveControlPoints.size() >= 2) {
+        return {
+            Clamp(EvaluateCustomCurve(color.x, settings), 0.0, 1.0),
+            Clamp(EvaluateCustomCurve(color.y, settings), 0.0, 1.0),
+            Clamp(EvaluateCustomCurve(color.z, settings), 0.0, 1.0)
+        };
+    }
     const double blackPoint = std::min(settings.curveBlackPoint, settings.curveWhitePoint - 0.001);
     const double whitePoint = std::max(settings.curveWhitePoint, blackPoint + 0.001);
     const double gamma = std::max(settings.curveGamma, 0.05);
