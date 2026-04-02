@@ -896,6 +896,7 @@ bool AppWindow::RemoveSelectedEffect() {
     indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
     for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
         if (*it >= 0 && *it < static_cast<int>(scene_.effectStack.size())) {
+            EnableEffectStage(scene_, scene_.effectStack[*it], false);
             scene_.effectStack.erase(scene_.effectStack.begin() + *it);
         }
     }
@@ -912,6 +913,7 @@ bool AppWindow::RemoveEffectAtIndex(const int effectIndex, const std::string& ac
     }
 
     const Scene beforeDelete = scene_;
+    EnableEffectStage(scene_, scene_.effectStack[effectIndex], false);
     scene_.effectStack.erase(scene_.effectStack.begin() + effectIndex);
     for (int& selectedIndex : selectedEffects_) {
         if (selectedIndex > effectIndex) {

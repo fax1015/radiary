@@ -467,10 +467,10 @@ bool AppWindow::ResolveGpuPostProcessOutput(
         return false;
     }
     if (!EnsureGpuPostProcessInitialized()) {
-        return input.colorTexture != nullptr || input.colorSrv != nullptr;
+        return false;
     }
     if (!gpuPostProcess_.Render(scene, width, height, MakeGpuPostProcessInputs(input.colorSrv, randomSeedOverride))) {
-        return input.colorTexture != nullptr || input.colorSrv != nullptr;
+        return false;
     }
     output = gpuPostProcess_.Output();
     output.depthSrv = input.depthSrv;
@@ -961,10 +961,12 @@ bool AppWindow::PrepareGpuEffectChainState(
     };
     state.inputs = baseInputs;
 
-    for (const EffectStackStage stage : scene.effectStack) {
+    const auto applyStage = [&](const EffectStackStage stage) {
         if (!IsEffectStageEnabled(scene, stage)) {
-            continue;
+            return true;
         }
+
+        bool promotedStage = true;
 
         switch (stage) {
         case EffectStackStage::Denoiser:
@@ -1002,25 +1004,48 @@ bool AppWindow::PrepareGpuEffectChainState(
         case EffectStackStage::Saturation:
         case EffectStackStage::ToneMapping:
         case EffectStackStage::FilmGrain:
-        case EffectStackStage::Vignette:
+        case EffectStackStage::Vignette: {
             if (!ensureResolvedFrame()) {
                 return false;
             }
+            bool postProcessed = false;
             if (!ResolveGpuPostProcessOutput(
                     MakeIsolatedEffectScene(scene, stage),
                     width,
                     height,
+                    state.hasResolvedFrame ? state.resolvedFrame : GpuPassOutput{state.inputs.flameColor, nullptr, state.inputs.flameDepth, nullptr},
                     state.resolvedFrame,
-                    state.resolvedFrame)) {
+                    &postProcessed)) {
                 return false;
             }
+            promotedStage = postProcessed;
             syncResolvedInputs();
             break;
+        }
         default:
             break;
         }
 
-        state.finalStage = PreviewRenderStageForEffectStage(stage);
+        if (promotedStage) {
+            state.finalStage = PreviewRenderStageForEffectStage(stage);
+        } else if (state.hasResolvedFrame && state.finalStage == PreviewRenderStage::Base) {
+            state.finalStage = PreviewRenderStage::Composited;
+        }
+        return true;
+    };
+
+    if (scene.effectStack.empty()) {
+        for (const EffectStackStage stage : kAllEffectStages) {
+            if (!applyStage(stage)) {
+                return false;
+            }
+        }
+    } else {
+        for (const EffectStackStage stage : scene.effectStack) {
+            if (!applyStage(stage)) {
+                return false;
+            }
+        }
     }
     state.inputs = {};
     state.inputs.flameColor = state.resolvedFrame.colorSrv;

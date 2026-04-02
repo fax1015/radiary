@@ -1,0 +1,129 @@
+diff --git a/src/renderer/GpuPostProcess.cpp b/src/renderer/GpuPostProcess.cpp
+index e255f7b..fdbbd73 100644
+--- a/src/renderer/GpuPostProcess.cpp
++++ b/src/renderer/GpuPostProcess.cpp
+@@ -92,6 +92,7 @@ bool GpuPostProcess::Render(
+         ++frameCounter_;
+     }
+     const PostProcessSettings& pp = scene.postProcess;
++    const bool bloomEnabled = pp.enabled && pp.bloomIntensity > 0.001;
+     int targetOutputIndex = 0;
+     if (inputSrv == outputSrvs_[0]) {
+         targetOutputIndex = 1;
+@@ -104,7 +105,7 @@ bool GpuPostProcess::Render(
+     ID3D11UnorderedAccessView* nullUavs[1] = {nullptr};
+ 
+     // Bloom downsample pass
+-    if (pp.bloomIntensity > 0.001) {
++    if (bloomEnabled) {
+         int mipW = std::max(1, width / 2);
+         int mipH = std::max(1, height / 2);
+ 
+@@ -213,7 +214,7 @@ bool GpuPostProcess::Render(
+         const GpuViewportParams viewport = MakeGpuViewportParams(width, height);
+         params.width = viewport.width;
+         params.height = viewport.height;
+-        params.bloomIntensity = static_cast<float>(pp.bloomIntensity);
++        params.bloomIntensity = bloomEnabled ? static_cast<float>(pp.bloomIntensity) : 0.0f;
+         params.bloomThreshold = static_cast<float>(pp.bloomThreshold);
+         params.curvesEnabled = pp.curvesEnabled ? 1u : 0u;
+         params.sharpenEnabled = pp.sharpenEnabled ? 1u : 0u;
+@@ -225,8 +226,8 @@ bool GpuPostProcess::Render(
+         params.curveUseCustom = pp.curveUseCustom ? 1u : 0u;
+         params.curvePointCount = static_cast<std::uint32_t>(std::min<std::size_t>(pp.curveControlPoints.size(), 8u));
+         for (std::size_t i = 0; i < pp.curveControlPoints.size() && i < 8; i++) {
+-            params.curvePointsX[i] = static_cast<float>(pp.curveControlPoints[i].x);
+-            params.curvePointsY[i] = static_cast<float>(pp.curveControlPoints[i].y);
++            params.curvePoints[i * 2]     = static_cast<float>(pp.curveControlPoints[i].x);
++            params.curvePoints[i * 2 + 1] = static_cast<float>(pp.curveControlPoints[i].y);
+         }
+         params.sharpenAmount = static_cast<float>(pp.sharpenAmount);
+         params.hueShiftDegrees = static_cast<float>(pp.hueShiftDegrees);
+@@ -235,7 +236,7 @@ bool GpuPostProcess::Render(
+         params.vignetteIntensity = static_cast<float>(pp.vignetteIntensity);
+         params.vignetteRoundness = static_cast<float>(pp.vignetteRoundness);
+         params.vignetteEnabled = pp.vignetteEnabled ? 1u : 0u;
+-        params.toneMappingEnabled = pp.toneMappingEnabled ? 1u : 0u;
++        params.toneMappingEnabled = (pp.toneMappingEnabled && pp.acesToneMap) ? 1u : 0u;
+         params.filmGrainEnabled = pp.filmGrainEnabled ? 1u : 0u;
+         params.colorTemperatureEnabled = pp.colorTemperatureEnabled ? 1u : 0u;
+         params.filmGrain = static_cast<float>(pp.filmGrain);
+@@ -253,7 +254,7 @@ bool GpuPostProcess::Render(
+             return false;
+         }
+ 
+-        ID3D11ShaderResourceView* srvs[] = {inputSrv, (pp.bloomIntensity > 0.001) ? bloomSrvs_[0] : nullptr};
++        ID3D11ShaderResourceView* srvs[] = {inputSrv, bloomEnabled ? bloomSrvs_[0] : nullptr};
+         ID3D11UnorderedAccessView* uavs[] = {outputUavs_[targetOutputIndex]};
+         deviceContext_->CSSetConstantBuffers(0, 1, constantBuffers);
+         deviceContext_->CSSetShaderResources(0, 2, srvs);
+diff --git a/src/renderer/GpuPostProcess.h b/src/renderer/GpuPostProcess.h
+index 0cba962..468ce24 100644
+--- a/src/renderer/GpuPostProcess.h
++++ b/src/renderer/GpuPostProcess.h
+@@ -43,8 +43,7 @@ private:
+         float curveWhitePoint = 1.0f;
+         float curveGamma = 1.0f;
+         std::uint32_t curveUseCustom = 0;
+-        float curvePointsX[8] = {};
+-        float curvePointsY[8] = {};
++        float curvePoints[16] = {};
+         std::uint32_t curvePointCount = 0;
+         float sharpenAmount = 0.0f;
+         float hueShiftDegrees = 0.0f;
+@@ -65,7 +64,6 @@ private:
+         std::uint32_t randomSeed = 0;
+         std::uint32_t mipWidth = 0;
+         std::uint32_t mipHeight = 0;
+-        float padding[4] {};
+     };
+ 
+     static constexpr int kBloomMipCount = 5;
+diff --git a/src/renderer/shaders/GpuPostProcess.hlsl b/src/renderer/shaders/GpuPostProcess.hlsl
+index f984e65..190c1aa 100644
+--- a/src/renderer/shaders/GpuPostProcess.hlsl
++++ b/src/renderer/shaders/GpuPostProcess.hlsl
+@@ -14,10 +14,7 @@ cbuffer PostProcessParams : register(b0)
+     float CurveWhitePoint;
+     float CurveGamma;
+     uint CurveUseCustom;
+-    float2 CurvePointsX;       // x,y for points 0-1
+-    float2 CurvePointsY;      // x,y for points 2-3
+-    float2 CurvePointsX2;     // x,y for points 4-5
+-    float2 CurvePointsY2;     // x,y for points 6-7
++    float CurvePoints[16];
+     uint CurvePointCount;
+     float SharpenAmount;
+     float HueShiftDegrees;
+@@ -35,7 +32,6 @@ cbuffer PostProcessParams : register(b0)
+     uint RandomSeed;
+     uint MipWidth;
+     uint MipHeight;
+-    float4 Padding;
+ };
+ 
+ Texture2D<float4> InputTexture : register(t0);
+@@ -115,18 +111,15 @@ float EvaluateCustomCurve(float t)
+ {
+     if (CurvePointCount < 2) return t;
+     
+-    // Collect points into array
+     float2 points[8];
+-    points[0] = float2(0.0, 0.0);
+-    points[1] = CurvePointsX;
+-    points[2] = CurvePointsY;
+-    points[3] = float2(CurvePointsX.y, CurvePointsX2.x);
+-    points[4] = float2(CurvePointsX2.y, CurvePointsY2.x);
+-    points[5] = float2(CurvePointsY2.y, 1.0);
++    [unroll] for (uint pi = 0; pi < 8; pi++) {
++        points[pi] = float2(CurvePoints[pi * 2], CurvePoints[pi * 2 + 1]);
++    }
++
+     // Use linear interpolation between points
+     for (uint i = 0; i < CurvePointCount - 1; i++) {
+         if (t >= points[i].x && t <= points[i + 1].x) {
+-            float localT = (t - points[i].x) / (points[i + 1].x - points[i].x);
++            float localT = (t - points[i].x) / max(0.0001, points[i + 1].x - points[i].x);
+             return lerp(points[i].y, points[i + 1].y, localT);
+         }
+     }

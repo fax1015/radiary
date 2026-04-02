@@ -43,8 +43,7 @@ private:
         float curveWhitePoint = 1.0f;
         float curveGamma = 1.0f;
         std::uint32_t curveUseCustom = 0;
-        float curvePointsX[8] = {};
-        float curvePointsY[8] = {};
+        float curvePoints[16] = {};
         std::uint32_t curvePointCount = 0;
         float sharpenAmount = 0.0f;
         float hueShiftDegrees = 0.0f;
@@ -65,7 +64,6 @@ private:
         std::uint32_t randomSeed = 0;
         std::uint32_t mipWidth = 0;
         std::uint32_t mipHeight = 0;
-        float padding[4] {};
     };
 
     static constexpr int kBloomMipCount = 5;

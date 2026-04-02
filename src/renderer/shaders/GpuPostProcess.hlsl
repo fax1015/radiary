@@ -12,10 +12,7 @@ cbuffer PostProcessParams : register(b0)
     float CurveWhitePoint;
     float CurveGamma;
     uint CurveUseCustom;
-    float2 CurvePointsX;       // x,y for points 0-1
-    float2 CurvePointsY;      // x,y for points 2-3
-    float2 CurvePointsX2;     // x,y for points 4-5
-    float2 CurvePointsY2;     // x,y for points 6-7
+    float4 CurvePoints[4];
     uint CurvePointCount;
     float SharpenAmount;
     float HueShiftDegrees;
@@ -36,7 +33,6 @@ cbuffer PostProcessParams : register(b0)
     uint RandomSeed;
     uint MipWidth;
     uint MipHeight;
-    float4 Padding;
 };
 
 Texture2D<float4> InputTexture : register(t0);
@@ -115,18 +111,20 @@ float EvaluateCustomCurve(float t)
 {
     if (CurvePointCount < 2) return t;
     
-    // Collect points into array
     float2 points[8];
-    points[0] = float2(0.0, 0.0);
-    points[1] = CurvePointsX;
-    points[2] = CurvePointsY;
-    points[3] = float2(CurvePointsX.y, CurvePointsX2.x);
-    points[4] = float2(CurvePointsX2.y, CurvePointsY2.x);
-    points[5] = float2(CurvePointsY2.y, 1.0);
+    [unroll]
+    for (uint pi = 0; pi < 8; pi++) {
+        const uint packedIndex = pi / 2;
+        const uint componentIndex = (pi % 2) * 2;
+        points[pi] = float2(
+            CurvePoints[packedIndex][componentIndex],
+            CurvePoints[packedIndex][componentIndex + 1]);
+    }
+
     // Use linear interpolation between points
     for (uint i = 0; i < CurvePointCount - 1; i++) {
         if (t >= points[i].x && t <= points[i + 1].x) {
-            float localT = (t - points[i].x) / (points[i + 1].x - points[i].x);
+            float localT = (t - points[i].x) / max(0.0001, points[i + 1].x - points[i].x);
             return lerp(points[i].y, points[i + 1].y, localT);
         }
     }

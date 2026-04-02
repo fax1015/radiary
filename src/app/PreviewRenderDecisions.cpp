@@ -60,9 +60,9 @@ PreviewRenderStage DetermineResolvedRenderStage(
 
 PreviewRenderStage DetermineResolvedRenderStage(const Scene& scene) {
     PreviewRenderStage finalStage = PreviewRenderStage::Base;
-    for (const EffectStackStage stage : scene.effectStack) {
+    const auto applyStage = [&](const EffectStackStage stage) {
         if (!IsEffectStageEnabled(scene, stage)) {
-            continue;
+            return;
         }
         switch (stage) {
         case EffectStackStage::Denoiser:
@@ -85,6 +85,16 @@ PreviewRenderStage DetermineResolvedRenderStage(const Scene& scene) {
             break;
         default:
             break;
+        }
+    };
+
+    if (scene.effectStack.empty()) {
+        for (const EffectStackStage stage : kAllEffectStages) {
+            applyStage(stage);
+        }
+    } else {
+        for (const EffectStackStage stage : scene.effectStack) {
+            applyStage(stage);
         }
     }
     return finalStage;

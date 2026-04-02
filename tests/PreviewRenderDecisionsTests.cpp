@@ -38,4 +38,13 @@ RADIARY_TEST(PreviewRenderDecisionsMapContentAndResolvedStage) {
     RADIARY_CHECK_EQ(DetermineResolvedRenderStage(true, false, false), PreviewRenderStage::Denoised);
     RADIARY_CHECK_EQ(DetermineResolvedRenderStage(true, true, false), PreviewRenderStage::DepthOfField);
     RADIARY_CHECK_EQ(DetermineResolvedRenderStage(true, true, true), PreviewRenderStage::PostProcessed);
+
+    Scene legacyScene = CreateDefaultScene();
+    legacyScene.effectStack.clear();
+    legacyScene.depthOfField.enabled = true;
+    legacyScene.postProcess.enabled = true;
+    RADIARY_CHECK_EQ(DetermineResolvedRenderStage(legacyScene), PreviewRenderStage::PostProcessed);
+
+    legacyScene.postProcess.enabled = false;
+    RADIARY_CHECK_EQ(DetermineResolvedRenderStage(legacyScene), PreviewRenderStage::DepthOfField);
 }
