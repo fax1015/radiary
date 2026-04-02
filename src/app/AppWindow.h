@@ -67,6 +67,13 @@ private:
         Path
     };
 
+    enum class KeyframeListSortColumn {
+        Frame,
+        Type,
+        Layer,
+        Easing
+    };
+
     enum class PreviewProgressPhase {
         Dirty,
         Queued,
@@ -383,6 +390,8 @@ private:
     PreviewProgressState previewProgress_ {};
     std::chrono::steady_clock::time_point lastGpuPreviewDispatchAt_ {};
     int selectedTimelineKeyframe_ = -1;
+    KeyframeListSortColumn keyframeListSortColumn_ = KeyframeListSortColumn::Frame;
+    bool keyframeListSortAscending_ = true;
     bool timelineDraggingPlayhead_ = false;
     bool timelineDraggingKeyframe_ = false;
     bool timelineDraggingView_ = false;
@@ -703,6 +712,9 @@ private:
     void ClearLayerSelections();
     void SetLayerSelection(InspectorTarget target, std::vector<int> indices, int primaryIndex, int anchorIndex);
     void AssignCurrentLayerToKeyframe(SceneKeyframe& keyframe) const;
+    std::pair<KeyframeOwnerType, int> CurrentKeyframeOwner() const;
+    Color MarkerColorForKeyframeOwner(KeyframeOwnerType ownerType, int ownerIndex) const;
+    int EffectIndexForKeyframeOwner(int ownerIndex) const;
     void AdjustKeyframeOwnerIndicesForInsertedLayer(InspectorTarget target, int insertedIndex);
     void AdjustKeyframeOwnerIndicesForRemovedLayers(InspectorTarget target, const std::vector<int>& removedIndices);
     void SelectSingleLayer(InspectorTarget target, int index);
@@ -722,12 +734,15 @@ private:
     bool RemoveEffectAtIndex(int effectIndex, const std::string& actionLabel);
     bool CanRemoveSelectedOrCurrentKeyframe() const;
     bool RemoveSelectedOrCurrentKeyframe();
+    bool HasKeyframesForOwner(KeyframeOwnerType ownerType, int ownerIndex) const;
     void BeginLayerRename(RenameTarget target, int index);
     void FinishLayerRename(bool commit);
     void SetTimelineFrame(double frame, bool captureUndo);
     void RefreshTimelinePose();
     void AutoKeyCurrentFrame();
+    void AutoKeyCurrentFrame(KeyframeOwnerType ownerType, int ownerIndex);
     void SyncCurrentKeyframeFromScene();
+    void SyncCurrentKeyframeFromScene(KeyframeOwnerType ownerType, int ownerIndex);
 
     bool SaveSceneToDialog(bool saveAs);
     bool LoadSceneFromDialog();

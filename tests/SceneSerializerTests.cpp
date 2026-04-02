@@ -29,14 +29,26 @@ RADIARY_TEST(SceneSerializerRoundTripPreservesSceneAndPoseSettings) {
     scene.timelineSeconds = -1.0;
     scene.denoiser.enabled = true;
     scene.denoiser.strength = 0.72;
+    scene.postProcess.curveUseCustom = true;
+    scene.postProcess.curveControlPoints = {{0.0, 0.0}, {0.33, 0.24}, {0.66, 0.78}, {1.0, 1.0}};
+    scene.postProcess.hueShiftSaturation = 1.4;
+    scene.postProcess.filmGrainScale = 0.65;
+    scene.postProcess.saturationVibrance = 0.35;
 
     SceneKeyframe keyframe;
     keyframe.frame = 12;
+    keyframe.ownerType = KeyframeOwnerType::Effect;
+    keyframe.ownerIndex = static_cast<int>(EffectStackStage::Curves);
     keyframe.pose = CaptureScenePose(scene);
     keyframe.pose.mode = SceneMode::Hybrid;
     keyframe.pose.gridVisible = true;
     keyframe.pose.denoiser.enabled = true;
     keyframe.pose.denoiser.strength = 0.19;
+    keyframe.pose.postProcess.curveUseCustom = true;
+    keyframe.pose.postProcess.curveControlPoints = {{0.0, 0.0}, {0.2, 0.12}, {0.8, 0.92}, {1.0, 1.0}};
+    keyframe.pose.postProcess.hueShiftSaturation = 1.7;
+    keyframe.pose.postProcess.filmGrainScale = 0.42;
+    keyframe.pose.postProcess.saturationVibrance = 0.61;
     scene.keyframes = {keyframe};
 
     const std::filesystem::path path = MakeTempScenePath();
@@ -55,10 +67,26 @@ RADIARY_TEST(SceneSerializerRoundTripPreservesSceneAndPoseSettings) {
     RADIARY_CHECK_EQ(loaded->previewIterations, scene.previewIterations);
     RADIARY_CHECK_EQ(loaded->denoiser.enabled, scene.denoiser.enabled);
     RADIARY_CHECK_NEAR(loaded->denoiser.strength, scene.denoiser.strength, 1e-9);
+    RADIARY_CHECK_EQ(loaded->postProcess.curveUseCustom, scene.postProcess.curveUseCustom);
+    RADIARY_CHECK_EQ(loaded->postProcess.curveControlPoints.size(), scene.postProcess.curveControlPoints.size());
+    RADIARY_CHECK_NEAR(loaded->postProcess.curveControlPoints[1].x, scene.postProcess.curveControlPoints[1].x, 1e-9);
+    RADIARY_CHECK_NEAR(loaded->postProcess.curveControlPoints[2].y, scene.postProcess.curveControlPoints[2].y, 1e-9);
+    RADIARY_CHECK_NEAR(loaded->postProcess.hueShiftSaturation, scene.postProcess.hueShiftSaturation, 1e-9);
+    RADIARY_CHECK_NEAR(loaded->postProcess.filmGrainScale, scene.postProcess.filmGrainScale, 1e-9);
+    RADIARY_CHECK_NEAR(loaded->postProcess.saturationVibrance, scene.postProcess.saturationVibrance, 1e-9);
     RADIARY_CHECK_EQ(loaded->keyframes.size(), std::size_t{1});
+    RADIARY_CHECK_EQ(loaded->keyframes.front().ownerType, keyframe.ownerType);
+    RADIARY_CHECK_EQ(loaded->keyframes.front().ownerIndex, keyframe.ownerIndex);
     RADIARY_CHECK_EQ(loaded->keyframes.front().pose.gridVisible, keyframe.pose.gridVisible);
     RADIARY_CHECK_EQ(loaded->keyframes.front().pose.denoiser.enabled, keyframe.pose.denoiser.enabled);
     RADIARY_CHECK_NEAR(loaded->keyframes.front().pose.denoiser.strength, keyframe.pose.denoiser.strength, 1e-9);
+    RADIARY_CHECK_EQ(loaded->keyframes.front().pose.postProcess.curveUseCustom, keyframe.pose.postProcess.curveUseCustom);
+    RADIARY_CHECK_EQ(loaded->keyframes.front().pose.postProcess.curveControlPoints.size(), keyframe.pose.postProcess.curveControlPoints.size());
+    RADIARY_CHECK_NEAR(loaded->keyframes.front().pose.postProcess.curveControlPoints[1].x, keyframe.pose.postProcess.curveControlPoints[1].x, 1e-9);
+    RADIARY_CHECK_NEAR(loaded->keyframes.front().pose.postProcess.curveControlPoints[2].y, keyframe.pose.postProcess.curveControlPoints[2].y, 1e-9);
+    RADIARY_CHECK_NEAR(loaded->keyframes.front().pose.postProcess.hueShiftSaturation, keyframe.pose.postProcess.hueShiftSaturation, 1e-9);
+    RADIARY_CHECK_NEAR(loaded->keyframes.front().pose.postProcess.filmGrainScale, keyframe.pose.postProcess.filmGrainScale, 1e-9);
+    RADIARY_CHECK_NEAR(loaded->keyframes.front().pose.postProcess.saturationVibrance, keyframe.pose.postProcess.saturationVibrance, 1e-9);
     RADIARY_CHECK_NEAR(loaded->timelineSeconds, TimelineSecondsForFrame(*loaded, loaded->timelineFrame), 1e-9);
 }
 

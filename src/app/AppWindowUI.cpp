@@ -1504,13 +1504,7 @@ void AppWindow::DrawEasingPanel() {
         return;
     }
 
-    const bool hasSelectedLayer = HasSelectedLayer();
-    const KeyframeOwnerType currentOwnerType = !hasSelectedLayer
-        ? KeyframeOwnerType::Scene
-        : (inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform);
-    const int currentOwnerIndex = !hasSelectedLayer
-        ? 0
-        : (inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform);
+    const auto [currentOwnerType, currentOwnerIndex] = CurrentKeyframeOwner();
     const int editableKeyframeIndex =
         selectedTimelineKeyframe_ >= 0
         ? selectedTimelineKeyframe_
@@ -1908,6 +1902,7 @@ void AppWindow::DrawKeyframeListPanel() {
 
     const auto ownerLabel = [](const KeyframeOwnerType ownerType) {
         switch (ownerType) {
+        case KeyframeOwnerType::Effect: return "Effect";
         case KeyframeOwnerType::Path: return "Path";
         case KeyframeOwnerType::Scene: return "Scene";
         default: return "Flame";
@@ -1916,6 +1911,9 @@ void AppWindow::DrawKeyframeListPanel() {
     const auto layerNameForKeyframe = [&](const SceneKeyframe& keyframe) {
         if (keyframe.ownerType == KeyframeOwnerType::Scene) {
             return std::string("Scene");
+        }
+        if (keyframe.ownerType == KeyframeOwnerType::Effect) {
+            return std::string(EffectStageDisplayName(static_cast<EffectStackStage>(keyframe.ownerIndex)));
         }
         if (keyframe.ownerType == KeyframeOwnerType::Path) {
             if (keyframe.ownerIndex >= 0 && keyframe.ownerIndex < static_cast<int>(scene_.paths.size())) {
@@ -1928,70 +1926,239 @@ void AppWindow::DrawKeyframeListPanel() {
         }
         return std::string("Layer ") + std::to_string(keyframe.ownerIndex + 1);
     };
+    const auto easingLabelForKeyframe = [](const SceneKeyframe& keyframe) {
+        return TitleCaseFromSnakeCase(ToString(keyframe.easing));
+    };
+    std::vector<int> sortedKeyframeIndices(scene_.keyframes.size());
+    for (std::size_t index = 0; index < sortedKeyframeIndices.size(); ++index) {
+        sortedKeyframeIndices[index] = static_cast<int>(index);
+    }
+    const auto compareKeyframes = [&](const int leftIndex, const int rightIndex) {
+        const SceneKeyframe& left = scene_.keyframes[static_cast<std::size_t>(leftIndex)];
+        const SceneKeyframe& right = scene_.keyframes[static_cast<std::size_t>(rightIndex)];
+        const auto compareStrings = [&](const std::string& leftValue, const std::string& rightValue) {
+            if (leftValue == rightValue) {
+                return 0;
+            }
+            return leftValue < rightValue ? -1 : 1;
+        };
+        int comparison = 0;
+        switch (keyframeListSortColumn_) {
+        case KeyframeListSortColumn::Type:
+            comparison = compareStrings(ownerLabel(left.ownerType), ownerLabel(right.ownerType));
+            break;
+        case KeyframeListSortColumn::Layer:
+            comparison = compareStrings(layerNameForKeyframe(left), layerNameForKeyframe(right));
+            break;
+        case KeyframeListSortColumn::Easing:
+            comparison = compareStrings(easingLabelForKeyframe(left), easingLabelForKeyframe(right));
+            break;
+        case KeyframeListSortColumn::Frame:
+        default:
+            if (left.frame != right.frame) {
+                comparison = left.frame < right.frame ? -1 : 1;
+            }
+            break;
+        }
+        if (comparison == 0 && left.frame != right.frame) {
+            comparison = left.frame < right.frame ? -1 : 1;
+        }
+        if (comparison == 0) {
+            comparison = leftIndex < rightIndex ? -1 : (leftIndex > rightIndex ? 1 : 0);
+        }
+        return keyframeListSortAscending_ ? comparison < 0 : comparison > 0;
+    };
+    std::stable_sort(sortedKeyframeIndices.begin(), sortedKeyframeIndices.end(), compareKeyframes);
 
     const UiTheme& theme = GetUiTheme();
     const ImU32 selectedRowBg = ImGui::GetColorU32(WithAlpha(theme.accentSurface, 0.94f));
     const ImU32 hoveredRowBg = ImGui::GetColorU32(WithAlpha(theme.frameBackgroundHover, 0.72f));
     const ImVec4 transparentHeader(0.0f, 0.0f, 0.0f, 0.0f);
 
-    if (ImGui::BeginTable(
-            "##keyframe_list_table",
-            4,
-            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
-            ImVec2(0.0f, 0.0f))) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 4.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme.roundingMedium);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.panelBackgroundInset);
+    ImGui::PushStyleColor(ImGuiCol_Border, WithAlpha(theme.borderStrong, 0.72f));
+    const bool keyframeListVisible = ImGui::BeginChild("##keyframe_list_container", ImVec2(0.0f, 0.0f), true);
+    if (keyframeListVisible) {
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(3.0f, 3.0f));
+        if (ImGui::BeginTable(
+                "##keyframe_list_table",
+                4,
+                ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_PadOuterX,
+                ImVec2(0.0f, 0.0f))) {
         ImGui::TableSetupColumn("Frame", ImGuiTableColumnFlags_WidthFixed, 64.0f);
         ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
         ImGui::TableSetupColumn("Layer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Easing", ImGuiTableColumnFlags_WidthFixed, 104.0f);
-        ImGui::TableHeadersRow();
+        const float compactHeaderHeight = ImGui::GetTextLineHeight() + 6.0f;
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers, compactHeaderHeight);
+        const auto drawSortHeader = [&](const int columnIndex, const char* label, const KeyframeListSortColumn sortColumn) {
+            ImGui::TableSetColumnIndex(columnIndex);
+            ImGui::PushID(columnIndex);
+            const float textInsetX = 8.0f;
+            const float fillInsetX = 0;
+            const float fillInsetY = 1.0f;
+            const ImVec2 size(
+                std::max(0.0f, ImGui::GetContentRegionAvail().x),
+                compactHeaderHeight);
+            const bool pressed = ImGui::InvisibleButton("##sort_header_hit", size);
+            const ImRect headerRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            const bool hovered = ImGui::IsItemHovered();
+            if (pressed) {
+                if (keyframeListSortColumn_ == sortColumn) {
+                    keyframeListSortAscending_ = !keyframeListSortAscending_;
+                } else {
+                    keyframeListSortColumn_ = sortColumn;
+                    keyframeListSortAscending_ = true;
+                }
+            }
+            if (keyframeListSortColumn_ == sortColumn || hovered) {
+                const ImRect fillRect(
+                    ImVec2(headerRect.Min.x + fillInsetX, headerRect.Min.y + fillInsetY),
+                    ImVec2(headerRect.Max.x - fillInsetX, headerRect.Max.y - fillInsetY));
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    fillRect.Min,
+                    fillRect.Max,
+                    ImGui::GetColorU32(keyframeListSortColumn_ == sortColumn ? theme.frameBackgroundActive : theme.frameBackgroundHover),
+                    theme.roundingSmall);
+            }
+            const ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
+            const ImVec2 textSize = ImGui::CalcTextSize(label);
+            const ImVec2 textPos(
+                headerRect.Min.x + textInsetX,
+                headerRect.Min.y + std::max(0.0f, (headerRect.GetHeight() - textSize.y) * 0.5f));
+            ImGui::GetWindowDrawList()->AddText(textPos, textColor, label);
+            if (keyframeListSortColumn_ == sortColumn) {
+                const float centerY = (headerRect.Min.y + headerRect.Max.y) * 0.5f;
+                const float arrowHalfWidth = 4.0f;
+                const float arrowHalfHeight = 3.0f;
+                const float arrowCenterX = headerRect.Max.x - 12.0f;
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                const ImU32 arrowColor = ImGui::GetColorU32(ImGuiCol_Text);
+                if (keyframeListSortAscending_) {
+                    drawList->AddTriangleFilled(
+                        ImVec2(arrowCenterX, centerY - arrowHalfHeight),
+                        ImVec2(arrowCenterX - arrowHalfWidth, centerY + arrowHalfHeight),
+                        ImVec2(arrowCenterX + arrowHalfWidth, centerY + arrowHalfHeight),
+                        arrowColor);
+                } else {
+                    drawList->AddTriangleFilled(
+                        ImVec2(arrowCenterX - arrowHalfWidth, centerY - arrowHalfHeight),
+                        ImVec2(arrowCenterX + arrowHalfWidth, centerY - arrowHalfHeight),
+                        ImVec2(arrowCenterX, centerY + arrowHalfHeight),
+                        arrowColor);
+                }
+            }
+            ImGui::PopID();
+        };
+        drawSortHeader(0, "Frame", KeyframeListSortColumn::Frame);
+        drawSortHeader(1, "Type", KeyframeListSortColumn::Type);
+        drawSortHeader(2, "Layer", KeyframeListSortColumn::Layer);
+        drawSortHeader(3, "Easing", KeyframeListSortColumn::Easing);
 
-        for (std::size_t index = 0; index < scene_.keyframes.size(); ++index) {
-            const SceneKeyframe& keyframe = scene_.keyframes[index];
-            const bool selected = static_cast<int>(index) == selectedTimelineKeyframe_;
+        for (const int keyframeIndex : sortedKeyframeIndices) {
+            const SceneKeyframe& keyframe = scene_.keyframes[static_cast<std::size_t>(keyframeIndex)];
+            const bool selected = keyframeIndex == selectedTimelineKeyframe_;
 
             ImGui::TableNextRow();
-            ImGui::PushID(static_cast<int>(index));
+            ImGui::PushID(keyframeIndex);
             ImGui::TableSetColumnIndex(0);
+            const ImGuiStyle& style = ImGui::GetStyle();
             const std::string frameLabel = std::to_string(keyframe.frame);
             ImGui::PushStyleColor(ImGuiCol_Header, transparentHeader);
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, transparentHeader);
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, transparentHeader);
-            // Keep the row tint in the table background channel so column resize guides stay visible.
-            PushMonospaceFont();
-            const bool rowPressed = ImGui::Selectable(frameLabel.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
-            PopMonospaceFont();
+            const bool rowPressed = ImGui::Selectable("##keyframe_row_hit", false, ImGuiSelectableFlags_SpanAllColumns);
             const bool rowHovered = ImGui::IsItemHovered();
+            const ImRect rowRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             ImGui::PopStyleColor(3);
-            if (selected) {
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, selectedRowBg);
-            } else if (rowHovered) {
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, hoveredRowBg);
-            }
             if (rowPressed) {
-                selectedTimelineKeyframe_ = static_cast<int>(index);
-                if (keyframe.ownerType == KeyframeOwnerType::Path) {
+                selectedTimelineKeyframe_ = keyframeIndex;
+                if (keyframe.ownerType == KeyframeOwnerType::Scene) {
+                    ClearLayerSelections();
+                    ClearEffectSelections();
+                } else if (keyframe.ownerType == KeyframeOwnerType::Effect) {
+                    ClearLayerSelections();
+                    const int effectIndex = EffectIndexForKeyframeOwner(keyframe.ownerIndex);
+                    if (effectIndex >= 0) {
+                        SelectSingleEffect(effectIndex);
+                    } else {
+                        ClearEffectSelections();
+                    }
+                } else if (keyframe.ownerType == KeyframeOwnerType::Path) {
                     SelectSingleLayer(InspectorTarget::PathLayer, keyframe.ownerIndex);
                 } else {
                     SelectSingleLayer(InspectorTarget::FlameLayer, keyframe.ownerIndex);
                 }
                 SetTimelineFrame(static_cast<double>(keyframe.frame), false);
             }
+            const auto drawRowFillForCurrentColumn = [&](const bool roundLeft, const bool roundRight) {
+                if (!selected && !rowHovered) {
+                    return;
+                }
+                const ImVec2 cellCursor = ImGui::GetCursorScreenPos();
+                const float cellWidth = ImGui::GetContentRegionAvail().x + style.CellPadding.x * 2.0f;
+                ImRect cellRect(
+                    ImVec2(cellCursor.x - style.CellPadding.x, rowRect.Min.y + 1.0f),
+                    ImVec2(cellCursor.x - style.CellPadding.x + cellWidth, rowRect.Max.y - 1.0f));
+                if (roundLeft) {
+                    cellRect.Min.x += 1.0f;
+                }
+                if (roundRight) {
+                    cellRect.Max.x -= 1.0f;
+                }
+                ImDrawFlags roundingFlags = ImDrawFlags_None;
+                if (roundLeft && roundRight) {
+                    roundingFlags = ImDrawFlags_RoundCornersAll;
+                } else if (roundLeft) {
+                    roundingFlags = ImDrawFlags_RoundCornersLeft;
+                } else if (roundRight) {
+                    roundingFlags = ImDrawFlags_RoundCornersRight;
+                }
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    cellRect.Min,
+                    cellRect.Max,
+                    selected ? selectedRowBg : hoveredRowBg,
+                    roundingFlags == ImDrawFlags_None ? 0.0f : theme.roundingSmall,
+                    roundingFlags);
+            };
+            drawRowFillForCurrentColumn(true, false);
+            PushMonospaceFont();
+            ImFont* monospaceFont = ImGui::GetFont();
+            const float monospaceFontSize = ImGui::GetFontSize();
+            PopMonospaceFont();
+            const ImU32 frameTextColor = ImGui::GetColorU32(ImGuiCol_Text);
+            const ImVec2 frameTextSize = monospaceFont->CalcTextSizeA(monospaceFontSize, FLT_MAX, 0.0f, frameLabel.c_str());
+            const ImVec2 frameTextPos(
+                rowRect.Min.x + style.FramePadding.x,
+                rowRect.Min.y + std::max(0.0f, (rowRect.GetHeight() - frameTextSize.y) * 0.5f));
+            ImGui::GetWindowDrawList()->AddText(monospaceFont, monospaceFontSize, frameTextPos, frameTextColor, frameLabel.c_str());
 
             ImGui::TableSetColumnIndex(1);
+            drawRowFillForCurrentColumn(false, false);
             ImGui::TextUnformatted(ownerLabel(keyframe.ownerType));
 
             ImGui::TableSetColumnIndex(2);
+            drawRowFillForCurrentColumn(false, false);
             const std::string layerLabel = layerNameForKeyframe(keyframe);
             ImGui::TextUnformatted(layerLabel.c_str());
 
             ImGui::TableSetColumnIndex(3);
-            const std::string easingLabel = TitleCaseFromSnakeCase(ToString(keyframe.easing));
+            drawRowFillForCurrentColumn(false, true);
+            const std::string easingLabel = easingLabelForKeyframe(keyframe);
             ImGui::TextUnformatted(easingLabel.c_str());
             ImGui::PopID();
         }
 
-        ImGui::EndTable();
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleVar();
     }
+    ImGui::EndChild();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
 
     ImGui::End();
 }
@@ -2019,57 +2186,86 @@ void AppWindow::DrawHistoryPanel() {
 
     const std::size_t undoCount = undoStack_.size();
     const std::size_t redoCount = redoStack_.size();
-    if (undoCount == 0 && redoCount == 0) {
-        ImGui::PushID("history_empty_current");
-        ImGui::Selectable(currentHistoryLabel_.c_str(), true);
-        ImGui::PopID();
-        ImGui::End();
-        return;
-    }
-
     bool historyJumped = false;
-    ImGui::BeginChild("##history_entries", ImVec2(0.0f, 0.0f), true);
-    for (std::size_t index = 0; index < undoCount; ++index) {
-        ImGui::PushID(static_cast<int>(index));
-        const bool selected = false;
-        if (ImGui::Selectable(undoStack_[index].label.c_str(), selected)) {
-            const std::size_t undoSteps = undoCount - index;
-            for (std::size_t step = 0; step < undoSteps && CanUndo(); ++step) {
-                Undo();
+    const UiTheme& theme = GetUiTheme();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 6.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme.roundingMedium);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, theme.roundingSmall);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 4.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.panelBackgroundInset);
+    ImGui::PushStyleColor(ImGuiCol_Border, WithAlpha(theme.borderStrong, 0.72f));
+    const bool historyVisible = ImGui::BeginChild("##history_entries", ImVec2(0.0f, 0.0f), true);
+    if (historyVisible) {
+        const auto drawHistoryEntry = [&](const char* id, const std::string& label, const bool selected, const bool dimmed) {
+            const ImGuiStyle& style = ImGui::GetStyle();
+            const ImVec2 size(
+                std::max(0.0f, ImGui::GetContentRegionAvail().x),
+                ImGui::GetTextLineHeight() + style.FramePadding.y * 2.0f);
+            const bool pressed = ImGui::InvisibleButton(id, size);
+            const ImRect rect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            const bool hovered = ImGui::IsItemHovered();
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            if (selected || hovered) {
+                const ImU32 fillColor = ImGui::GetColorU32(
+                    selected
+                        ? ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive)
+                        : ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
+                drawList->AddRectFilled(rect.Min, rect.Max, fillColor, theme.roundingSmall);
             }
-            historyJumped = true;
-            ImGui::PopID();
-            break;
-        }
-        ImGui::PopID();
-    }
+            const ImU32 textColor = ImGui::GetColorU32(
+                dimmed
+                    ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
+                    : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+            const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+            const ImVec2 textPos(
+                rect.Min.x + style.FramePadding.x,
+                rect.Min.y + std::max(0.0f, (rect.GetHeight() - textSize.y) * 0.5f));
+            drawList->AddText(textPos, textColor, label.c_str());
+            return pressed;
+        };
 
-    if (!historyJumped) {
-        ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
-        ImGui::PushID("current");
-        ImGui::Selectable(currentHistoryLabel_.c_str(), true);
-        ImGui::PopID();
-        ImGui::PopStyleColor();
-
-        for (std::size_t displayIndex = 0; displayIndex < redoCount; ++displayIndex) {
-            const std::size_t redoIndex = redoCount - 1 - displayIndex;
-            ImGui::PushID(static_cast<int>(redoIndex + undoCount + 1));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            if (ImGui::Selectable(redoStack_[redoIndex].label.c_str(), false)) {
-                const std::size_t redoSteps = displayIndex + 1;
-                for (std::size_t step = 0; step < redoSteps && CanRedo(); ++step) {
-                    Redo();
+        if (undoCount == 0 && redoCount == 0) {
+            drawHistoryEntry("##history_empty_current", currentHistoryLabel_, true, false);
+        } else {
+            for (std::size_t index = 0; index < undoCount; ++index) {
+                ImGui::PushID(static_cast<int>(index));
+                if (drawHistoryEntry("##history_undo_entry", undoStack_[index].label, false, false)) {
+                    const std::size_t undoSteps = undoCount - index;
+                    for (std::size_t step = 0; step < undoSteps && CanUndo(); ++step) {
+                        Undo();
+                    }
+                    historyJumped = true;
+                    ImGui::PopID();
+                    break;
                 }
-                historyJumped = true;
-                ImGui::PopStyleColor();
                 ImGui::PopID();
-                break;
             }
-            ImGui::PopStyleColor();
-            ImGui::PopID();
+
+            if (!historyJumped) {
+                drawHistoryEntry("##history_current_entry", currentHistoryLabel_, true, false);
+
+                for (std::size_t displayIndex = 0; displayIndex < redoCount; ++displayIndex) {
+                    const std::size_t redoIndex = redoCount - 1 - displayIndex;
+                    ImGui::PushID(static_cast<int>(redoIndex + undoCount + 1));
+                    if (drawHistoryEntry("##history_redo_entry", redoStack_[redoIndex].label, false, true)) {
+                        const std::size_t redoSteps = displayIndex + 1;
+                        for (std::size_t step = 0; step < redoSteps && CanRedo(); ++step) {
+                            Redo();
+                        }
+                        historyJumped = true;
+                        ImGui::PopID();
+                        break;
+                    }
+                    ImGui::PopID();
+                }
+            }
         }
     }
     ImGui::EndChild();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(6);
 
     ImGui::End();
 }
@@ -2922,17 +3118,14 @@ void AppWindow::DrawTimelinePanel() {
         DrawSubtleToolbarDivider(8.0f);
     };
     const int currentFrame = static_cast<int>(std::round(scene_.timelineFrame));
-    const bool hasSelectedLayer = HasSelectedLayer();
-    const KeyframeOwnerType currentOwnerType = !hasSelectedLayer
-        ? KeyframeOwnerType::Scene
-        : (inspectorTarget_ == InspectorTarget::PathLayer ? KeyframeOwnerType::Path : KeyframeOwnerType::Transform);
-    const int currentOwnerIndex = !hasSelectedLayer
-        ? 0
-        : (inspectorTarget_ == InspectorTarget::PathLayer ? scene_.selectedPath : scene_.selectedTransform);
+    const auto [currentOwnerType, currentOwnerIndex] = CurrentKeyframeOwner();
     const int currentKeyframeIndex = FindKeyframeIndex(scene_, currentFrame, currentOwnerType, currentOwnerIndex);
     int previousKeyframeIndex = -1;
     int nextKeyframeIndex = -1;
     for (std::size_t index = 0; index < scene_.keyframes.size(); ++index) {
+        if (scene_.keyframes[index].ownerType != currentOwnerType || scene_.keyframes[index].ownerIndex != currentOwnerIndex) {
+            continue;
+        }
         const int keyframeFrame = scene_.keyframes[index].frame;
         if (keyframeFrame < currentFrame) {
             previousKeyframeIndex = static_cast<int>(index);
@@ -3013,9 +3206,7 @@ void AppWindow::DrawTimelinePanel() {
         const int existingIndex = FindKeyframeIndex(scene_, frame, currentOwnerType, currentOwnerIndex);
         SceneKeyframe keyframe;
         keyframe.frame = frame;
-        keyframe.markerColor = !hasSelectedLayer
-            ? Color{180, 160, 220, 255}
-            : (inspectorTarget_ == InspectorTarget::PathLayer ? Color{96, 188, 224, 255} : Color{248, 164, 88, 255});
+        keyframe.markerColor = MarkerColorForKeyframeOwner(currentOwnerType, currentOwnerIndex);
         AssignCurrentLayerToKeyframe(keyframe);
         if (existingIndex >= 0) {
             keyframe.easing = scene_.keyframes[static_cast<std::size_t>(existingIndex)].easing;
@@ -3172,6 +3363,8 @@ void AppWindow::DrawTimelinePanel() {
         lane.ownerType = keyframe.ownerType;
         if (lane.ownerType == KeyframeOwnerType::Path) {
             lane.ownerIndex = std::clamp(keyframe.ownerIndex, 0, std::max(0, static_cast<int>(scene_.paths.size()) - 1));
+        } else if (lane.ownerType == KeyframeOwnerType::Effect) {
+            lane.ownerIndex = std::clamp(keyframe.ownerIndex, 0, static_cast<int>(kEffectStackStageCount) - 1);
         } else if (lane.ownerType == KeyframeOwnerType::Scene) {
             lane.ownerIndex = 0;
         } else {
@@ -3858,10 +4051,42 @@ void AppWindow::DrawEffectsPanel() {
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
         ImGui::PopID();
     };
-    const auto commitEffectReset = [&](const Scene& beforeReset, const char* effectName) {
-        SyncCurrentKeyframeFromScene();
-        PushUndoState(beforeReset, std::string("Reset ") + effectName);
-        MarkViewportDirty(DeterminePreviewResetReason(beforeReset, scene_));
+    const auto effectOwnerIndexForStack = [&](const int stackIndex) {
+        return static_cast<int>(scene_.effectStack[static_cast<std::size_t>(stackIndex)]);
+    };
+    const auto prepareEffectOwnerSelection = [&](const int stackIndex) {
+        if (stackIndex < 0 || stackIndex >= static_cast<int>(scene_.effectStack.size())) {
+            return;
+        }
+        if (selectedEffects_.size() != 1 || selectedEffect_ != stackIndex || !ContainsIndex(selectedEffects_, stackIndex)) {
+            SelectSingleEffect(stackIndex);
+        }
+    };
+    const auto syncEffectTimelineChange = [&](const int stackIndex, const bool createKeyframeFromExistingTrack) {
+        if (stackIndex < 0 || stackIndex >= static_cast<int>(scene_.effectStack.size())) {
+            return;
+        }
+        prepareEffectOwnerSelection(stackIndex);
+        const int ownerIndex = effectOwnerIndexForStack(stackIndex);
+        if (createKeyframeFromExistingTrack && HasKeyframesForOwner(KeyframeOwnerType::Effect, ownerIndex)) {
+            AutoKeyCurrentFrame(KeyframeOwnerType::Effect, ownerIndex);
+        }
+        SyncCurrentKeyframeFromScene(KeyframeOwnerType::Effect, ownerIndex);
+    };
+    const auto captureEffectEdit = [&](const Scene& before, const bool changed, const int stackIndex) {
+        if (changed) {
+            syncEffectTimelineChange(stackIndex, true);
+            MarkViewportDirty(DeterminePreviewResetReason(before, scene_));
+        }
+        CaptureWidgetUndo(before, changed);
+    };
+    const auto commitEffectAction = [&](const Scene& before, const int stackIndex, std::string label) {
+        syncEffectTimelineChange(stackIndex, true);
+        PushUndoState(before, std::move(label));
+        MarkViewportDirty(DeterminePreviewResetReason(before, scene_));
+    };
+    const auto commitEffectReset = [&](const Scene& beforeReset, const char* effectName, const int stackIndex) {
+        commitEffectAction(beforeReset, stackIndex, std::string("Reset ") + effectName);
     };
 
     const int effectCardColumns = 1;
@@ -3888,10 +4113,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(denoiserHeader.contentOpen, nullptr);
         if (denoiserHeader.resetPressed) {
-            commitEffectReset(beforeDenoiserEnabled, "Denoiser");
-        } else if (denoiserEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeDenoiserEnabled, scene_));
-            CaptureWidgetUndo(beforeDenoiserEnabled, denoiserEnabledChanged);
+            commitEffectReset(beforeDenoiserEnabled, "Denoiser", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeDenoiserEnabled, denoiserEnabledChanged, static_cast<int>(index));
         }
         if (denoiserHeader.contentOpen && scene_.denoiser.enabled) {
             const double denoiserStrengthMin = 0.0;
@@ -3905,10 +4129,7 @@ void AppWindow::DrawEffectsPanel() {
                     const Scene beforeDenoise = scene_;
                     bool denoiseChanged = SliderScalarWithInput("##effect_denoiser_strength", ImGuiDataType_Double, &scene_.denoiser.strength, &denoiserStrengthMin, &denoiserStrengthMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.denoiser.strength, defaultScene.denoiser.strength);
-                    if (denoiseChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeDenoise, scene_));
-                    }
-                    CaptureWidgetUndo(beforeDenoise, denoiseChanged);
+                    captureEffectEdit(beforeDenoise, denoiseChanged, static_cast<int>(index));
                     ImGui::EndTable();
                 }
             }
@@ -3937,10 +4158,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(dofHeader.contentOpen, nullptr);
         if (dofHeader.resetPressed) {
-            commitEffectReset(beforeDofEnabled, "Depth of Field");
-        } else if (dofEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeDofEnabled, scene_));
-            CaptureWidgetUndo(beforeDofEnabled, dofEnabledChanged);
+            commitEffectReset(beforeDofEnabled, "Depth of Field", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeDofEnabled, dofEnabledChanged, static_cast<int>(index));
         }
         if (dofHeader.contentOpen && scene_.depthOfField.enabled) {
             const double focusDepthMin = 0.0;
@@ -3958,10 +4178,7 @@ void AppWindow::DrawEffectsPanel() {
                     Scene beforeDof = scene_;
                     bool dofChanged = SliderScalarWithInput("##effect_dof_focus_depth", ImGuiDataType_Double, &scene_.depthOfField.focusDepth, &focusDepthMin, &focusDepthMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.depthOfField.focusDepth, defaultScene.depthOfField.focusDepth);
-                    if (dofChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
-                    }
-                    CaptureWidgetUndo(beforeDof, dofChanged);
+                    captureEffectEdit(beforeDof, dofChanged, static_cast<int>(index));
 
                     ImGui::TableNextColumn();
                     drawEffectFieldLabel("Focus Range");
@@ -3969,10 +4186,7 @@ void AppWindow::DrawEffectsPanel() {
                     beforeDof = scene_;
                     dofChanged = SliderScalarWithInput("##effect_dof_focus_range", ImGuiDataType_Double, &scene_.depthOfField.focusRange, &focusRangeMin, &focusRangeMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.depthOfField.focusRange, defaultScene.depthOfField.focusRange);
-                    if (dofChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
-                    }
-                    CaptureWidgetUndo(beforeDof, dofChanged);
+                    captureEffectEdit(beforeDof, dofChanged, static_cast<int>(index));
 
                     if (ImGui::TableGetColumnCount() > 1) {
                         ImGui::TableNextRow();
@@ -3983,10 +4197,7 @@ void AppWindow::DrawEffectsPanel() {
                     beforeDof = scene_;
                     dofChanged = SliderScalarWithInput("##effect_dof_blur_strength", ImGuiDataType_Double, &scene_.depthOfField.blurStrength, &blurStrengthMin, &blurStrengthMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.depthOfField.blurStrength, defaultScene.depthOfField.blurStrength);
-                    if (dofChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeDof, scene_));
-                    }
-                    CaptureWidgetUndo(beforeDof, dofChanged);
+                    captureEffectEdit(beforeDof, dofChanged, static_cast<int>(index));
                     ImGui::EndTable();
                 }
             }
@@ -4014,10 +4225,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(glowHeader.contentOpen, nullptr);
         if (glowHeader.resetPressed) {
-            commitEffectReset(beforePostProcessEnabled, "Glow");
-        } else if (postProcessEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforePostProcessEnabled, scene_));
-            CaptureWidgetUndo(beforePostProcessEnabled, postProcessEnabledChanged);
+            commitEffectReset(beforePostProcessEnabled, "Glow", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforePostProcessEnabled, postProcessEnabledChanged, static_cast<int>(index));
         }
         if (glowHeader.contentOpen && scene_.postProcess.enabled) {
             const double bloomIntensityMin = 0.0;
@@ -4033,10 +4243,7 @@ void AppWindow::DrawEffectsPanel() {
                     Scene beforePP = scene_;
                     bool ppChanged = SliderScalarWithInput("##effect_pp_bloom_intensity", ImGuiDataType_Double, &scene_.postProcess.bloomIntensity, &bloomIntensityMin, &bloomIntensityMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.bloomIntensity, defaultScene.postProcess.bloomIntensity);
-                    if (ppChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                    }
-                    CaptureWidgetUndo(beforePP, ppChanged);
+                    captureEffectEdit(beforePP, ppChanged, static_cast<int>(index));
 
                     ImGui::TableNextColumn();
                     drawEffectFieldLabel("Threshold");
@@ -4044,10 +4251,7 @@ void AppWindow::DrawEffectsPanel() {
                     beforePP = scene_;
                     ppChanged = SliderScalarWithInput("##effect_pp_bloom_threshold", ImGuiDataType_Double, &scene_.postProcess.bloomThreshold, &bloomThresholdMin, &bloomThresholdMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.bloomThreshold, defaultScene.postProcess.bloomThreshold);
-                    if (ppChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforePP, scene_));
-                    }
-                    CaptureWidgetUndo(beforePP, ppChanged);
+                    captureEffectEdit(beforePP, ppChanged, static_cast<int>(index));
 
                     ImGui::EndTable();
                 }
@@ -4075,10 +4279,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(chromaticHeader.contentOpen, nullptr);
         if (chromaticHeader.resetPressed) {
-            commitEffectReset(beforeChromaticEnabled, "Chromatic Aberration");
-        } else if (chromaticEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeChromaticEnabled, scene_));
-            CaptureWidgetUndo(beforeChromaticEnabled, chromaticEnabledChanged);
+            commitEffectReset(beforeChromaticEnabled, "Chromatic Aberration", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeChromaticEnabled, chromaticEnabledChanged, static_cast<int>(index));
         }
         if (chromaticHeader.contentOpen && scene_.postProcess.chromaticAberrationEnabled) {
             const double chromaticMin = 0.0;
@@ -4092,10 +4295,7 @@ void AppWindow::DrawEffectsPanel() {
                     Scene beforeChromatic = scene_;
                     bool chromaticChanged = SliderScalarWithInput("##effect_chromatic_amount", ImGuiDataType_Double, &scene_.postProcess.chromaticAberration, &chromaticMin, &chromaticMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.chromaticAberration, defaultScene.postProcess.chromaticAberration);
-                    if (chromaticChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeChromatic, scene_));
-                    }
-                    CaptureWidgetUndo(beforeChromatic, chromaticChanged);
+                    captureEffectEdit(beforeChromatic, chromaticChanged, static_cast<int>(index));
                     ImGui::EndTable();
                 }
             }
@@ -4122,10 +4322,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(temperatureHeader.contentOpen, nullptr);
         if (temperatureHeader.resetPressed) {
-            commitEffectReset(beforeTemperatureEnabled, "Temperature");
-        } else if (temperatureEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeTemperatureEnabled, scene_));
-            CaptureWidgetUndo(beforeTemperatureEnabled, temperatureEnabledChanged);
+            commitEffectReset(beforeTemperatureEnabled, "Temperature", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeTemperatureEnabled, temperatureEnabledChanged, static_cast<int>(index));
         }
         if (temperatureHeader.contentOpen && scene_.postProcess.colorTemperatureEnabled) {
             const double colorTempMin = 2000.0;
@@ -4139,10 +4338,7 @@ void AppWindow::DrawEffectsPanel() {
                     Scene beforeTemperature = scene_;
                     bool temperatureChanged = SliderScalarWithInput("##effect_temperature_value", ImGuiDataType_Double, &scene_.postProcess.colorTemperature, &colorTempMin, &colorTempMax, "%.0f K")
                         || ResetValueOnDoubleClick(scene_.postProcess.colorTemperature, defaultScene.postProcess.colorTemperature);
-                    if (temperatureChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeTemperature, scene_));
-                    }
-                    CaptureWidgetUndo(beforeTemperature, temperatureChanged);
+                    captureEffectEdit(beforeTemperature, temperatureChanged, static_cast<int>(index));
                     ImGui::EndTable();
                 }
             }
@@ -4170,10 +4366,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(saturationHeader.contentOpen, nullptr);
         if (saturationHeader.resetPressed) {
-            commitEffectReset(beforeSaturationEnabled, "Saturation");
-        } else if (saturationEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeSaturationEnabled, scene_));
-            CaptureWidgetUndo(beforeSaturationEnabled, saturationEnabledChanged);
+            commitEffectReset(beforeSaturationEnabled, "Saturation", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeSaturationEnabled, saturationEnabledChanged, static_cast<int>(index));
         }
         if (saturationHeader.contentOpen && scene_.postProcess.saturationEnabled) {
             const double saturationMin = -1.0;
@@ -4189,10 +4384,7 @@ void AppWindow::DrawEffectsPanel() {
                     Scene beforeSaturation = scene_;
                     bool saturationChanged = SliderScalarWithInput("##effect_saturation_amount", ImGuiDataType_Double, &scene_.postProcess.saturationBoost, &saturationMin, &saturationMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.saturationBoost, defaultScene.postProcess.saturationBoost);
-                    if (saturationChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeSaturation, scene_));
-                    }
-                    CaptureWidgetUndo(beforeSaturation, saturationChanged);
+                    captureEffectEdit(beforeSaturation, saturationChanged, static_cast<int>(index));
 
                     ImGui::TableNextColumn();
                     drawEffectFieldLabel("Vibrance");
@@ -4200,10 +4392,7 @@ void AppWindow::DrawEffectsPanel() {
                     beforeSaturation = scene_;
                     saturationChanged = SliderScalarWithInput("##effect_saturation_vibrance", ImGuiDataType_Double, &scene_.postProcess.saturationVibrance, &vibranceMin, &vibranceMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.saturationVibrance, defaultScene.postProcess.saturationVibrance);
-                    if (saturationChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeSaturation, scene_));
-                    }
-                    CaptureWidgetUndo(beforeSaturation, saturationChanged);
+                    captureEffectEdit(beforeSaturation, saturationChanged, static_cast<int>(index));
 
                     ImGui::EndTable();
                 }
@@ -4231,10 +4420,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(toneMappingHeader.contentOpen, nullptr);
         if (toneMappingHeader.resetPressed) {
-            commitEffectReset(beforeToneMappingEnabled, "Tone Mapping");
-        } else if (toneMappingEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeToneMappingEnabled, scene_));
-            CaptureWidgetUndo(beforeToneMappingEnabled, toneMappingEnabledChanged);
+            commitEffectReset(beforeToneMappingEnabled, "Tone Mapping", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeToneMappingEnabled, toneMappingEnabledChanged, static_cast<int>(index));
         }
         endEffectCard();
                 break;
@@ -4258,10 +4446,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(filmGrainHeader.contentOpen, nullptr);
         if (filmGrainHeader.resetPressed) {
-            commitEffectReset(beforeFilmGrainEnabled, "Film Grain");
-        } else if (filmGrainEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeFilmGrainEnabled, scene_));
-            CaptureWidgetUndo(beforeFilmGrainEnabled, filmGrainEnabledChanged);
+            commitEffectReset(beforeFilmGrainEnabled, "Film Grain", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeFilmGrainEnabled, filmGrainEnabledChanged, static_cast<int>(index));
         }
         if (filmGrainHeader.contentOpen && scene_.postProcess.filmGrainEnabled) {
             const double filmGrainMin = 0.0;
@@ -4277,10 +4464,7 @@ void AppWindow::DrawEffectsPanel() {
                     Scene beforeFilmGrain = scene_;
                     bool filmGrainChanged = SliderScalarWithInput("##effect_film_grain_amount", ImGuiDataType_Double, &scene_.postProcess.filmGrain, &filmGrainMin, &filmGrainMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.filmGrain, defaultScene.postProcess.filmGrain);
-                    if (filmGrainChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeFilmGrain, scene_));
-                    }
-                    CaptureWidgetUndo(beforeFilmGrain, filmGrainChanged);
+                    captureEffectEdit(beforeFilmGrain, filmGrainChanged, static_cast<int>(index));
 
                     ImGui::TableNextColumn();
                     drawEffectFieldLabel("Scale");
@@ -4288,10 +4472,7 @@ void AppWindow::DrawEffectsPanel() {
                     beforeFilmGrain = scene_;
                     filmGrainChanged = SliderScalarWithInput("##effect_film_grain_scale", ImGuiDataType_Double, &scene_.postProcess.filmGrainScale, &filmGrainScaleMin, &filmGrainScaleMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.filmGrainScale, defaultScene.postProcess.filmGrainScale);
-                    if (filmGrainChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeFilmGrain, scene_));
-                    }
-                    CaptureWidgetUndo(beforeFilmGrain, filmGrainChanged);
+                    captureEffectEdit(beforeFilmGrain, filmGrainChanged, static_cast<int>(index));
 
                     ImGui::EndTable();
                 }
@@ -4320,10 +4501,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(vignetteHeader.contentOpen, nullptr);
         if (vignetteHeader.resetPressed) {
-            commitEffectReset(beforeVignetteEnabled, "Vignette");
-        } else if (vignetteEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeVignetteEnabled, scene_));
-            CaptureWidgetUndo(beforeVignetteEnabled, vignetteEnabledChanged);
+            commitEffectReset(beforeVignetteEnabled, "Vignette", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeVignetteEnabled, vignetteEnabledChanged, static_cast<int>(index));
         }
         if (vignetteHeader.contentOpen && scene_.postProcess.vignetteEnabled) {
             const double vignetteIntensityMin = 0.0;
@@ -4339,10 +4519,7 @@ void AppWindow::DrawEffectsPanel() {
                     Scene beforeVignette = scene_;
                     bool vignetteChanged = SliderScalarWithInput("##effect_vignette_intensity", ImGuiDataType_Double, &scene_.postProcess.vignetteIntensity, &vignetteIntensityMin, &vignetteIntensityMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.vignetteIntensity, defaultScene.postProcess.vignetteIntensity);
-                    if (vignetteChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeVignette, scene_));
-                    }
-                    CaptureWidgetUndo(beforeVignette, vignetteChanged);
+                    captureEffectEdit(beforeVignette, vignetteChanged, static_cast<int>(index));
 
                     ImGui::TableNextColumn();
                     drawEffectFieldLabel("Roundness");
@@ -4350,10 +4527,7 @@ void AppWindow::DrawEffectsPanel() {
                     beforeVignette = scene_;
                     vignetteChanged = SliderScalarWithInput("##effect_vignette_roundness", ImGuiDataType_Double, &scene_.postProcess.vignetteRoundness, &vignetteRoundnessMin, &vignetteRoundnessMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.vignetteRoundness, defaultScene.postProcess.vignetteRoundness);
-                    if (vignetteChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeVignette, scene_));
-                    }
-                    CaptureWidgetUndo(beforeVignette, vignetteChanged);
+                    captureEffectEdit(beforeVignette, vignetteChanged, static_cast<int>(index));
                     ImGui::EndTable();
                 }
             }
@@ -4384,10 +4558,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(curvesHeader.contentOpen, nullptr);
         if (curvesHeader.resetPressed) {
-            commitEffectReset(beforeCurvesEnabled, "Curves");
-        } else if (curvesEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeCurvesEnabled, scene_));
-            CaptureWidgetUndo(beforeCurvesEnabled, curvesEnabledChanged);
+            commitEffectReset(beforeCurvesEnabled, "Curves", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeCurvesEnabled, curvesEnabledChanged, static_cast<int>(index));
         }
         if (curvesHeader.contentOpen && scene_.postProcess.curvesEnabled) {
             const double blackPointMin = 0.0;
@@ -4399,18 +4572,18 @@ void AppWindow::DrawEffectsPanel() {
             const bool curvesTypeOpen = beginEffectSubsection("##effect_curves_type_section", "Type");
             if (curvesTypeOpen) {
                 if (ImGui::RadioButton("Levels", !scene_.postProcess.curveUseCustom)) {
-                    PushUndoState(scene_, "Switch to Levels");
+                    const Scene beforeCurveMode = scene_;
                     scene_.postProcess.curveUseCustom = false;
-                    MarkViewportDirty(DeterminePreviewResetReason(beforeCurvesEnabled, scene_));
+                    commitEffectAction(beforeCurveMode, static_cast<int>(index), "Switch to Levels");
                 }
                 ImGui::SameLine();
                 if (ImGui::RadioButton("Custom Curve", scene_.postProcess.curveUseCustom)) {
-                    PushUndoState(scene_, "Switch to Custom Curve");
+                    const Scene beforeCurveMode = scene_;
                     scene_.postProcess.curveUseCustom = true;
                     if (scene_.postProcess.curveControlPoints.empty()) {
                         scene_.postProcess.curveControlPoints = {{0.0, 0.0}, {0.25, 0.25}, {0.5, 0.5}, {0.75, 0.75}, {1.0, 1.0}};
                     }
-                    MarkViewportDirty(DeterminePreviewResetReason(beforeCurvesEnabled, scene_));
+                    commitEffectAction(beforeCurveMode, static_cast<int>(index), "Switch to Custom Curve");
                 }
             }
             endEffectSubsection(curvesTypeOpen);
@@ -4418,93 +4591,320 @@ void AppWindow::DrawEffectsPanel() {
             if (scene_.postProcess.curveUseCustom) {
                 const bool curvesEditorOpen = beginEffectSubsection("##effect_curves_editor_section", "Curve Editor");
                 if (curvesEditorOpen) {
-                    ImVec2 curveSize(280.0f, 160.0f);
-                    ImGui::InvisibleButton("##curves_editor", curveSize);
-                    ImRect curveRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+                    auto& controlPoints = scene_.postProcess.curveControlPoints;
+                    if (controlPoints.size() < 2) {
+                        controlPoints = {{0.0, 0.0}, {0.25, 0.25}, {0.5, 0.5}, {0.75, 0.75}, {1.0, 1.0}};
+                    }
+
+                    for (Vec2& point : controlPoints) {
+                        point.x = std::clamp(point.x, 0.0, 1.0);
+                        point.y = std::clamp(point.y, 0.0, 1.0);
+                    }
+                    std::sort(controlPoints.begin(), controlPoints.end(), [](const Vec2& left, const Vec2& right) {
+                        return left.x < right.x;
+                    });
+                    controlPoints.front().x = 0.0;
+                    controlPoints.back().x = 1.0;
+
+                    const float availableWidth = ImGui::GetContentRegionAvail().x;
+                    const float canvasSize = std::clamp(std::min(availableWidth - 2.0f, 320.0f), 220.0f, 320.0f);
+                    const ImVec2 canvasOrigin = ImGui::GetCursorScreenPos();
+                    const ImRect canvasRect(canvasOrigin, ImVec2(canvasOrigin.x + canvasSize, canvasOrigin.y + canvasSize));
+                    ImGui::InvisibleButton("##effect_curves_editor_canvas", ImVec2(canvasSize, canvasSize));
+
+                    const Scene beforeCurveCanvas = scene_;
+                    ImGuiStorage* storage = ImGui::GetStateStorage();
+                    const ImGuiID storageId = ImGui::GetItemID();
+                    int selectedPoint = storage->GetInt(storageId, -1);
+                    int draggingPoint = storage->GetInt(storageId + 1, -1);
+
                     ImDrawList* drawList = ImGui::GetWindowDrawList();
-                    const UiTheme& theme = GetUiTheme();
-                    const ImU32 bgColor = ImGui::GetColorU32(theme.panelBackgroundInset);
-                    const ImU32 borderColor = ImGui::GetColorU32(WithAlpha(theme.borderStrong, 0.72f));
-                    const ImU32 gridColor = ImGui::GetColorU32(WithAlpha(theme.borderSubtle, 0.40f));
-                    const ImU32 curveColor = ImGui::GetColorU32(theme.accent);
-                    const ImU32 handleColor = ImGui::GetColorU32(theme.accentHover);
-                    drawList->AddRectFilled(curveRect.Min, curveRect.Max, bgColor, theme.roundingMedium);
-                    drawList->AddRect(curveRect.Min, curveRect.Max, borderColor, theme.roundingMedium);
-                    for (int i = 1; i < 5; i++) {
-                        float x = curveRect.Min.x + curveRect.GetWidth() * (i / 4.0f);
-                        float y = curveRect.Min.y + curveRect.GetHeight() * (i / 4.0f);
-                        drawList->AddLine(ImVec2(x, curveRect.Min.y), ImVec2(x, curveRect.Max.y), gridColor);
-                        drawList->AddLine(ImVec2(curveRect.Min.x, y), ImVec2(curveRect.Max.x, y), gridColor);
-                    }
-                    auto screenToCurve = [&](float sx, float sy) -> Vec2 {
-                        float cx = (sx - curveRect.Min.x) / curveRect.GetWidth();
-                        float cy = 1.0f - (sy - curveRect.Min.y) / curveRect.GetHeight();
-                        return {static_cast<double>(cx), static_cast<double>(cy)};
+                    const ImU32 backgroundColor = ImGui::GetColorU32(theme.panelBackgroundInset);
+                    const ImU32 gridMajorColor = ImGui::GetColorU32(WithAlpha(theme.borderSubtle, 0.48f));
+                    const ImU32 gridMinorColor = ImGui::GetColorU32(WithAlpha(theme.borderSubtle, 0.20f));
+                    const ImU32 curveColor = ImGui::GetColorU32(ImVec4(0.90f, 0.92f, 0.97f, 0.97f));
+                    const ImU32 fillColor = ImGui::GetColorU32(WithAlpha(theme.accent, 0.06f));
+                    const ImU32 identityColor = ImGui::GetColorU32(ImVec4(0.75f, 0.42f, 0.18f, 0.72f));
+
+                    const auto curveToScreen = [&](const double x, const double y) -> ImVec2 {
+                        return ImVec2(
+                            canvasRect.Min.x + static_cast<float>(x) * canvasRect.GetWidth(),
+                            canvasRect.Max.y - static_cast<float>(y) * canvasRect.GetHeight());
                     };
-                    auto curveToScreen = [&](double cx, double cy) -> ImVec2 {
-                        float sx = curveRect.Min.x + static_cast<float>(cx) * curveRect.GetWidth();
-                        float sy = curveRect.Min.y + (1.0f - static_cast<float>(cy)) * curveRect.GetHeight();
-                        return ImVec2(sx, sy);
+                    const auto screenToCurve = [&](const ImVec2& point) -> Vec2 {
+                        return {
+                            std::clamp(static_cast<double>((point.x - canvasRect.Min.x) / canvasRect.GetWidth()), 0.0, 1.0),
+                            std::clamp(static_cast<double>((canvasRect.Max.y - point.y) / canvasRect.GetHeight()), 0.0, 1.0)
+                        };
                     };
-                    ImVec2 prev = curveToScreen(0.0, 0.0);
-                    for (int i = 1; i <= 32; i++) {
-                        float t = static_cast<float>(i) / 32.0f;
-                        double y = 0.0;
-                        if (!scene_.postProcess.curveControlPoints.empty()) {
-                            double sum = 0.0;
-                            double norm = 0.0;
-                            for (const auto& pt : scene_.postProcess.curveControlPoints) {
-                                double basis = 1.0;
-                                for (int j = 0; j < static_cast<int>(scene_.postProcess.curveControlPoints.size()); j++) {
-                                    if (j == 0) basis *= std::pow(1-t, static_cast<double>(scene_.postProcess.curveControlPoints.size() - 1 - j));
-                                    else if (j == scene_.postProcess.curveControlPoints.size() - 1) basis *= std::pow(t, static_cast<double>(j));
-                                    else basis *= std::pow(t, j) * std::pow(1-t, static_cast<double>(scene_.postProcess.curveControlPoints.size() - 1 - j));
-                                }
-                                sum += pt.y * basis;
-                                norm += basis;
-                            }
-                            y = norm > 0 ? sum / norm : t;
-                        } else {
-                            y = t;
+                    const auto evalCurve = [&](const float t) -> float {
+                        if (controlPoints.size() < 2) {
+                            return t;
                         }
-                        ImVec2 curr = curveToScreen(t, y);
-                        drawList->AddLine(prev, curr, curveColor, 2.0f);
-                        prev = curr;
+                        if (t <= static_cast<float>(controlPoints.front().x)) {
+                            return static_cast<float>(controlPoints.front().y);
+                        }
+                        if (t >= static_cast<float>(controlPoints.back().x)) {
+                            return static_cast<float>(controlPoints.back().y);
+                        }
+                        for (std::size_t pointIndex = 0; pointIndex + 1 < controlPoints.size(); ++pointIndex) {
+                            const float x0 = static_cast<float>(controlPoints[pointIndex].x);
+                            const float x1 = static_cast<float>(controlPoints[pointIndex + 1].x);
+                            if (t <= x1) {
+                                const float y0 = static_cast<float>(controlPoints[pointIndex].y);
+                                const float y1 = static_cast<float>(controlPoints[pointIndex + 1].y);
+                                const float localT = (t - x0) / std::max(1.0e-6f, x1 - x0);
+                                return y0 + (y1 - y0) * localT;
+                            }
+                        }
+                        return t;
+                    };
+
+                    drawList->AddRectFilled(canvasRect.Min, canvasRect.Max, backgroundColor, theme.roundingSmall);
+
+                    constexpr float kDashLength = 4.0f;
+                    constexpr float kDashGap = 4.0f;
+                    for (int gridIndex = 1; gridIndex < 4; ++gridIndex) {
+                        const float t = static_cast<float>(gridIndex) / 4.0f;
+                        const float x = canvasRect.Min.x + t * canvasRect.GetWidth();
+                        const float y = canvasRect.Min.y + t * canvasRect.GetHeight();
+                        const ImU32 color = gridIndex == 2 ? gridMajorColor : gridMinorColor;
+                        for (float pos = canvasRect.Min.y; pos < canvasRect.Max.y; pos += kDashLength + kDashGap) {
+                            drawList->AddLine(
+                                ImVec2(x, pos),
+                                ImVec2(x, std::min(pos + kDashLength, canvasRect.Max.y)),
+                                color);
+                        }
+                        for (float pos = canvasRect.Min.x; pos < canvasRect.Max.x; pos += kDashLength + kDashGap) {
+                            drawList->AddLine(
+                                ImVec2(pos, y),
+                                ImVec2(std::min(pos + kDashLength, canvasRect.Max.x), y),
+                                color);
+                        }
                     }
-                    ImVec2 mouse = ImGui::GetIO().MousePos;
-                    int dragIndex = -1;
-                    if (ImGui::IsItemHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                        for (int i = 0; i < static_cast<int>(scene_.postProcess.curveControlPoints.size()); i++) {
-                            ImVec2 pt = curveToScreen(scene_.postProcess.curveControlPoints[i].x, scene_.postProcess.curveControlPoints[i].y);
-                            float dist = std::hypot(mouse.x - pt.x, mouse.y - pt.y);
-                            if (dist < 12.0f) {
-                                dragIndex = i;
+
+                    drawList->AddLine(
+                        ImVec2(canvasRect.Min.x, canvasRect.Max.y),
+                        ImVec2(canvasRect.Max.x, canvasRect.Min.y),
+                        identityColor,
+                        1.4f);
+
+                    constexpr int kCurveSampleCount = 192;
+                    std::vector<ImVec2> sampledCurve;
+                    sampledCurve.reserve(kCurveSampleCount + 1);
+                    for (int sampleIndex = 0; sampleIndex <= kCurveSampleCount; ++sampleIndex) {
+                        const float t = static_cast<float>(sampleIndex) / static_cast<float>(kCurveSampleCount);
+                        sampledCurve.push_back(curveToScreen(t, evalCurve(t)));
+                    }
+                    const float fillWidth = canvasRect.GetWidth() / static_cast<float>(kCurveSampleCount) + 1.6f;
+                    for (const ImVec2& point : sampledCurve) {
+                        drawList->AddLine(point, ImVec2(point.x, canvasRect.Max.y), fillColor, fillWidth);
+                    }
+                    drawList->AddPolyline(sampledCurve.data(), static_cast<int>(sampledCurve.size()), curveColor, 0, 2.0f);
+
+                    const ImVec2 mousePosition = ImGui::GetIO().MousePos;
+                    int hoveredPoint = -1;
+                    if (canvasRect.Contains(mousePosition)) {
+                        for (int pointIndex = 0; pointIndex < static_cast<int>(controlPoints.size()); ++pointIndex) {
+                            const ImVec2 pointScreen = curveToScreen(controlPoints[pointIndex].x, controlPoints[pointIndex].y);
+                            const float dx = mousePosition.x - pointScreen.x;
+                            const float dy = mousePosition.y - pointScreen.y;
+                            if (dx * dx + dy * dy <= 56.0f) {
+                                hoveredPoint = pointIndex;
                                 break;
                             }
                         }
                     }
-                    if (dragIndex >= 0) {
-                        Vec2 newPos = screenToCurve(mouse.x, mouse.y);
-                        newPos.x = std::clamp(newPos.x, 0.0, 1.0);
-                        newPos.y = std::clamp(newPos.y, 0.0, 1.0);
-                        if (dragIndex > 0 && dragIndex < static_cast<int>(scene_.postProcess.curveControlPoints.size()) - 1) {
-                            newPos.x = std::clamp(newPos.x, scene_.postProcess.curveControlPoints[dragIndex-1].x + 0.01, scene_.postProcess.curveControlPoints[dragIndex+1].x - 0.01);
-                        }
-                        if (dragIndex == 0) newPos.x = 0.0;
-                        if (dragIndex == static_cast<int>(scene_.postProcess.curveControlPoints.size()) - 1) newPos.x = 1.0;
-                        if (newPos.x != scene_.postProcess.curveControlPoints[dragIndex].x || newPos.y != scene_.postProcess.curveControlPoints[dragIndex].y) {
-                            PushUndoState(scene_, "Adjust Curve Point");
-                            scene_.postProcess.curveControlPoints[dragIndex] = newPos;
-                            MarkViewportDirty(DeterminePreviewResetReason(beforeCurvesEnabled, scene_));
+
+                    bool curveCanvasChanged = false;
+                    const bool canvasHovered = ImGui::IsItemHovered();
+                    const bool doubleClicked = canvasHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                    if (doubleClicked && hoveredPoint > 0 && hoveredPoint < static_cast<int>(controlPoints.size()) - 1) {
+                        controlPoints.erase(controlPoints.begin() + hoveredPoint);
+                        selectedPoint = -1;
+                        draggingPoint = -1;
+                        hoveredPoint = -1;
+                        curveCanvasChanged = true;
+                    } else if (!doubleClicked && canvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        if (hoveredPoint >= 0) {
+                            selectedPoint = hoveredPoint;
+                            draggingPoint = hoveredPoint;
+                        } else if (canvasRect.Contains(mousePosition)) {
+                            const Vec2 newPoint = screenToCurve(mousePosition);
+                            bool tooClose = false;
+                            for (const Vec2& existingPoint : controlPoints) {
+                                if (std::abs(existingPoint.x - newPoint.x) < 0.03) {
+                                    tooClose = true;
+                                    break;
+                                }
+                            }
+                            if (!tooClose) {
+                                controlPoints.push_back(newPoint);
+                                std::sort(controlPoints.begin(), controlPoints.end(), [](const Vec2& left, const Vec2& right) {
+                                    return left.x < right.x;
+                                });
+                                controlPoints.front().x = 0.0;
+                                controlPoints.back().x = 1.0;
+                                for (int pointIndex = 0; pointIndex < static_cast<int>(controlPoints.size()); ++pointIndex) {
+                                    if (std::abs(controlPoints[pointIndex].x - newPoint.x) < 1.0e-4
+                                        && std::abs(controlPoints[pointIndex].y - newPoint.y) < 1.0e-4) {
+                                        selectedPoint = pointIndex;
+                                        draggingPoint = pointIndex;
+                                        break;
+                                    }
+                                }
+                                curveCanvasChanged = true;
+                            }
                         }
                     }
-                    for (const auto& pt : scene_.postProcess.curveControlPoints) {
-                        ImVec2 screenPt = curveToScreen(pt.x, pt.y);
-                        drawList->AddCircleFilled(screenPt, 5.0f, handleColor);
-                        drawList->AddCircle(screenPt, 5.0f, borderColor);
+
+                    if (draggingPoint >= 0
+                        && draggingPoint < static_cast<int>(controlPoints.size())
+                        && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        const Vec2 mouseCurve = screenToCurve(mousePosition);
+                        const bool isFirstPoint = draggingPoint == 0;
+                        const bool isLastPoint = draggingPoint == static_cast<int>(controlPoints.size()) - 1;
+                        const double newX = isFirstPoint
+                            ? 0.0
+                            : isLastPoint
+                                ? 1.0
+                                : std::clamp(
+                                    mouseCurve.x,
+                                    controlPoints[draggingPoint - 1].x + 0.02,
+                                    controlPoints[draggingPoint + 1].x - 0.02);
+                        const double newY = std::clamp(mouseCurve.y, 0.0, 1.0);
+                        if (std::abs(controlPoints[draggingPoint].x - newX) > 1.0e-6
+                            || std::abs(controlPoints[draggingPoint].y - newY) > 1.0e-6) {
+                            controlPoints[draggingPoint] = {newX, newY};
+                            curveCanvasChanged = true;
+                        }
+                    } else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        draggingPoint = -1;
                     }
-                    ImGui::SameLine();
-                    ImGui::TextUnformatted("Drag points to adjust");
+
+                    storage->SetInt(storageId, selectedPoint);
+                    storage->SetInt(storageId + 1, draggingPoint);
+
+                    for (int pointIndex = 0; pointIndex < static_cast<int>(controlPoints.size()); ++pointIndex) {
+                        const ImVec2 pointScreen = curveToScreen(controlPoints[pointIndex].x, controlPoints[pointIndex].y);
+                        const bool isDragging = pointIndex == draggingPoint;
+                        const bool isHovered = pointIndex == hoveredPoint;
+                        const bool isSelected = pointIndex == selectedPoint;
+                        const float halfSize = isDragging ? 6.0f : (isHovered ? 5.5f : 4.5f);
+                        const ImU32 handleFill = isDragging
+                            ? ImGui::GetColorU32(theme.accentHover)
+                            : isHovered
+                                ? ImGui::GetColorU32(theme.accent)
+                                : isSelected
+                                    ? ImGui::GetColorU32(ImVec4(0.94f, 0.95f, 0.99f, 1.0f))
+                                    : ImGui::GetColorU32(ImVec4(0.78f, 0.82f, 0.90f, 0.92f));
+                        drawList->AddRectFilled(
+                            ImVec2(pointScreen.x - halfSize, pointScreen.y - halfSize),
+                            ImVec2(pointScreen.x + halfSize, pointScreen.y + halfSize),
+                            handleFill,
+                            2.0f);
+                        drawList->AddRect(
+                            ImVec2(pointScreen.x - halfSize, pointScreen.y - halfSize),
+                            ImVec2(pointScreen.x + halfSize, pointScreen.y + halfSize),
+                            ImGui::GetColorU32(WithAlpha(theme.panelBackgroundInset, 0.80f)),
+                            2.0f,
+                            0,
+                            1.5f);
+                    }
+
+                    if (canvasHovered && canvasRect.Contains(mousePosition)) {
+                        if (hoveredPoint < 0) {
+                            const float inputValue = static_cast<float>(screenToCurve(mousePosition).x);
+                            const float outputValue = evalCurve(inputValue);
+                            const ImVec2 hitPoint = curveToScreen(inputValue, outputValue);
+                            const ImU32 crosshairColor = ImGui::GetColorU32(WithAlpha(theme.textDim, 0.32f));
+                            drawList->AddLine(ImVec2(mousePosition.x, canvasRect.Min.y), ImVec2(mousePosition.x, canvasRect.Max.y), crosshairColor);
+                            drawList->AddLine(ImVec2(canvasRect.Min.x, hitPoint.y), ImVec2(canvasRect.Max.x, hitPoint.y), crosshairColor);
+                            drawList->AddCircleFilled(hitPoint, 3.5f, ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.88f)));
+                            char tooltip[64];
+                            std::snprintf(tooltip, sizeof(tooltip), "In %.2f  ->  Out %.2f", inputValue, outputValue);
+                            ImGui::SetTooltip("%s", tooltip);
+                        } else if (hoveredPoint > 0 && hoveredPoint < static_cast<int>(controlPoints.size()) - 1) {
+                            char tooltip[96];
+                            std::snprintf(
+                                tooltip,
+                                sizeof(tooltip),
+                                "%.2f, %.2f  -  Drag to move  -  Dbl-click to delete",
+                                static_cast<float>(controlPoints[hoveredPoint].x),
+                                static_cast<float>(controlPoints[hoveredPoint].y));
+                            ImGui::SetTooltip("%s", tooltip);
+                        } else {
+                            ImGui::SetTooltip("Endpoint - drag vertically to adjust output");
+                        }
+                    }
+
+                    drawList->AddRect(
+                        canvasRect.Min,
+                        canvasRect.Max,
+                        ImGui::GetColorU32(WithAlpha(theme.borderStrong, 0.55f)),
+                        theme.roundingSmall,
+                        0,
+                        1.0f);
+                    ImGui::SetCursorScreenPos(ImVec2(canvasOrigin.x, canvasOrigin.y + canvasSize + 6.0f));
+
+                    if (curveCanvasChanged) {
+                        controlPoints.front().x = 0.0;
+                        controlPoints.back().x = 1.0;
+                    }
+                    captureEffectEdit(beforeCurveCanvas, curveCanvasChanged, static_cast<int>(index));
+
+                    const float actionButtonWidth = (ImGui::GetContentRegionAvail().x - 8.0f) / 3.0f;
+
+                    const Scene beforeIdentity = scene_;
+                    if (DrawActionButton(
+                            "##effect_curves_identity",
+                            "Identity",
+                            IconGlyph::Remove,
+                            ActionTone::Slate,
+                            false,
+                            true,
+                            actionButtonWidth,
+                            "Reset to a straight identity curve")) {
+                        controlPoints = {{0.0, 0.0}, {0.25, 0.25}, {0.5, 0.5}, {0.75, 0.75}, {1.0, 1.0}};
+                        commitEffectAction(beforeIdentity, static_cast<int>(index), "Curves: Identity");
+                    }
+                    ImGui::SameLine(0.0f, 4.0f);
+
+                    const Scene beforeSmooth = scene_;
+                    if (DrawActionButton(
+                            "##effect_curves_smooth",
+                            "Smooth",
+                            IconGlyph::Settings,
+                            ActionTone::Slate,
+                            false,
+                            static_cast<int>(controlPoints.size()) > 2,
+                            actionButtonWidth,
+                            "Smooth interior control points")) {
+                        for (int iteration = 0; iteration < 2; ++iteration) {
+                            std::vector<Vec2> smoothedPoints = controlPoints;
+                            for (int pointIndex = 1; pointIndex < static_cast<int>(controlPoints.size()) - 1; ++pointIndex) {
+                                smoothedPoints[pointIndex].y =
+                                    (controlPoints[pointIndex - 1].y + controlPoints[pointIndex].y + controlPoints[pointIndex + 1].y) / 3.0;
+                            }
+                            controlPoints = std::move(smoothedPoints);
+                        }
+                        commitEffectAction(beforeSmooth, static_cast<int>(index), "Curves: Smooth");
+                    }
+                    ImGui::SameLine(0.0f, 4.0f);
+
+                    const Scene beforeSCurve = scene_;
+                    if (DrawActionButton(
+                            "##effect_curves_s_curve",
+                            "S-Curve",
+                            IconGlyph::Randomize,
+                            ActionTone::Accent,
+                            false,
+                            true,
+                            actionButtonWidth,
+                            "Apply a classic S-curve")) {
+                        controlPoints = {{0.0, 0.0}, {0.25, 0.18}, {0.5, 0.5}, {0.75, 0.82}, {1.0, 1.0}};
+                        commitEffectAction(beforeSCurve, static_cast<int>(index), "Curves: S-Curve");
+                    }
                 }
                 endEffectSubsection(curvesEditorOpen);
             } else {
@@ -4518,10 +4918,7 @@ void AppWindow::DrawEffectsPanel() {
                         bool curvesChanged = SliderScalarWithInput("##effect_curves_black", ImGuiDataType_Double, &scene_.postProcess.curveBlackPoint, &blackPointMin, &blackPointMax, "%.2f")
                             || ResetValueOnDoubleClick(scene_.postProcess.curveBlackPoint, defaultScene.postProcess.curveBlackPoint);
                         scene_.postProcess.curveBlackPoint = std::min(scene_.postProcess.curveBlackPoint, scene_.postProcess.curveWhitePoint - 0.01);
-                        if (curvesChanged) {
-                            MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
-                        }
-                        CaptureWidgetUndo(beforeCurves, curvesChanged);
+                        captureEffectEdit(beforeCurves, curvesChanged, static_cast<int>(index));
 
                         ImGui::TableNextColumn();
                         drawEffectFieldLabel("White Point");
@@ -4530,10 +4927,7 @@ void AppWindow::DrawEffectsPanel() {
                         curvesChanged = SliderScalarWithInput("##effect_curves_white", ImGuiDataType_Double, &scene_.postProcess.curveWhitePoint, &whitePointMin, &whitePointMax, "%.2f")
                             || ResetValueOnDoubleClick(scene_.postProcess.curveWhitePoint, defaultScene.postProcess.curveWhitePoint);
                         scene_.postProcess.curveWhitePoint = std::max(scene_.postProcess.curveWhitePoint, scene_.postProcess.curveBlackPoint + 0.01);
-                        if (curvesChanged) {
-                            MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
-                        }
-                        CaptureWidgetUndo(beforeCurves, curvesChanged);
+                        captureEffectEdit(beforeCurves, curvesChanged, static_cast<int>(index));
 
                         if (ImGui::TableGetColumnCount() > 1) {
                             ImGui::TableNextRow();
@@ -4544,10 +4938,7 @@ void AppWindow::DrawEffectsPanel() {
                         beforeCurves = scene_;
                         curvesChanged = SliderScalarWithInput("##effect_curves_gamma", ImGuiDataType_Double, &scene_.postProcess.curveGamma, &curveGammaMin, &curveGammaMax, "%.2f")
                             || ResetValueOnDoubleClick(scene_.postProcess.curveGamma, defaultScene.postProcess.curveGamma);
-                        if (curvesChanged) {
-                            MarkViewportDirty(DeterminePreviewResetReason(beforeCurves, scene_));
-                        }
-                        CaptureWidgetUndo(beforeCurves, curvesChanged);
+                        captureEffectEdit(beforeCurves, curvesChanged, static_cast<int>(index));
 
                         ImGui::EndTable();
                     }
@@ -4576,10 +4967,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(sharpenHeader.contentOpen, nullptr);
         if (sharpenHeader.resetPressed) {
-            commitEffectReset(beforeSharpenEnabled, "Sharpen");
-        } else if (sharpenEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeSharpenEnabled, scene_));
-            CaptureWidgetUndo(beforeSharpenEnabled, sharpenEnabledChanged);
+            commitEffectReset(beforeSharpenEnabled, "Sharpen", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeSharpenEnabled, sharpenEnabledChanged, static_cast<int>(index));
         }
         if (sharpenHeader.contentOpen && scene_.postProcess.sharpenEnabled) {
             const double sharpenMin = 0.0;
@@ -4593,10 +4983,7 @@ void AppWindow::DrawEffectsPanel() {
                     Scene beforeSharpen = scene_;
                     bool sharpenChanged = SliderScalarWithInput("##effect_sharpen_amount", ImGuiDataType_Double, &scene_.postProcess.sharpenAmount, &sharpenMin, &sharpenMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.sharpenAmount, defaultScene.postProcess.sharpenAmount);
-                    if (sharpenChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeSharpen, scene_));
-                    }
-                    CaptureWidgetUndo(beforeSharpen, sharpenChanged);
+                    captureEffectEdit(beforeSharpen, sharpenChanged, static_cast<int>(index));
                     ImGui::EndTable();
                 }
             }
@@ -4624,10 +5011,9 @@ void AppWindow::DrawEffectsPanel() {
         }
         endEffectHeader(hueShiftHeader.contentOpen, nullptr);
         if (hueShiftHeader.resetPressed) {
-            commitEffectReset(beforeHueShiftEnabled, "Hue Shift");
-        } else if (hueShiftEnabledChanged) {
-            MarkViewportDirty(DeterminePreviewResetReason(beforeHueShiftEnabled, scene_));
-            CaptureWidgetUndo(beforeHueShiftEnabled, hueShiftEnabledChanged);
+            commitEffectReset(beforeHueShiftEnabled, "Hue Shift", static_cast<int>(index));
+        } else {
+            captureEffectEdit(beforeHueShiftEnabled, hueShiftEnabledChanged, static_cast<int>(index));
         }
         if (hueShiftHeader.contentOpen && scene_.postProcess.hueShiftEnabled) {
             const double hueShiftMin = -180.0;
@@ -4643,10 +5029,7 @@ void AppWindow::DrawEffectsPanel() {
                     Scene beforeHueShift = scene_;
                     bool hueShiftChanged = SliderScalarWithInput("##effect_hue_shift_degrees", ImGuiDataType_Double, &scene_.postProcess.hueShiftDegrees, &hueShiftMin, &hueShiftMax, "%.0f deg")
                         || ResetValueOnDoubleClick(scene_.postProcess.hueShiftDegrees, defaultScene.postProcess.hueShiftDegrees);
-                    if (hueShiftChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeHueShift, scene_));
-                    }
-                    CaptureWidgetUndo(beforeHueShift, hueShiftChanged);
+                    captureEffectEdit(beforeHueShift, hueShiftChanged, static_cast<int>(index));
 
                     ImGui::TableNextColumn();
                     drawEffectFieldLabel("Saturation");
@@ -4654,10 +5037,7 @@ void AppWindow::DrawEffectsPanel() {
                     beforeHueShift = scene_;
                     hueShiftChanged = SliderScalarWithInput("##effect_hue_shift_saturation", ImGuiDataType_Double, &scene_.postProcess.hueShiftSaturation, &saturationMin, &saturationMax, "%.2f")
                         || ResetValueOnDoubleClick(scene_.postProcess.hueShiftSaturation, defaultScene.postProcess.hueShiftSaturation);
-                    if (hueShiftChanged) {
-                        MarkViewportDirty(DeterminePreviewResetReason(beforeHueShift, scene_));
-                    }
-                    CaptureWidgetUndo(beforeHueShift, hueShiftChanged);
+                    captureEffectEdit(beforeHueShift, hueShiftChanged, static_cast<int>(index));
 
                     ImGui::EndTable();
                 }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <random>
 
 namespace radiary {
@@ -1370,10 +1371,21 @@ ScenePose InterpolatePose(const ScenePose& left, const ScenePose& right, const d
     pose.postProcess.curveBlackPoint = Lerp(left.postProcess.curveBlackPoint, right.postProcess.curveBlackPoint, alpha);
     pose.postProcess.curveWhitePoint = Lerp(left.postProcess.curveWhitePoint, right.postProcess.curveWhitePoint, alpha);
     pose.postProcess.curveGamma = Lerp(left.postProcess.curveGamma, right.postProcess.curveGamma, alpha);
+    pose.postProcess.curveUseCustom = alpha < 0.5 ? left.postProcess.curveUseCustom : right.postProcess.curveUseCustom;
+    if (left.postProcess.curveControlPoints.size() == right.postProcess.curveControlPoints.size()) {
+        pose.postProcess.curveControlPoints.resize(left.postProcess.curveControlPoints.size());
+        for (std::size_t index = 0; index < left.postProcess.curveControlPoints.size(); ++index) {
+            pose.postProcess.curveControlPoints[index].x = Lerp(left.postProcess.curveControlPoints[index].x, right.postProcess.curveControlPoints[index].x, alpha);
+            pose.postProcess.curveControlPoints[index].y = Lerp(left.postProcess.curveControlPoints[index].y, right.postProcess.curveControlPoints[index].y, alpha);
+        }
+    } else {
+        pose.postProcess.curveControlPoints = alpha < 0.5 ? left.postProcess.curveControlPoints : right.postProcess.curveControlPoints;
+    }
     pose.postProcess.sharpenEnabled = alpha < 0.5 ? left.postProcess.sharpenEnabled : right.postProcess.sharpenEnabled;
     pose.postProcess.sharpenAmount = Lerp(left.postProcess.sharpenAmount, right.postProcess.sharpenAmount, alpha);
     pose.postProcess.hueShiftEnabled = alpha < 0.5 ? left.postProcess.hueShiftEnabled : right.postProcess.hueShiftEnabled;
     pose.postProcess.hueShiftDegrees = Lerp(left.postProcess.hueShiftDegrees, right.postProcess.hueShiftDegrees, alpha);
+    pose.postProcess.hueShiftSaturation = Lerp(left.postProcess.hueShiftSaturation, right.postProcess.hueShiftSaturation, alpha);
     pose.postProcess.chromaticAberrationEnabled = alpha < 0.5 ? left.postProcess.chromaticAberrationEnabled : right.postProcess.chromaticAberrationEnabled;
     pose.postProcess.chromaticAberration = Lerp(left.postProcess.chromaticAberration, right.postProcess.chromaticAberration, alpha);
     pose.postProcess.vignetteEnabled = alpha < 0.5 ? left.postProcess.vignetteEnabled : right.postProcess.vignetteEnabled;
@@ -1383,10 +1395,12 @@ ScenePose InterpolatePose(const ScenePose& left, const ScenePose& right, const d
     pose.postProcess.acesToneMap = alpha < 0.5 ? left.postProcess.acesToneMap : right.postProcess.acesToneMap;
     pose.postProcess.filmGrainEnabled = alpha < 0.5 ? left.postProcess.filmGrainEnabled : right.postProcess.filmGrainEnabled;
     pose.postProcess.filmGrain = Lerp(left.postProcess.filmGrain, right.postProcess.filmGrain, alpha);
+    pose.postProcess.filmGrainScale = Lerp(left.postProcess.filmGrainScale, right.postProcess.filmGrainScale, alpha);
     pose.postProcess.colorTemperatureEnabled = alpha < 0.5 ? left.postProcess.colorTemperatureEnabled : right.postProcess.colorTemperatureEnabled;
     pose.postProcess.colorTemperature = Lerp(left.postProcess.colorTemperature, right.postProcess.colorTemperature, alpha);
     pose.postProcess.saturationEnabled = alpha < 0.5 ? left.postProcess.saturationEnabled : right.postProcess.saturationEnabled;
     pose.postProcess.saturationBoost = Lerp(left.postProcess.saturationBoost, right.postProcess.saturationBoost, alpha);
+    pose.postProcess.saturationVibrance = Lerp(left.postProcess.saturationVibrance, right.postProcess.saturationVibrance, alpha);
     pose.backgroundColor = Lerp(left.backgroundColor, right.backgroundColor, alpha);
     pose.gridVisible = alpha < 0.5 ? left.gridVisible : right.gridVisible;
 
@@ -1496,6 +1510,161 @@ ScenePose InterpolatePose(const ScenePose& left, const ScenePose& right, const d
     return pose;
 }
 
+bool KeyframeMatchesOwner(const SceneKeyframe& keyframe, const KeyframeOwnerType ownerType, const int ownerIndex) {
+    return keyframe.ownerType == ownerType
+        && (ownerType != KeyframeOwnerType::Scene ? keyframe.ownerIndex == ownerIndex : true);
+}
+
+std::optional<ScenePose> EvaluateTrackPose(
+    const Scene& scene,
+    const double clampedFrame,
+    const KeyframeOwnerType ownerType,
+    const int ownerIndex) {
+    std::vector<const SceneKeyframe*> trackKeyframes;
+    trackKeyframes.reserve(scene.keyframes.size());
+    for (const SceneKeyframe& keyframe : scene.keyframes) {
+        if (KeyframeMatchesOwner(keyframe, ownerType, ownerIndex)) {
+            trackKeyframes.push_back(&keyframe);
+        }
+    }
+    if (trackKeyframes.empty()) {
+        return std::nullopt;
+    }
+
+    int previousIndex = -1;
+    int nextIndex = -1;
+    for (std::size_t index = 0; index < trackKeyframes.size(); ++index) {
+        if (trackKeyframes[index]->frame <= clampedFrame) {
+            previousIndex = static_cast<int>(index);
+        }
+        if (trackKeyframes[index]->frame >= clampedFrame) {
+            nextIndex = static_cast<int>(index);
+            while (nextIndex + 1 < static_cast<int>(trackKeyframes.size())
+                && trackKeyframes[static_cast<std::size_t>(nextIndex + 1)]->frame == trackKeyframes[index]->frame) {
+                ++nextIndex;
+            }
+            if (trackKeyframes[index]->frame == clampedFrame) {
+                previousIndex = nextIndex;
+            }
+            break;
+        }
+    }
+    if (previousIndex < 0) {
+        previousIndex = 0;
+    }
+    if (nextIndex < 0) {
+        nextIndex = static_cast<int>(trackKeyframes.size()) - 1;
+    }
+
+    if (previousIndex == nextIndex) {
+        return trackKeyframes[static_cast<std::size_t>(previousIndex)]->pose;
+    }
+
+    const SceneKeyframe& previous = *trackKeyframes[static_cast<std::size_t>(previousIndex)];
+    const SceneKeyframe& next = *trackKeyframes[static_cast<std::size_t>(nextIndex)];
+    const double span = std::max(1.0, static_cast<double>(next.frame - previous.frame));
+    const double alpha = EvaluateKeyframeEasing(previous, (clampedFrame - static_cast<double>(previous.frame)) / span);
+    return InterpolatePose(previous.pose, next.pose, alpha);
+}
+
+Scene SceneWithPoseApplied(const Scene& scene, const ScenePose& pose) {
+    Scene posedScene = scene;
+    ApplyScenePose(posedScene, pose);
+    return posedScene;
+}
+
+void ApplySceneTrackPose(Scene& scene, const ScenePose& pose) {
+    const Scene posedScene = SceneWithPoseApplied(scene, pose);
+    scene.mode = posedScene.mode;
+    scene.camera = posedScene.camera;
+    scene.flameRender = posedScene.flameRender;
+    scene.transforms = posedScene.transforms;
+    scene.paths = posedScene.paths;
+    scene.gradientStops = posedScene.gradientStops;
+    scene.backgroundColor = posedScene.backgroundColor;
+    scene.gridVisible = posedScene.gridVisible;
+}
+
+void ApplyTransformTrackPose(Scene& scene, const ScenePose& pose, const int ownerIndex) {
+    const Scene posedScene = SceneWithPoseApplied(scene, pose);
+    if (ownerIndex >= 0 && ownerIndex < static_cast<int>(scene.transforms.size())
+        && ownerIndex < static_cast<int>(posedScene.transforms.size())) {
+        scene.transforms[static_cast<std::size_t>(ownerIndex)] = posedScene.transforms[static_cast<std::size_t>(ownerIndex)];
+    }
+}
+
+void ApplyPathTrackPose(Scene& scene, const ScenePose& pose, const int ownerIndex) {
+    const Scene posedScene = SceneWithPoseApplied(scene, pose);
+    if (ownerIndex >= 0 && ownerIndex < static_cast<int>(scene.paths.size())
+        && ownerIndex < static_cast<int>(posedScene.paths.size())) {
+        scene.paths[static_cast<std::size_t>(ownerIndex)] = posedScene.paths[static_cast<std::size_t>(ownerIndex)];
+    }
+}
+
+void ApplyEffectTrackPose(Scene& scene, const ScenePose& pose, const EffectStackStage stage) {
+    const Scene posedScene = SceneWithPoseApplied(scene, pose);
+    switch (stage) {
+    case EffectStackStage::Denoiser:
+        scene.denoiser = posedScene.denoiser;
+        break;
+    case EffectStackStage::DepthOfField:
+        scene.depthOfField = posedScene.depthOfField;
+        break;
+    case EffectStackStage::Curves:
+        scene.postProcess.curvesEnabled = posedScene.postProcess.curvesEnabled;
+        scene.postProcess.curveBlackPoint = posedScene.postProcess.curveBlackPoint;
+        scene.postProcess.curveWhitePoint = posedScene.postProcess.curveWhitePoint;
+        scene.postProcess.curveGamma = posedScene.postProcess.curveGamma;
+        scene.postProcess.curveUseCustom = posedScene.postProcess.curveUseCustom;
+        scene.postProcess.curveControlPoints = posedScene.postProcess.curveControlPoints;
+        break;
+    case EffectStackStage::Sharpen:
+        scene.postProcess.sharpenEnabled = posedScene.postProcess.sharpenEnabled;
+        scene.postProcess.sharpenAmount = posedScene.postProcess.sharpenAmount;
+        break;
+    case EffectStackStage::HueShift:
+        scene.postProcess.hueShiftEnabled = posedScene.postProcess.hueShiftEnabled;
+        scene.postProcess.hueShiftDegrees = posedScene.postProcess.hueShiftDegrees;
+        scene.postProcess.hueShiftSaturation = posedScene.postProcess.hueShiftSaturation;
+        break;
+    case EffectStackStage::PostProcess:
+        scene.postProcess.enabled = posedScene.postProcess.enabled;
+        scene.postProcess.bloomIntensity = posedScene.postProcess.bloomIntensity;
+        scene.postProcess.bloomRadius = posedScene.postProcess.bloomRadius;
+        scene.postProcess.bloomThreshold = posedScene.postProcess.bloomThreshold;
+        break;
+    case EffectStackStage::ChromaticAberration:
+        scene.postProcess.chromaticAberrationEnabled = posedScene.postProcess.chromaticAberrationEnabled;
+        scene.postProcess.chromaticAberration = posedScene.postProcess.chromaticAberration;
+        break;
+    case EffectStackStage::ColorTemperature:
+        scene.postProcess.colorTemperatureEnabled = posedScene.postProcess.colorTemperatureEnabled;
+        scene.postProcess.colorTemperature = posedScene.postProcess.colorTemperature;
+        break;
+    case EffectStackStage::Saturation:
+        scene.postProcess.saturationEnabled = posedScene.postProcess.saturationEnabled;
+        scene.postProcess.saturationBoost = posedScene.postProcess.saturationBoost;
+        scene.postProcess.saturationVibrance = posedScene.postProcess.saturationVibrance;
+        break;
+    case EffectStackStage::ToneMapping:
+        scene.postProcess.toneMappingEnabled = posedScene.postProcess.toneMappingEnabled;
+        scene.postProcess.acesToneMap = posedScene.postProcess.acesToneMap;
+        break;
+    case EffectStackStage::FilmGrain:
+        scene.postProcess.filmGrainEnabled = posedScene.postProcess.filmGrainEnabled;
+        scene.postProcess.filmGrain = posedScene.postProcess.filmGrain;
+        scene.postProcess.filmGrainScale = posedScene.postProcess.filmGrainScale;
+        break;
+    case EffectStackStage::Vignette:
+        scene.postProcess.vignetteEnabled = posedScene.postProcess.vignetteEnabled;
+        scene.postProcess.vignetteIntensity = posedScene.postProcess.vignetteIntensity;
+        scene.postProcess.vignetteRoundness = posedScene.postProcess.vignetteRoundness;
+        break;
+    default:
+        break;
+    }
+}
+
 }  // namespace
 
 void ApplyKeyframeEasingPreset(SceneKeyframe& keyframe, const KeyframeEasing easing) {
@@ -1546,43 +1715,24 @@ Scene EvaluateSceneAtFrame(const Scene& scene, const double frame) {
         return evaluated;
     }
 
-    int previousIndex = -1;
-    int nextIndex = -1;
-    for (std::size_t index = 0; index < scene.keyframes.size(); ++index) {
-        if (scene.keyframes[index].frame <= clampedFrame) {
-            previousIndex = static_cast<int>(index);
-        }
-        if (scene.keyframes[index].frame >= clampedFrame) {
-            nextIndex = static_cast<int>(index);
-            while (nextIndex + 1 < static_cast<int>(scene.keyframes.size()) && scene.keyframes[static_cast<std::size_t>(nextIndex + 1)].frame == scene.keyframes[index].frame) {
-                ++nextIndex;
-            }
-            if (scene.keyframes[index].frame == clampedFrame) {
-                previousIndex = nextIndex;
-            }
-            break;
+    if (const std::optional<ScenePose> sceneTrackPose = EvaluateTrackPose(scene, clampedFrame, KeyframeOwnerType::Scene, 0); sceneTrackPose.has_value()) {
+        ApplySceneTrackPose(evaluated, *sceneTrackPose);
+    }
+    for (int transformIndex = 0; transformIndex < static_cast<int>(scene.transforms.size()); ++transformIndex) {
+        if (const std::optional<ScenePose> transformTrackPose = EvaluateTrackPose(scene, clampedFrame, KeyframeOwnerType::Transform, transformIndex); transformTrackPose.has_value()) {
+            ApplyTransformTrackPose(evaluated, *transformTrackPose, transformIndex);
         }
     }
-    if (previousIndex < 0) {
-        previousIndex = 0;
+    for (int pathIndex = 0; pathIndex < static_cast<int>(scene.paths.size()); ++pathIndex) {
+        if (const std::optional<ScenePose> pathTrackPose = EvaluateTrackPose(scene, clampedFrame, KeyframeOwnerType::Path, pathIndex); pathTrackPose.has_value()) {
+            ApplyPathTrackPose(evaluated, *pathTrackPose, pathIndex);
+        }
     }
-    if (nextIndex < 0) {
-        nextIndex = static_cast<int>(scene.keyframes.size()) - 1;
+    for (const EffectStackStage stage : kAllEffectStages) {
+        if (const std::optional<ScenePose> effectTrackPose = EvaluateTrackPose(scene, clampedFrame, KeyframeOwnerType::Effect, static_cast<int>(stage)); effectTrackPose.has_value()) {
+            ApplyEffectTrackPose(evaluated, *effectTrackPose, stage);
+        }
     }
-
-    if (previousIndex == nextIndex) {
-        ApplyScenePose(evaluated, scene.keyframes[static_cast<std::size_t>(previousIndex)].pose);
-        evaluated.timelineFrame = clampedFrame;
-        evaluated.timelineSeconds = TimelineSecondsForFrame(scene, clampedFrame);
-        evaluated.keyframes = scene.keyframes;
-        return evaluated;
-    }
-
-    const SceneKeyframe& previous = scene.keyframes[static_cast<std::size_t>(previousIndex)];
-    const SceneKeyframe& next = scene.keyframes[static_cast<std::size_t>(nextIndex)];
-    const double span = std::max(1.0, static_cast<double>(next.frame - previous.frame));
-    const double alpha = EvaluateKeyframeEasing(previous, (clampedFrame - static_cast<double>(previous.frame)) / span);
-    ApplyScenePose(evaluated, InterpolatePose(previous.pose, next.pose, alpha));
     evaluated.timelineFrame = clampedFrame;
     evaluated.timelineSeconds = TimelineSecondsForFrame(scene, clampedFrame);
     evaluated.keyframes = scene.keyframes;

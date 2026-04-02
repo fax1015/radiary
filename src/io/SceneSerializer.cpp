@@ -421,6 +421,13 @@ void WritePostProcessSettings(std::ostream& stream, const PostProcessSettings& p
     stream << indent << "\"curveWhitePoint\": " << pp.curveWhitePoint << ",\n";
     stream << indent << "\"curveGamma\": " << pp.curveGamma << ",\n";
     stream << indent << "\"curveUseCustom\": " << (pp.curveUseCustom ? "true" : "false") << ",\n";
+    stream << indent << "\"curveControlPoints\": [\n";
+    for (std::size_t index = 0; index < pp.curveControlPoints.size(); ++index) {
+        const Vec2& point = pp.curveControlPoints[index];
+        stream << indent << "  {\"x\": " << point.x << ", \"y\": " << point.y << "}";
+        stream << (index + 1 < pp.curveControlPoints.size() ? ",\n" : "\n");
+    }
+    stream << indent << "],\n";
     stream << indent << "\"sharpenEnabled\": " << (pp.sharpenEnabled ? "true" : "false") << ",\n";
     stream << indent << "\"sharpenAmount\": " << pp.sharpenAmount << ",\n";
     stream << indent << "\"hueShiftEnabled\": " << (pp.hueShiftEnabled ? "true" : "false") << ",\n";
@@ -794,23 +801,39 @@ void LoadScenePose(const JsonValue& poseValue, ScenePose& pose) {
         pose.postProcess.curveBlackPoint = Number(*postProcess, "curveBlackPoint", pose.postProcess.curveBlackPoint);
         pose.postProcess.curveWhitePoint = Number(*postProcess, "curveWhitePoint", pose.postProcess.curveWhitePoint);
         pose.postProcess.curveGamma = Number(*postProcess, "curveGamma", pose.postProcess.curveGamma);
+        pose.postProcess.curveUseCustom = Boolean(*postProcess, "curveUseCustom", pose.postProcess.curveUseCustom);
+        if (const JsonValue* curveControlPoints = postProcess->Find("curveControlPoints"); curveControlPoints && curveControlPoints->type == JsonValue::Type::Array) {
+            pose.postProcess.curveControlPoints.clear();
+            for (const JsonValue& pointValue : curveControlPoints->arrayValue) {
+                if (pointValue.type != JsonValue::Type::Object) {
+                    continue;
+                }
+                pose.postProcess.curveControlPoints.push_back({
+                    Number(pointValue, "x", 0.0),
+                    Number(pointValue, "y", 0.0)
+                });
+            }
+        }
         pose.postProcess.sharpenEnabled = Boolean(*postProcess, "sharpenEnabled", pose.postProcess.sharpenEnabled);
         pose.postProcess.sharpenAmount = Number(*postProcess, "sharpenAmount", pose.postProcess.sharpenAmount);
         pose.postProcess.hueShiftEnabled = Boolean(*postProcess, "hueShiftEnabled", pose.postProcess.hueShiftEnabled);
         pose.postProcess.hueShiftDegrees = Number(*postProcess, "hueShiftDegrees", pose.postProcess.hueShiftDegrees);
-        pose.postProcess.chromaticAberrationEnabled = Boolean(*postProcess, "chromaticAberrationEnabled", pose.postProcess.enabled);
+        pose.postProcess.hueShiftSaturation = Number(*postProcess, "hueShiftSaturation", pose.postProcess.hueShiftSaturation);
+        pose.postProcess.chromaticAberrationEnabled = Boolean(*postProcess, "chromaticAberrationEnabled", pose.postProcess.chromaticAberrationEnabled);
         pose.postProcess.chromaticAberration = Number(*postProcess, "chromaticAberration", pose.postProcess.chromaticAberration);
-        pose.postProcess.vignetteEnabled = Boolean(*postProcess, "vignetteEnabled", pose.postProcess.enabled);
+        pose.postProcess.vignetteEnabled = Boolean(*postProcess, "vignetteEnabled", pose.postProcess.vignetteEnabled);
         pose.postProcess.vignetteIntensity = Number(*postProcess, "vignetteIntensity", pose.postProcess.vignetteIntensity);
         pose.postProcess.vignetteRoundness = Number(*postProcess, "vignetteRoundness", pose.postProcess.vignetteRoundness);
         pose.postProcess.toneMappingEnabled = Boolean(*postProcess, "toneMappingEnabled", Boolean(*postProcess, "acesToneMap", pose.postProcess.enabled));
         pose.postProcess.acesToneMap = pose.postProcess.toneMappingEnabled;
-        pose.postProcess.filmGrainEnabled = Boolean(*postProcess, "filmGrainEnabled", pose.postProcess.enabled);
+        pose.postProcess.filmGrainEnabled = Boolean(*postProcess, "filmGrainEnabled", pose.postProcess.filmGrainEnabled);
         pose.postProcess.filmGrain = Number(*postProcess, "filmGrain", pose.postProcess.filmGrain);
-        pose.postProcess.colorTemperatureEnabled = Boolean(*postProcess, "colorTemperatureEnabled", pose.postProcess.enabled);
+        pose.postProcess.filmGrainScale = Number(*postProcess, "filmGrainScale", pose.postProcess.filmGrainScale);
+        pose.postProcess.colorTemperatureEnabled = Boolean(*postProcess, "colorTemperatureEnabled", pose.postProcess.colorTemperatureEnabled);
         pose.postProcess.colorTemperature = Number(*postProcess, "colorTemperature", pose.postProcess.colorTemperature);
-        pose.postProcess.saturationEnabled = Boolean(*postProcess, "saturationEnabled", pose.postProcess.enabled);
+        pose.postProcess.saturationEnabled = Boolean(*postProcess, "saturationEnabled", pose.postProcess.saturationEnabled);
         pose.postProcess.saturationBoost = Number(*postProcess, "saturationBoost", pose.postProcess.saturationBoost);
+        pose.postProcess.saturationVibrance = Number(*postProcess, "saturationVibrance", pose.postProcess.saturationVibrance);
     }
     if (const JsonValue* effectStack = poseValue.Find("effectStack"); effectStack && effectStack->type == JsonValue::Type::Array) {
         EffectStackOrder loadedOrder;
@@ -909,7 +932,23 @@ bool SceneSerializer::Save(const Scene& scene, const std::filesystem::path& path
                << ", \"g\": " << static_cast<int>(keyframe.markerColor.g)
                << ", \"b\": " << static_cast<int>(keyframe.markerColor.b)
                << ", \"a\": " << static_cast<int>(keyframe.markerColor.a) << "},\n";
-        stream << "      \"ownerType\": \"" << (keyframe.ownerType == KeyframeOwnerType::Path ? "path" : keyframe.ownerType == KeyframeOwnerType::Scene ? "scene" : "transform") << "\",\n";
+        const char* ownerTypeName = "transform";
+        switch (keyframe.ownerType) {
+        case KeyframeOwnerType::Path:
+            ownerTypeName = "path";
+            break;
+        case KeyframeOwnerType::Scene:
+            ownerTypeName = "scene";
+            break;
+        case KeyframeOwnerType::Effect:
+            ownerTypeName = "effect";
+            break;
+        case KeyframeOwnerType::Transform:
+        default:
+            ownerTypeName = "transform";
+            break;
+        }
+        stream << "      \"ownerType\": \"" << ownerTypeName << "\",\n";
         stream << "      \"ownerIndex\": " << keyframe.ownerIndex << ",\n";
         stream << "      \"easing\": \"" << ToString(keyframe.easing) << "\",\n";
         stream << "      \"easingCurve\": {\"x1\": " << keyframe.easeX1
@@ -1003,24 +1042,36 @@ std::optional<Scene> SceneSerializer::Load(const std::filesystem::path& path, st
         scene.postProcess.curveWhitePoint = Number(*postProcess, "curveWhitePoint", scene.postProcess.curveWhitePoint);
         scene.postProcess.curveGamma = Number(*postProcess, "curveGamma", scene.postProcess.curveGamma);
         scene.postProcess.curveUseCustom = Boolean(*postProcess, "curveUseCustom", scene.postProcess.curveUseCustom);
+        if (const JsonValue* curveControlPoints = postProcess->Find("curveControlPoints"); curveControlPoints && curveControlPoints->type == JsonValue::Type::Array) {
+            scene.postProcess.curveControlPoints.clear();
+            for (const JsonValue& pointValue : curveControlPoints->arrayValue) {
+                if (pointValue.type != JsonValue::Type::Object) {
+                    continue;
+                }
+                scene.postProcess.curveControlPoints.push_back({
+                    Number(pointValue, "x", 0.0),
+                    Number(pointValue, "y", 0.0)
+                });
+            }
+        }
         scene.postProcess.sharpenEnabled = Boolean(*postProcess, "sharpenEnabled", scene.postProcess.sharpenEnabled);
         scene.postProcess.sharpenAmount = Number(*postProcess, "sharpenAmount", scene.postProcess.sharpenAmount);
         scene.postProcess.hueShiftEnabled = Boolean(*postProcess, "hueShiftEnabled", scene.postProcess.hueShiftEnabled);
         scene.postProcess.hueShiftDegrees = Number(*postProcess, "hueShiftDegrees", scene.postProcess.hueShiftDegrees);
         scene.postProcess.hueShiftSaturation = Number(*postProcess, "hueShiftSaturation", scene.postProcess.hueShiftSaturation);
-        scene.postProcess.chromaticAberrationEnabled = Boolean(*postProcess, "chromaticAberrationEnabled", scene.postProcess.enabled);
+        scene.postProcess.chromaticAberrationEnabled = Boolean(*postProcess, "chromaticAberrationEnabled", scene.postProcess.chromaticAberrationEnabled);
         scene.postProcess.chromaticAberration = Number(*postProcess, "chromaticAberration", scene.postProcess.chromaticAberration);
-        scene.postProcess.vignetteEnabled = Boolean(*postProcess, "vignetteEnabled", scene.postProcess.enabled);
+        scene.postProcess.vignetteEnabled = Boolean(*postProcess, "vignetteEnabled", scene.postProcess.vignetteEnabled);
         scene.postProcess.vignetteIntensity = Number(*postProcess, "vignetteIntensity", scene.postProcess.vignetteIntensity);
         scene.postProcess.vignetteRoundness = Number(*postProcess, "vignetteRoundness", scene.postProcess.vignetteRoundness);
         scene.postProcess.toneMappingEnabled = Boolean(*postProcess, "toneMappingEnabled", Boolean(*postProcess, "acesToneMap", scene.postProcess.enabled));
         scene.postProcess.acesToneMap = scene.postProcess.toneMappingEnabled;
-        scene.postProcess.filmGrainEnabled = Boolean(*postProcess, "filmGrainEnabled", scene.postProcess.enabled);
+        scene.postProcess.filmGrainEnabled = Boolean(*postProcess, "filmGrainEnabled", scene.postProcess.filmGrainEnabled);
         scene.postProcess.filmGrain = Number(*postProcess, "filmGrain", scene.postProcess.filmGrain);
         scene.postProcess.filmGrainScale = Number(*postProcess, "filmGrainScale", scene.postProcess.filmGrainScale);
-        scene.postProcess.colorTemperatureEnabled = Boolean(*postProcess, "colorTemperatureEnabled", scene.postProcess.enabled);
+        scene.postProcess.colorTemperatureEnabled = Boolean(*postProcess, "colorTemperatureEnabled", scene.postProcess.colorTemperatureEnabled);
         scene.postProcess.colorTemperature = Number(*postProcess, "colorTemperature", scene.postProcess.colorTemperature);
-        scene.postProcess.saturationEnabled = Boolean(*postProcess, "saturationEnabled", scene.postProcess.enabled);
+        scene.postProcess.saturationEnabled = Boolean(*postProcess, "saturationEnabled", scene.postProcess.saturationEnabled);
         scene.postProcess.saturationBoost = Number(*postProcess, "saturationBoost", scene.postProcess.saturationBoost);
         scene.postProcess.saturationVibrance = Number(*postProcess, "saturationVibrance", scene.postProcess.saturationVibrance);
     }
@@ -1129,6 +1180,8 @@ std::optional<Scene> SceneSerializer::Load(const std::filesystem::path& path, st
                 keyframe.ownerType = KeyframeOwnerType::Path;
             } else if (ownerType == "scene") {
                 keyframe.ownerType = KeyframeOwnerType::Scene;
+            } else if (ownerType == "effect") {
+                keyframe.ownerType = KeyframeOwnerType::Effect;
             } else if (ownerType == "transform") {
                 keyframe.ownerType = KeyframeOwnerType::Transform;
             } else {

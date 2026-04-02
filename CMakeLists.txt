@@ -198,6 +198,8 @@ enable_testing()
 
 set(radiary_test_sources
     tests/TestMain.cpp
+    tests/SceneCoreTests.cpp
+    tests/SceneKeyframeEvaluationTests.cpp
     tests/SceneSerializerTests.cpp
     tests/PathDrawListBuilderTests.cpp
     tests/PreviewRenderDecisionsTests.cpp

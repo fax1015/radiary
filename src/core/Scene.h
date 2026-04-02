@@ -83,7 +83,8 @@ enum class KeyframeEasing : std::uint8_t {
 enum class KeyframeOwnerType : std::uint8_t {
     Transform,
     Path,
-    Scene
+    Scene,
+    Effect
 };
 
 enum class SymmetryMode : std::uint8_t {
