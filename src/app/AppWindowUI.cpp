@@ -32,7 +32,10 @@ constexpr float kStatusPanelPaddingY = 10.0f;
 constexpr float kStatusPanelHeaderPaddingY = 8.0f;
 constexpr float kStatusPanelSeparatorHeight = 1.0f;
 constexpr float kStatusPanelMinWrapWidth = 240.0f;
-constexpr float kDefaultToolbarHeight = 52.0f;
+constexpr float kToolbarWindowPaddingX = 8.0f;
+constexpr float kToolbarWindowPaddingY = 7.0f;
+constexpr float kToolbarFramePaddingX = 9.0f;
+constexpr float kToolbarFramePaddingY = 6.0f;
 constexpr float kDefaultBottomPanelHeight = 190.0f;
 constexpr float kDefaultLeftPanelWidth = 464.0f;
 constexpr float kDefaultRightPanelWidth = 520.0f;
@@ -165,19 +168,25 @@ struct StatusOverlayLayout {
     float headerHeight = 0.0f;
 };
 
-StatusOverlayLayout BuildStatusOverlayLayout(const std::string& bodyText, const float maxPanelWidth) {
+StatusOverlayLayout BuildStatusOverlayLayout(
+    const std::string& bodyText,
+    const float maxPanelWidth,
+    const float paddingX,
+    const float paddingY,
+    const float headerPaddingY,
+    const float separatorHeight) {
     StatusOverlayLayout layout;
     layout.titleSize = ImGui::CalcTextSize("Status");
-    layout.headerHeight = layout.titleSize.y + kStatusPanelHeaderPaddingY * 2.0f;
+    layout.headerHeight = layout.titleSize.y + headerPaddingY * 2.0f;
 
     layout.bodySize = ImGui::CalcTextSize(bodyText.c_str(), nullptr, true);
     layout.size.x = std::min(
         maxPanelWidth,
         std::max(
-            layout.titleSize.x + kStatusPanelPaddingX * 2.0f,
-            layout.bodySize.x + kStatusPanelPaddingX * 2.0f));
-    layout.textAvailableWidth = std::max(1.0f, layout.size.x - kStatusPanelPaddingX * 2.0f);
-    layout.size.y = layout.headerHeight + kStatusPanelSeparatorHeight + layout.bodySize.y + kStatusPanelPaddingY * 2.0f;
+            layout.titleSize.x + paddingX * 2.0f,
+            layout.bodySize.x + paddingX * 2.0f));
+    layout.textAvailableWidth = std::max(1.0f, layout.size.x - paddingX * 2.0f);
+    layout.size.y = layout.headerHeight + separatorHeight + layout.bodySize.y + paddingY * 2.0f;
     return layout;
 }
 
@@ -288,12 +297,12 @@ void AppWindow::DrawBlockingOverlay() const {
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(3);
 
-    const float panelWidth = std::clamp(viewport->Size.x - 48.0f, 320.0f, 440.0f);
-    const float iconExtent = 76.0f;
-    const float iconGap = 22.0f;
-    const float panelEstimatedHeight = 184.0f;
+    const float panelWidth = std::clamp(viewport->Size.x - ScaleUi(48.0f), ScaleUi(320.0f), ScaleUi(440.0f));
+    const float iconExtent = ScaleUi(76.0f);
+    const float iconGap = ScaleUi(22.0f);
+    const float panelEstimatedHeight = ScaleUi(184.0f);
     const float groupHeight = iconExtent + iconGap + panelEstimatedHeight;
-    const float groupTop = viewport->Pos.y + std::max(24.0f, (viewport->Size.y - groupHeight) * 0.5f);
+    const float groupTop = viewport->Pos.y + std::max(ScaleUi(24.0f), (viewport->Size.y - groupHeight) * 0.5f);
     const ImVec2 iconCenter(
         viewport->Pos.x + viewport->Size.x * 0.5f,
         groupTop + iconExtent * 0.5f);
@@ -309,9 +318,9 @@ void AppWindow::DrawBlockingOverlay() const {
         ImVec2(0.5f, 0.0f));
     ImGui::SetNextWindowSizeConstraints(
         ImVec2(panelWidth, 0.0f),
-        ImVec2(panelWidth, std::max(160.0f, viewport->Size.y - 48.0f)));
+        ImVec2(panelWidth, std::max(ScaleUi(160.0f), viewport->Size.y - ScaleUi(48.0f))));
     PushFloatingPanelStyle();
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f, 16.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ScaleUi(18.0f), ScaleUi(16.0f)));
     ImGui::Begin(
         "##BlockingOverlayPanel",
         nullptr,
@@ -377,8 +386,9 @@ void AppWindow::DrawDockspace() {
     DrawDockspaceBackdrop(viewport);
     const ImGuiID dockspaceId = ImGui::GetID("RadiaryDockspaceNode");
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
-    if (!defaultLayoutBuilt_) {
+    if (!defaultLayoutBuilt_ || rebuildLayoutNextFrame_) {
         BuildDefaultLayout();
+        rebuildLayoutNextFrame_ = false;
     }
     ImGui::End();
 }
@@ -389,6 +399,10 @@ void AppWindow::BuildDefaultLayout() {
         return;
     }
 
+    const float toolbarHeight = ToolbarHeight();
+    const float bottomPanelHeight = ScaleUi(kDefaultBottomPanelHeight);
+    const float leftPanelWidth = ScaleUi(kDefaultLeftPanelWidth);
+    const float rightPanelWidth = ScaleUi(kDefaultRightPanelWidth);
     const ImGuiID dockspaceId = ImGui::GetID("RadiaryDockspaceNode");
     ImGui::DockBuilderRemoveNode(dockspaceId);
     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
@@ -399,18 +413,18 @@ void AppWindow::BuildDefaultLayout() {
     ImGuiID bottomId = 0;
     ImGuiID leftId = 0;
     ImGuiID rightId = 0;
-    const float toolbarRatio = SplitRatioForPixels(kDefaultToolbarHeight, viewport->Size.y);
+    const float toolbarRatio = SplitRatioForPixels(toolbarHeight, viewport->Size.y);
     ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Up, toolbarRatio, &topId, &centerId);
 
-    const float remainingHeightAfterToolbar = std::max(1.0f, viewport->Size.y - kDefaultToolbarHeight);
-    const float bottomRatio = SplitRatioForPixels(kDefaultBottomPanelHeight, remainingHeightAfterToolbar);
+    const float remainingHeightAfterToolbar = std::max(1.0f, viewport->Size.y - toolbarHeight);
+    const float bottomRatio = SplitRatioForPixels(bottomPanelHeight, remainingHeightAfterToolbar);
     ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Down, bottomRatio, &bottomId, &centerId);
 
-    const float leftRatio = SplitRatioForPixels(kDefaultLeftPanelWidth, viewport->Size.x);
+    const float leftRatio = SplitRatioForPixels(leftPanelWidth, viewport->Size.x);
     ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Left, leftRatio, &leftId, &centerId);
 
-    const float remainingWidthAfterLeft = std::max(1.0f, viewport->Size.x - kDefaultLeftPanelWidth);
-    const float rightRatio = SplitRatioForPixels(kDefaultRightPanelWidth, remainingWidthAfterLeft);
+    const float remainingWidthAfterLeft = std::max(1.0f, viewport->Size.x - leftPanelWidth);
+    const float rightRatio = SplitRatioForPixels(rightPanelWidth, remainingWidthAfterLeft);
     ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Right, rightRatio, &rightId, &centerId);
 
     ImGui::DockBuilderDockWindow("Toolbar", topId);
@@ -428,10 +442,16 @@ void AppWindow::BuildDefaultLayout() {
     if (ImGuiDockNode* topNode = ImGui::DockBuilderGetNode(topId)) {
         topNode->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
         topNode->LocalFlags |= ImGuiDockNodeFlags_NoResize;
-        topNode->SizeRef.y = kDefaultToolbarHeight;
+        topNode->SizeRef.y = toolbarHeight;
     }
     ImGui::DockBuilderFinish(dockspaceId);
     defaultLayoutBuilt_ = true;
+}
+
+float AppWindow::ToolbarHeight() const {
+    const float frameHeight = ImGui::GetFontSize() + ScaleUi(kToolbarFramePaddingY * 2.0f);
+    const float windowPaddingHeight = ScaleUi(kToolbarWindowPaddingY * 2.0f);
+    return std::ceil(frameHeight + windowPaddingHeight);
 }
 
 void AppWindow::OpenAllDockPanels() {
@@ -507,8 +527,8 @@ void AppWindow::DrawDockPanelTabContextMenu(const char* panelName, bool& panelOp
 
 void AppWindow::DrawToolbar() {
     const UiTheme& theme = GetUiTheme();
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 7.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(9.0f, 6.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ScaleUi(kToolbarWindowPaddingX), ScaleUi(kToolbarWindowPaddingY)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ScaleUi(kToolbarFramePaddingX), ScaleUi(kToolbarFramePaddingY)));
     ImGui::Begin(
         "Toolbar",
         nullptr,
@@ -524,7 +544,7 @@ void AppWindow::DrawToolbar() {
         1.0f);
 
     const float toolbarWidth = ImGui::GetContentRegionAvail().x;
-    const float settingsGap = 8.0f;
+    const float settingsGap = ScaleUi(8.0f);
     const float settingsButtonWidth = ImGui::GetFrameHeight();
 
     ImGui::BeginChild(
@@ -547,7 +567,7 @@ void AppWindow::DrawToolbar() {
     if (appLogoSrv_ != nullptr) {
         const float brandRowStartY = ImGui::GetCursorPosY();
         ImGui::Image(reinterpret_cast<ImTextureID>(appLogoSrv_.Get()), ImVec2(brandLogoSize, brandLogoSize));
-        ImGui::SameLine(0.0f, 10.0f);
+        ImGui::SameLine(0.0f, ScaleUi(10.0f));
         ImGui::SetCursorPosY(brandRowStartY + std::max(0.0f, (brandLogoSize - ImGui::GetTextLineHeight()) * 0.5f));
     } else {
         ImGui::AlignTextToFramePadding();
@@ -576,7 +596,7 @@ void AppWindow::DrawToolbar() {
 
     drawDivider();
     DrawSectionChip("FILE", Mix(theme.accentSurface, theme.accent, 0.30f));
-    ImGui::SameLine(0.0f, 8.0f);
+    ImGui::SameLine(0.0f, ScaleUi(8.0f));
 
     if (DrawActionButton("##new_scene", "New", IconGlyph::NewScene, ActionTone::Slate)) {
         PushUndoState(scene_, "New Scene");
@@ -605,18 +625,18 @@ void AppWindow::DrawToolbar() {
         SaveSceneToDialog(currentScenePath_.empty());
     }
     ImGui::SameLine();
-    if (DrawActionButton("##save_scene_as", "Save As", IconGlyph::SaveSceneAs, ActionTone::Accent, false, true, 112.0f)) {
+    if (DrawActionButton("##save_scene_as", "Save As", IconGlyph::SaveSceneAs, ActionTone::Accent, false, true)) {
         SaveSceneToDialog(true);
     }
     ImGui::SameLine();
-    if (DrawActionButton("##export_scene", "Export", IconGlyph::ExportImage, ActionTone::Accent, exportPanelOpen_, true, 98.0f)) {
+    if (DrawActionButton("##export_scene", "Export", IconGlyph::ExportImage, ActionTone::Accent, exportPanelOpen_, true)) {
         exportPanelOpen_ = !exportPanelOpen_;
         if (exportPanelOpen_) {
             OpenExportPanel();
         }
     }
     exportButtonAnchorX_ = ImGui::GetItemRectMin().x;
-    exportButtonAnchorY_ = ImGui::GetItemRectMax().y + kOverlayPanelMarginY;
+    exportButtonAnchorY_ = ImGui::GetItemRectMax().y + ScaleUi(kOverlayPanelMarginY);
 
     drawDivider();
     DrawSectionChip("PLAY", Mix(theme.accentSurface, theme.accentHover, 0.42f));
@@ -665,21 +685,21 @@ void AppWindow::DrawToolbar() {
         const std::size_t nextIndex = presetIndex_ == 0 ? presetLibrary_.Count() - 1 : presetIndex_ - 1;
         LoadPreset(nextIndex);
     }
-    ImGui::SameLine(0.0f, 6.0f);
+    ImGui::SameLine(0.0f, ScaleUi(6.0f));
     const ImGuiStyle& style = ImGui::GetStyle();
     const float presetArrowWidth = ImGui::GetFrameHeight();
-    float presetComboWidth = 170.0f;
-    float presetPopupWidth = 170.0f;
-    constexpr float kPresetPopupMaxHeight = 320.0f;
+    float presetComboWidth = ScaleUi(170.0f);
+    float presetPopupWidth = ScaleUi(170.0f);
+    const float presetPopupMaxHeight = ScaleUi(320.0f);
     if (presetLibrary_.Count() > 0) {
         for (std::size_t index = 0; index < presetLibrary_.Count(); ++index) {
             const float textWidth = ImGui::CalcTextSize(presetLibrary_.NameAt(index).c_str()).x;
-            presetComboWidth = std::max(presetComboWidth, textWidth + presetArrowWidth + style.FramePadding.x * 2.0f + 18.0f);
-            presetPopupWidth = std::max(presetPopupWidth, textWidth + style.WindowPadding.x * 2.0f + style.FramePadding.x * 2.0f + 30.0f);
+            presetComboWidth = std::max(presetComboWidth, textWidth + presetArrowWidth + style.FramePadding.x * 2.0f + ScaleUi(18.0f));
+            presetPopupWidth = std::max(presetPopupWidth, textWidth + style.WindowPadding.x * 2.0f + style.FramePadding.x * 2.0f + ScaleUi(30.0f));
         }
     }
     ImGui::SetNextItemWidth(presetComboWidth);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(presetPopupWidth, 0.0f), ImVec2(presetPopupWidth, kPresetPopupMaxHeight));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(presetPopupWidth, 0.0f), ImVec2(presetPopupWidth, presetPopupMaxHeight));
     if (BeginComboWithMaterialArrow("##preset", presetLibrary_.Count() > 0 ? presetLibrary_.NameAt(presetIndex_).c_str() : "(none)")) {
         for (std::size_t index = 0; index < presetLibrary_.Count(); ++index) {
             const bool selected = index == presetIndex_;
@@ -693,7 +713,7 @@ void AppWindow::DrawToolbar() {
         }
         ImGui::EndCombo();
     }
-    ImGui::SameLine(0.0f, 6.0f);
+    ImGui::SameLine(0.0f, ScaleUi(6.0f));
     if (DrawActionButton("##preset_next", "", IconGlyph::ChevronRight, ActionTone::Slate, false, canStepPresets, 0.0f, "Next preset")) {
         PushUndoState(scene_);
         const std::size_t nextIndex = (presetIndex_ + 1) % presetLibrary_.Count();
@@ -702,8 +722,8 @@ void AppWindow::DrawToolbar() {
 
     drawDivider();
     DrawSectionChip("SCENE", Mix(theme.accentSurface, theme.accentActive, 0.34f));
-    ImGui::SameLine(0.0f, 8.0f);
-    ImGui::SetNextItemWidth(220.0f);
+    ImGui::SameLine(0.0f, ScaleUi(8.0f));
+    ImGui::SetNextItemWidth(ScaleUi(220.0f));
     const Scene beforeName = scene_;
     const bool nameChanged = ImGui::InputText("##scene_name", &scene_.name);
     CaptureWidgetUndo(beforeName, nameChanged);
@@ -712,7 +732,7 @@ void AppWindow::DrawToolbar() {
     }
 
     drawDivider();
-    ImGui::SetNextItemWidth(124.0f);
+    ImGui::SetNextItemWidth(ScaleUi(124.0f));
     if (BeginComboWithMaterialArrow("##toolbar_windows_menu", "Windows", ImGuiComboFlags_WidthFitPreview)) {
         DrawDockPanelVisibilityMenuItems();
         ImGui::Separator();
@@ -735,7 +755,7 @@ void AppWindow::DrawToolbar() {
         settingsPanelOpen_ = !settingsPanelOpen_;
     }
     settingsButtonAnchorX_ = ImGui::GetItemRectMin().x;
-    settingsButtonAnchorY_ = ImGui::GetItemRectMax().y + kOverlayPanelMarginY;
+    settingsButtonAnchorY_ = ImGui::GetItemRectMax().y + ScaleUi(kOverlayPanelMarginY);
     ImGui::EndChild();
     ImGui::End();
     ImGui::PopStyleVar(2);
@@ -963,8 +983,8 @@ void AppWindow::DrawSettingsPanel() {
         return;
     }
 
-    const float settingsPanelMarginX = kOverlayPanelMarginY + 10.0f;
-    const float settingsPanelMarginY = kOverlayPanelMarginY + 18.0f;
+    const float settingsPanelMarginX = ScaleUi(kOverlayPanelMarginY + 10.0f);
+    const float settingsPanelMarginY = ScaleUi(kOverlayPanelMarginY + 18.0f);
     const ImRect bounds(
         ImVec2(viewport->Pos.x + settingsPanelMarginX, viewport->Pos.y + settingsPanelMarginY),
         ImVec2(viewport->Pos.x + viewport->Size.x - settingsPanelMarginX, viewport->Pos.y + viewport->Size.y - settingsPanelMarginY));
@@ -1278,8 +1298,8 @@ void AppWindow::DrawExportPanel() {
         return;
     }
 
-    const float exportPanelMarginX = kOverlayPanelMarginY + 10.0f;
-    const float exportPanelMarginY = kOverlayPanelMarginY + 18.0f;
+    const float exportPanelMarginX = ScaleUi(kOverlayPanelMarginY + 10.0f);
+    const float exportPanelMarginY = ScaleUi(kOverlayPanelMarginY + 18.0f);
     const ImRect bounds(
         ImVec2(viewport->Pos.x + exportPanelMarginX, viewport->Pos.y + exportPanelMarginY),
         ImVec2(viewport->Pos.x + viewport->Size.x - exportPanelMarginX, viewport->Pos.y + viewport->Size.y - exportPanelMarginY));
@@ -1525,22 +1545,24 @@ void AppWindow::DrawEasingPanel() {
     const ImGuiWindow* lowerPanelWindow = timelineWindow != nullptr ? timelineWindow : previewWindow;
     const ImRect bounds(
         ImVec2(
-            viewport->Pos.x + kOverlayPanelMarginX,
-            (viewportWindow != nullptr ? viewportWindow->InnerRect.Min.y : viewport->Pos.y) + kOverlayPanelMarginY),
+            viewport->Pos.x + ScaleUi(kOverlayPanelMarginX),
+            (viewportWindow != nullptr ? viewportWindow->InnerRect.Min.y : viewport->Pos.y) + ScaleUi(kOverlayPanelMarginY)),
         ImVec2(
-            viewport->Pos.x + viewport->Size.x - kOverlayPanelMarginX,
-            (lowerPanelWindow != nullptr ? lowerPanelWindow->InnerRect.Max.y : viewport->Pos.y + viewport->Size.y) - kOverlayPanelMarginY));
-    const float maxWidth = std::max(1.0f, bounds.GetWidth() - kOverlayPanelMarginX * 2.0f);
-    const float maxHeight = std::max(1.0f, easingButtonAnchorY_ - bounds.Min.y - kOverlayPanelMarginY);
-    const float panelWidth = std::min(248.0f, maxWidth);
-    const float panelHeight = std::min(188.0f, maxHeight);
-    const float panelXMin = bounds.Min.x + kOverlayPanelMarginX;
-    const float panelXMax = std::max(panelXMin, bounds.Max.x - kOverlayPanelMarginX - panelWidth);
+            viewport->Pos.x + viewport->Size.x - ScaleUi(kOverlayPanelMarginX),
+            (lowerPanelWindow != nullptr ? lowerPanelWindow->InnerRect.Max.y : viewport->Pos.y + viewport->Size.y) - ScaleUi(kOverlayPanelMarginY)));
+    const float overlayMarginX = ScaleUi(kOverlayPanelMarginX);
+    const float overlayMarginY = ScaleUi(kOverlayPanelMarginY);
+    const float maxWidth = std::max(1.0f, bounds.GetWidth() - overlayMarginX * 2.0f);
+    const float maxHeight = std::max(1.0f, easingButtonAnchorY_ - bounds.Min.y - overlayMarginY);
+    const float panelWidth = std::min(ScaleUi(248.0f), maxWidth);
+    const float panelHeight = std::min(ScaleUi(188.0f), maxHeight);
+    const float panelXMin = bounds.Min.x + overlayMarginX;
+    const float panelXMax = std::max(panelXMin, bounds.Max.x - overlayMarginX - panelWidth);
     const float clampedX = std::clamp(
         easingButtonAnchorX_,
         panelXMin,
         panelXMax);
-    const float panelYMin = bounds.Min.y + kOverlayPanelMarginY;
+    const float panelYMin = bounds.Min.y + overlayMarginY;
     const float panelYMax = std::max(panelYMin, bounds.Max.y - panelHeight);
     const float panelY = std::clamp(
         easingButtonAnchorY_ - panelHeight,
@@ -1596,7 +1618,7 @@ void AppWindow::DrawLayersPanel() {
     DrawDockPanelTabContextMenu("Layers", layersPanelOpen_);
     ImGui::SeparatorText("Layer Stack");
 
-    if (DrawActionButton("##add_flame_layer", "Add Flame", IconGlyph::Add, ActionTone::Accent, false, true, 118.0f)) {
+    if (DrawActionButton("##add_flame_layer", "Add Flame", IconGlyph::Add, ActionTone::Accent, false, true)) {
         FinishLayerRename(false);
         PushUndoState(scene_);
         EnsureSelectionIsValid();
@@ -1611,7 +1633,7 @@ void AppWindow::DrawLayersPanel() {
     }
     markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
     ImGui::SameLine();
-    if (DrawActionButton("##add_path_layer", "Add Path", IconGlyph::Add, ActionTone::Accent, false, true, 112.0f)) {
+    if (DrawActionButton("##add_path_layer", "Add Path", IconGlyph::Add, ActionTone::Accent, false, true)) {
         FinishLayerRename(false);
         PushUndoState(scene_);
         EnsureSelectionIsValid();
@@ -1627,7 +1649,7 @@ void AppWindow::DrawLayersPanel() {
     markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
     ImGui::SameLine();
     const bool canRemoveLayer = CanRemoveSelectedLayers();
-    if (DrawActionButton("##remove_layer", "Remove", IconGlyph::Remove, ActionTone::Accent, false, canRemoveLayer, 108.0f) && canRemoveLayer) {
+    if (DrawActionButton("##remove_layer", "Remove", IconGlyph::Remove, ActionTone::Accent, false, canRemoveLayer) && canRemoveLayer) {
         RemoveSelectedLayers();
     }
     markLayerControlRect(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()));
@@ -2283,7 +2305,7 @@ void AppWindow::DrawInspectorPanel() {
     ImGui::PopStyleVar();
     inspectorPanelActive_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
     const float inspectorWidth = ImGui::GetContentRegionAvail().x;
-    const bool useWideInspector = inspectorWidth >= kWideInspectorMinWidth;
+    const bool useWideInspector = inspectorWidth >= ScaleUi(kWideInspectorMinWidth);
     DrawDockPanelTabContextMenu("Inspector", inspectorPanelOpen_);
     if (SelectedLayerCount() == 0) {
         ImGui::TextDisabled("No layers");
@@ -3100,7 +3122,7 @@ void AppWindow::DrawTimelinePanel() {
     const Scene defaultScene = CreateDefaultScene();
     const float playbackSectionGap = 0;
     const float playbackHeaderTopMargin = 0;
-    const float playbackHeaderHeight = std::max(1.0f, kDefaultToolbarHeight - ImGui::GetStyle().WindowPadding.y * 1.5f);
+    const float playbackHeaderHeight = std::max(1.0f, ToolbarHeight() - ImGui::GetStyle().WindowPadding.y * 1.5f);
     ImGui::Dummy(ImVec2(0.0f, playbackHeaderTopMargin));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImGui::GetStyle().WindowPadding.x, 0.0f));
     ImGui::BeginChild(
@@ -3259,7 +3281,7 @@ void AppWindow::DrawTimelinePanel() {
             easingPanelOpen_ = !easingPanelOpen_;
         }
         easingButtonAnchorX_ = ImGui::GetItemRectMin().x;
-        easingButtonAnchorY_ = ImGui::GetItemRectMin().y - kOverlayPanelMarginY;
+        easingButtonAnchorY_ = ImGui::GetItemRectMin().y - ScaleUi(kOverlayPanelMarginY);
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("Easing");
@@ -3638,7 +3660,7 @@ void AppWindow::DrawPreviewPanel() {
     ImGui::PopStyleVar();
     DrawDockPanelTabContextMenu("Preview", previewPanelOpen_);
     const Scene defaultScene = CreateDefaultScene();
-    const int previewGridColumns = ImGui::GetContentRegionAvail().x >= kWidePreviewGridMinWidth ? 2 : 1;
+    const int previewGridColumns = ImGui::GetContentRegionAvail().x >= ScaleUi(kWidePreviewGridMinWidth) ? 2 : 1;
     const std::uint32_t minInteractiveIterations = 10000;
     const std::uint32_t maxInteractiveIterations = 2000000;
     const std::uint32_t minIterations = 20000;
@@ -5558,7 +5580,7 @@ void AppWindow::DrawCameraPanel() {
     const double yawMax = 3.14;
     const double pitchMin = -1.45;
     const double pitchMax = 1.45;
-    const bool useWideCameraGrid = ImGui::GetContentRegionAvail().x >= kWideCameraGridMinWidth;
+    const bool useWideCameraGrid = ImGui::GetContentRegionAvail().x >= ScaleUi(kWideCameraGridMinWidth);
     const auto captureCameraEdit = [&](const Scene& before, const bool changed) {
         if (changed) {
             AutoKeyCurrentFrame();
@@ -5569,8 +5591,8 @@ void AppWindow::DrawCameraPanel() {
     const auto beginFieldGrid = [&](const char* id) {
         if (useWideCameraGrid) {
             const float contentWidth = ImGui::GetContentRegionAvail().x;
-            const float labelWidth = std::clamp(contentWidth * 0.10f, 72.0f, 92.0f);
-            const float inputWidth = std::max(120.0f, (contentWidth - labelWidth * 2.0f) * 0.5f);
+            const float labelWidth = std::clamp(contentWidth * 0.10f, ScaleUi(72.0f), ScaleUi(92.0f));
+            const float inputWidth = std::max(ScaleUi(120.0f), (contentWidth - labelWidth * 2.0f) * 0.5f);
             ImGui::Columns(4, id, false);
             ImGui::SetColumnWidth(0, labelWidth);
             ImGui::SetColumnWidth(1, inputWidth);
@@ -5660,9 +5682,9 @@ void AppWindow::DrawCameraPanel() {
 
     ImGui::Spacing();
     const float framingActionsWidth = ImGui::GetContentRegionAvail().x;
-    const float lockButtonWidth = 148.0f;
-    const float swapButtonWidth = 132.0f;
-    const float framingActionGap = 8.0f;
+    const float lockButtonWidth = ScaleUi(148.0f);
+    const float swapButtonWidth = ScaleUi(132.0f);
+    const float framingActionGap = ScaleUi(8.0f);
     const bool stackFramingActions = framingActionsWidth < (lockButtonWidth + swapButtonWidth + framingActionGap);
     if (DrawActionButton(
             "##camera_aspect_lock",
@@ -5738,8 +5760,8 @@ void AppWindow::DrawCameraPanel() {
     endFieldGrid();
 
     ImGui::Spacing();
-    const bool stackCameraActions = ImGui::GetContentRegionAvail().x < kWideCameraActionsMinWidth;
-    const float resetButtonWidth = stackCameraActions ? std::max(0.0f, ImGui::GetContentRegionAvail().x) : 150.0f;
+    const bool stackCameraActions = ImGui::GetContentRegionAvail().x < ScaleUi(kWideCameraActionsMinWidth);
+    const float resetButtonWidth = stackCameraActions ? std::max(0.0f, ImGui::GetContentRegionAvail().x) : ScaleUi(150.0f);
     if (DrawActionButton("##camera_panel_reset_camera", "Reset Camera", IconGlyph::ResetCamera, ActionTone::Accent, false, true, resetButtonWidth)) {
         PushUndoState(scene_);
         scene_.camera = CameraState {};
@@ -5752,7 +5774,7 @@ void AppWindow::DrawCameraPanel() {
     if (!stackCameraActions) {
         ImGui::SameLine();
     }
-    const float exportButtonWidth = stackCameraActions ? std::max(0.0f, ImGui::GetContentRegionAvail().x) : 146.0f;
+    const float exportButtonWidth = stackCameraActions ? std::max(0.0f, ImGui::GetContentRegionAvail().x) : ScaleUi(146.0f);
     if (DrawActionButton("##camera_panel_export", "Open Export", IconGlyph::ExportImage, ActionTone::Accent, exportPanelOpen_, true, exportButtonWidth)) {
         exportPanelOpen_ = !exportPanelOpen_;
         if (exportPanelOpen_) {
@@ -5776,10 +5798,22 @@ void AppWindow::DrawViewportPanel() {
         + std::to_string(std::max(1, UploadedViewportWidth()))
         + "x"
         + std::to_string(std::max(1, UploadedViewportHeight()));
-    const StatusOverlayLayout minStatusLayout = BuildStatusOverlayLayout(statusLine, kStatusPanelMinWrapWidth + kStatusPanelPaddingX * 2.0f);
+    const float statusPaddingX = ScaleUi(kStatusPanelPaddingX);
+    const float statusPaddingY = ScaleUi(kStatusPanelPaddingY);
+    const float statusHeaderPaddingY = ScaleUi(kStatusPanelHeaderPaddingY);
+    const float statusSeparatorHeight = ScaleUi(kStatusPanelSeparatorHeight);
+    const float overlayMarginX = ScaleUi(kOverlayPanelMarginX);
+    const float overlayMarginY = ScaleUi(kOverlayPanelMarginY);
+    const StatusOverlayLayout minStatusLayout = BuildStatusOverlayLayout(
+        statusLine,
+        ScaleUi(kStatusPanelMinWrapWidth) + statusPaddingX * 2.0f,
+        statusPaddingX,
+        statusPaddingY,
+        statusHeaderPaddingY,
+        statusSeparatorHeight);
     const ImVec2 viewportMinSize(
-        minStatusLayout.size.x + kOverlayPanelMarginX * 2.0f,
-        minStatusLayout.size.y + kOverlayPanelMarginY * 2.0f);
+        minStatusLayout.size.x + overlayMarginX * 2.0f,
+        minStatusLayout.size.y + overlayMarginY * 2.0f);
     ImGui::SetNextWindowSizeConstraints(viewportMinSize, ImVec2(FLT_MAX, FLT_MAX));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5.0f));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, theme.panelBackgroundInset);
@@ -5917,12 +5951,24 @@ void AppWindow::DrawStatusBar(const ImVec2& viewportMin, const ImVec2& viewportM
         + std::to_string(std::max(1, UploadedViewportWidth()))
         + "x"
         + std::to_string(std::max(1, UploadedViewportHeight()));
-    const float maxPanelWidth = std::max(1.0f, viewportRect.GetWidth() - kOverlayPanelMarginX * 2.0f);
-    const StatusOverlayLayout layout = BuildStatusOverlayLayout(bodyText, maxPanelWidth);
+    const float overlayMarginX = ScaleUi(kOverlayPanelMarginX);
+    const float overlayMarginY = ScaleUi(kOverlayPanelMarginY);
+    const float statusPaddingX = ScaleUi(kStatusPanelPaddingX);
+    const float statusPaddingY = ScaleUi(kStatusPanelPaddingY);
+    const float statusHeaderPaddingY = ScaleUi(kStatusPanelHeaderPaddingY);
+    const float statusSeparatorHeight = ScaleUi(kStatusPanelSeparatorHeight);
+    const float maxPanelWidth = std::max(1.0f, viewportRect.GetWidth() - overlayMarginX * 2.0f);
+    const StatusOverlayLayout layout = BuildStatusOverlayLayout(
+        bodyText,
+        maxPanelWidth,
+        statusPaddingX,
+        statusPaddingY,
+        statusHeaderPaddingY,
+        statusSeparatorHeight);
 
     const ImVec2 panelMin(
-        std::max(viewportRect.Min.x + kOverlayPanelMarginX, viewportRect.Max.x - kOverlayPanelMarginX - layout.size.x),
-        viewportRect.Min.y + kOverlayPanelMarginY);
+        std::max(viewportRect.Min.x + overlayMarginX, viewportRect.Max.x - overlayMarginX - layout.size.x),
+        viewportRect.Min.y + overlayMarginY);
     const ImVec2 panelMax(panelMin.x + layout.size.x, panelMin.y + layout.size.y);
     const ImVec2 headerMax(panelMax.x, panelMin.y + layout.headerHeight);
     const float separatorY = headerMax.y;
@@ -5934,25 +5980,25 @@ void AppWindow::DrawStatusBar(const ImVec2& viewportMin, const ImVec2& viewportM
         ImVec2(panelMin.x, separatorY),
         ImVec2(panelMax.x, separatorY),
         ImGui::GetColorU32(theme.border),
-        kStatusPanelSeparatorHeight);
+        statusSeparatorHeight);
     drawList->AddRect(panelMin, panelMax, ImGui::GetColorU32(theme.border), theme.roundingLarge, 0, 1.0f);
 
-    const ImVec2 titlePos(panelMin.x + kStatusPanelPaddingX, panelMin.y + kStatusPanelHeaderPaddingY);
-    const ImVec2 bodyPos(panelMin.x + kStatusPanelPaddingX, separatorY + kStatusPanelPaddingY);
+    const ImVec2 titlePos(panelMin.x + statusPaddingX, panelMin.y + statusHeaderPaddingY);
+    const ImVec2 bodyPos(panelMin.x + statusPaddingX, separatorY + statusPaddingY);
     ImGui::PushStyleColor(ImGuiCol_Text, theme.text);
     ImGui::RenderTextEllipsis(
         drawList,
         titlePos,
-        ImVec2(panelMax.x - kStatusPanelPaddingX, headerMax.y),
-        panelMax.x - kStatusPanelPaddingX,
+        ImVec2(panelMax.x - statusPaddingX, headerMax.y),
+        panelMax.x - statusPaddingX,
         "Status",
         nullptr,
         &layout.titleSize);
     ImGui::RenderTextEllipsis(
         drawList,
         bodyPos,
-        ImVec2(panelMax.x - kStatusPanelPaddingX, panelMax.y - kStatusPanelPaddingY),
-        panelMax.x - kStatusPanelPaddingX,
+        ImVec2(panelMax.x - statusPaddingX, panelMax.y - statusPaddingY),
+        panelMax.x - statusPaddingX,
         bodyText.c_str(),
         nullptr,
         &layout.bodySize);

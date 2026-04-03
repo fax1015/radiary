@@ -235,6 +235,7 @@ private:
     bool swapChainOccluded_ = false;
     bool running_ = true;
     bool defaultLayoutBuilt_ = false;
+    bool rebuildLayoutNextFrame_ = false;
     bool inSizeMove_ = false;
 
     Scene scene_ = CreateDefaultScene();
@@ -369,6 +370,8 @@ private:
     bool interactivePreview_ = false;
     bool asyncViewportRendering_ = true;
     std::uint32_t interactivePreviewIterations_ = 60000;
+    float uiScale_ = 1.0f;
+    float lastUiScaleForLayout_ = -1.0f;
     ImFont* uiFont_ = nullptr;
     ImFont* brandFont_ = nullptr;
     std::filesystem::path appLogoPath_;
@@ -432,7 +435,10 @@ private:
     bool EnsureStartupLogoSvgLoaded();
     void SetupImGui();
     void ShutdownImGui();
-    void ApplyStyle() const;
+    void RefreshUiScale();
+    float UiScale() const;
+    float ScaleUi(float value) const;
+    void ApplyStyle();
     void ApplyPendingResize();
     void CreateAppLogoTexture();
     void CleanupAppLogoTexture();
@@ -443,6 +449,7 @@ private:
     void DrawBlockingOverlay() const;
     void DrawDockspace();
     void BuildDefaultLayout();
+    float ToolbarHeight() const;
     void DrawToolbar();
     void DrawLayersPanel();
     void DrawKeyframeListPanel();

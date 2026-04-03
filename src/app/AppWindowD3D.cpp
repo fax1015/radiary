@@ -18,6 +18,7 @@ using namespace radiary;
 namespace {
 
 constexpr int kAppSettingsVersion = 1;
+constexpr float kUiDesignDpiScale = 1.5f;
 
 std::filesystem::path UserSettingsPath() {
     wchar_t localAppData[MAX_PATH] = L"";
@@ -759,8 +760,47 @@ void AppWindow::ShutdownImGui() {
     ImGui::DestroyContext();
 }
 
-void AppWindow::ApplyStyle() const {
-    ApplyRadiaryStyle(ImGui::GetStyle());
+void AppWindow::RefreshUiScale() {
+    if (window_ == nullptr) {
+        uiScale_ = 1.0f;
+        return;
+    }
+
+    const float dpiScale = ImGui_ImplWin32_GetDpiScaleForHwnd(window_);
+    uiScale_ = std::max(0.5f, dpiScale / kUiDesignDpiScale);
+}
+
+float AppWindow::UiScale() const {
+    return uiScale_;
+}
+
+float AppWindow::ScaleUi(const float value) const {
+    return value * uiScale_;
+}
+
+void AppWindow::ApplyStyle() {
+    RefreshUiScale();
+
+    ImGuiStyle style {};
+    ApplyRadiaryStyle(style);
+    
+    // Scale all UI values relative to 150% design baseline
+    style.ScaleAllSizes(uiScale_);
+    
+    // Fix border radius scaling - ensure they don't disappear at lower DPI
+    // ScaleAllSizes uses integer truncation which makes small radii vanish
+    style.WindowRounding = std::max(2.0f, style.WindowRounding);
+    style.ChildRounding = std::max(2.0f, style.ChildRounding);
+    style.FrameRounding = std::max(2.0f, style.FrameRounding);
+    style.PopupRounding = std::max(2.0f, style.PopupRounding);
+    style.ScrollbarRounding = std::max(2.0f, style.ScrollbarRounding);
+    style.GrabRounding = std::max(2.0f, style.GrabRounding);
+    style.TabRounding = std::max(2.0f, style.TabRounding);
+    
+    // Fonts are already sized correctly for current DPI - don't scale them
+    ImGui::GetIO().FontGlobalScale = 1.0f;
+    
+    ImGui::GetStyle() = style;
 }
 
 void AppWindow::ApplyPendingResize() {

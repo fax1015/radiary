@@ -776,11 +776,44 @@ LRESULT AppWindow::HandleMessage(const UINT message, const WPARAM wParam, const 
             return 0;
         }
         break;
+    case WM_DPICHANGED:
+        if (ImGui::GetCurrentContext() != nullptr) {
+            ApplyStyle();
+            // Set flag to rebuild layout on NEXT frame, not this one
+            // This ensures ImGui has updated font size first
+            rebuildLayoutNextFrame_ = true;
+        }
+        if (loadingComplete_) {
+            MarkViewportDirty(PreviewResetReason::ViewportResized);
+        } else {
+            InvalidateRect(window_, nullptr, FALSE);
+        }
+        
+        // Apply suggested window rect from Windows to prevent window jumping
+        if (lParam != NULL) {
+            RECT* suggestedRect = reinterpret_cast<RECT*>(lParam);
+            SetWindowPos(window_, nullptr, 
+                suggestedRect->left, suggestedRect->top,
+                suggestedRect->right - suggestedRect->left,
+                suggestedRect->bottom - suggestedRect->top,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        return 0;
     case WM_SETTINGCHANGE:
     case WM_THEMECHANGED:
     case WM_DWMCOMPOSITIONCHANGED:
         ApplyDarkTitleBar(window_);
         return 0;
+    case WM_DISPLAYCHANGE:
+        if (ImGui::GetCurrentContext() != nullptr) {
+            ApplyStyle();
+            rebuildLayoutNextFrame_ = true;
+        }
+        if (loadingComplete_) {
+            MarkViewportDirty(PreviewResetReason::ViewportResized);
+        }
+        return 0;
+        
     case WM_DESTROY:
         KillTimer(window_, kLiveResizeTimerId);
         KillTimer(window_, kStartupAnimationTimerId);
